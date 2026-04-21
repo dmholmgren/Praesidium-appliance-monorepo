@@ -1,0 +1,179 @@
+{% extends "admin/base.html" %}
+{% block title %}New Tenant Provisioning Wizard{% endblock %}
+{% block content %}
+<div class="max-w-2xl mx-auto py-10 px-4">
+
+  <!-- Progress bar -->
+  <div class="flex items-center mb-8 gap-2">
+    {% for i in range(1, 5) %}
+      <div class="flex items-center {% if not loop.last %}flex-1{% endif %}">
+        <div class="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold
+          {% if i == step %}bg-yellow-500 text-gray-900
+          {% elif i < step %}bg-green-600 text-white
+          {% else %}bg-gray-700 text-gray-400{% endif %}">
+          {{ i }}
+        </div>
+        {% if not loop.last %}
+        <div class="flex-1 h-1 mx-1 {% if i < step %}bg-green-600{% else %}bg-gray-700{% endif %}"></div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+
+  <h1 class="text-2xl font-bold text-yellow-400 mb-1">Tenant Provisioning Wizard</h1>
+  <p class="text-gray-400 mb-6">
+    {% if step == 1 %}Step 1 — Basic Information
+    {% elif step == 2 %}Step 2 — Domain &amp; SSL
+    {% elif step == 3 %}Step 3 — Upload Certificate
+    {% elif step == 4 %}Step 4 — Feature Flags &amp; First User
+    {% endif %}
+  </p>
+
+  <!-- STEP 1 -->
+  {% if step == 1 %}
+  <form method="post" action="/admin/provision/step1" class="space-y-5">
+    <div>
+      <label class="block text-sm text-gray-300 mb-1">Tenant Slug <span class="text-red-400">*</span></label>
+      <input name="slug" value="{{ form.slug or '' }}"
+             class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white focus:border-yellow-500 focus:outline-none"
+             placeholder="acme-law" required />
+      {% if errors.slug %}<p class="text-red-400 text-xs mt-1">{{ errors.slug }}</p>{% endif %}
+      <p class="text-gray-500 text-xs mt-1">Lowercase, hyphens only. Will become {slug}.praesidium-legal.com</p>
+    </div>
+    <div>
+      <label class="block text-sm text-gray-300 mb-1">Firm Name <span class="text-red-400">*</span></label>
+      <input name="firm_name" value="{{ form.firm_name or '' }}"
+             class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white focus:border-yellow-500 focus:outline-none"
+             placeholder="Acme Law Group, LLP" required />
+      {% if errors.firm_name %}<p class="text-red-400 text-xs mt-1">{{ errors.firm_name }}</p>{% endif %}
+    </div>
+    <div>
+      <label class="block text-sm text-gray-300 mb-1">Tier</label>
+      <select name="tier" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white">
+        {% for t in tier_choices %}
+          <option value="{{ t }}" {% if form.tier == t %}selected{% endif %}>{{ t|title }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-sm text-gray-300 mb-1">Deployment Channel</label>
+      <select name="deployment_channel" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white">
+        {% for c in channel_choices %}
+          <option value="{{ c }}" {% if form.deployment_channel == c %}selected{% endif %}>{{ c|title }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" class="w-full bg-yellow-500 hover:bg-yellow-400 text-gray-900 font-bold py-2 px-4 rounded">
+      Next — Domain &amp; SSL →
+    </button>
+  </form>
+
+  <!-- STEP 2 -->
+  {% elif step == 2 %}
+  <form method="post" action="/admin/provision/step2" class="space-y-5">
+    {% for k in ['slug','firm_name','tier','deployment_channel'] %}
+      <input type="hidden" name="{{ k }}" value="{{ form[k] or '' }}" />
+    {% endfor %}
+    <div>
+      <label class="block text-sm text-gray-300 mb-1">Domain</label>
+      <input name="domain" value="{{ form.domain or '' }}"
+             class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white focus:border-yellow-500 focus:outline-none" />
+      {% if errors.domain %}<p class="text-red-400 text-xs mt-1">{{ errors.domain }}</p>{% endif %}
+      <p class="text-gray-500 text-xs mt-1">Default: {{ form.slug }}.praesidium-legal.com — change only for custom domains.</p>
+    </div>
+    <div>
+      <label class="block text-sm text-gray-300 mb-1">SSL Mode</label>
+      <select name="ssl_mode" class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white">
+        <option value="letsencrypt" {% if form.ssl_mode == 'letsencrypt' %}selected{% endif %}>Let's Encrypt (auto)</option>
+        <option value="custom" {% if form.ssl_mode == 'custom' %}selected{% endif %}>Upload Own Certificate</option>
+      </select>
+      <p class="text-gray-500 text-xs mt-1">
+        Let's Encrypt: covered by platform wildcard for *.praesidium-legal.com. Use "Upload" for custom domains.
+      </p>
+    </div>
+    <div class="flex gap-3">
+      <a href="/admin/provision/new" class="flex-1 text-center border border-gray-600 text-gray-300 py-2 rounded hover:bg-gray-800">← Back</a>
+      <button type="submit" class="flex-1 bg-yellow-500 hover:bg-yellow-400 text-gray-900 font-bold py-2 rounded">
+        Next →
+      </button>
+    </div>
+  </form>
+
+  <!-- STEP 3 — Custom cert upload -->
+  {% elif step == 3 %}
+  <form method="post" action="/admin/provision/step3" enctype="multipart/form-data" class="space-y-5">
+    {% for k in ['slug','firm_name','tier','deployment_channel','domain','ssl_mode'] %}
+      <input type="hidden" name="{{ k }}" value="{{ form[k] or '' }}" />
+    {% endfor %}
+    <div class="bg-yellow-900/30 border border-yellow-700 rounded p-4 text-sm text-yellow-300">
+      Upload the certificate and private key files for <strong>{{ form.domain }}</strong>.
+      Files must be PEM format. The key will be stored securely on RPRX-01.
+    </div>
+    <div>
+      <label class="block text-sm text-gray-300 mb-1">Certificate (fullchain.pem) <span class="text-red-400">*</span></label>
+      <input type="file" name="cert_file" accept=".pem,.crt" required
+             class="w-full text-gray-300 bg-gray-800 border border-gray-600 rounded px-3 py-2" />
+      {% if errors.cert_file %}<p class="text-red-400 text-xs mt-1">{{ errors.cert_file }}</p>{% endif %}
+    </div>
+    <div>
+      <label class="block text-sm text-gray-300 mb-1">Private Key (privkey.pem) <span class="text-red-400">*</span></label>
+      <input type="file" name="key_file" accept=".pem,.key" required
+             class="w-full text-gray-300 bg-gray-800 border border-gray-600 rounded px-3 py-2" />
+      {% if errors.key_file %}<p class="text-red-400 text-xs mt-1">{{ errors.key_file }}</p>{% endif %}
+    </div>
+    <div class="flex gap-3">
+      <a href="/admin/provision/new" class="flex-1 text-center border border-gray-600 text-gray-300 py-2 rounded hover:bg-gray-800">← Back</a>
+      <button type="submit" class="flex-1 bg-yellow-500 hover:bg-yellow-400 text-gray-900 font-bold py-2 rounded">
+        Upload &amp; Continue →
+      </button>
+    </div>
+  </form>
+
+  <!-- STEP 4 — Features + First User -->
+  {% elif step == 4 %}
+  <form method="post" action="/admin/provision/confirm" class="space-y-6">
+    {% for k in ['slug','firm_name','tier','deployment_channel','domain','ssl_mode'] %}
+      <input type="hidden" name="{{ k }}" value="{{ form[k] or '' }}" />
+    {% endfor %}
+
+    <div>
+      <h3 class="text-lg font-semibold text-yellow-400 mb-3">Feature Flags</h3>
+      <p class="text-gray-400 text-sm mb-4">Defaults loaded from <strong>{{ form.tier|title }}</strong> tier preset. Toggle before provisioning.</p>
+      <div class="space-y-2 max-h-64 overflow-y-auto pr-1">
+        {% for key, enabled in feature_flags.items() %}
+        <label class="flex items-center gap-3 cursor-pointer group">
+          <input type="checkbox" name="feature_{{ key }}" {% if enabled %}checked{% endif %}
+                 class="w-4 h-4 rounded text-yellow-500 bg-gray-800 border-gray-600" />
+          <span class="text-gray-200 text-sm group-hover:text-white">{{ key.replace('_', ' ')|title }}</span>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="border-t border-gray-700 pt-5">
+      <h3 class="text-lg font-semibold text-yellow-400 mb-3">First Administrator</h3>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm text-gray-300 mb-1">Admin Email <span class="text-red-400">*</span></label>
+          <input name="first_user_email" type="email" required
+                 class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white focus:border-yellow-500 focus:outline-none"
+                 placeholder="admin@acmelaw.com" />
+        </div>
+        <div>
+          <label class="block text-sm text-gray-300 mb-1">Temp Password</label>
+          <input name="first_user_password" type="text"
+                 class="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-white focus:border-yellow-500 focus:outline-none"
+                 placeholder="Leave blank to auto-generate" />
+          <p class="text-gray-500 text-xs mt-1">User must change on first login.</p>
+        </div>
+      </div>
+    </div>
+
+    <button type="submit" class="w-full bg-yellow-500 hover:bg-yellow-400 text-gray-900 font-bold py-2 rounded">
+      Review Summary →
+    </button>
+  </form>
+  {% endif %}
+
+</div>
+{% endblock %}

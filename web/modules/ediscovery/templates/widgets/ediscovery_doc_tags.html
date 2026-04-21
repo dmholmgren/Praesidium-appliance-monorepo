@@ -1,0 +1,213 @@
+{#
+  widgets/ediscovery_doc_tags.html
+  eDiscovery Review — right rail collapsible card: Tags
+  Context: doc_id, collection_id, applied_tags, available_tags,
+           applied_count, error
+#}
+<div class="edr-card" data-edr-card="tags" data-edr-default-open="true"
+     style="border:1px solid var(--border-color,#e2e8f0);
+            border-radius:6px; background:var(--surface,#fff);
+            margin-bottom:10px; overflow:hidden;">
+
+  <div class="edr-card-header"
+       onclick="edrToggleCard(this)"
+       style="display:flex; align-items:center; justify-content:space-between;
+              padding:8px 12px; cursor:pointer; user-select:none;
+              border-bottom:1px solid var(--border-color,#f1f5f9);
+              background:#FAFBFC;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span class="edr-card-caret"
+            style="display:inline-block; width:10px; font-size:10px;
+                   color:var(--muted,#64748b); transition:transform 0.15s;">▾</span>
+      <span style="font-size:10px; font-weight:700; color:var(--muted,#64748b);
+                   text-transform:uppercase; letter-spacing:0.06em;">
+        Tags
+      </span>
+      {% if applied_count %}
+      <span style="font-size:10px; padding:1px 6px; border-radius:10px;
+                   background:var(--primary,#2563eb); color:#fff; font-weight:600;">
+        {{ applied_count }}
+      </span>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="edr-card-body" style="padding:10px 12px;">
+    {% if error %}
+      <div style="font-size:11px; color:#991b1b; padding:6px 8px;
+                  background:#fef2f2; border-radius:4px;">
+        ⚠ {{ error }}
+      </div>
+    {% elif not doc_id %}
+      <div style="font-size:11px; color:var(--muted,#64748b);">
+        No document selected.
+      </div>
+    {% else %}
+      {# Applied tags row — chips with X to remove #}
+      {% if applied_tags %}
+      <div style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:10px;">
+        {% for t in applied_tags %}
+        <span class="edr-tag-chip"
+              data-tag-id="{{ t.tag_id }}"
+              style="display:inline-flex; align-items:center; gap:4px;
+                     padding:2px 4px 2px 8px; border-radius:10px;
+                     font-size:10px; font-weight:600;
+                     background:{{ t.color or '#6B7280' }}; color:#fff;">
+          {{ t.name }}
+          <button
+            hx-post="/ediscovery/documents/{{ doc_id }}/tags"
+            hx-vals='{"tag_id": "{{ t.tag_id }}", "action": "remove"}'
+            hx-target="closest .edr-card-body"
+            hx-swap="innerHTML"
+            title="Remove tag"
+            style="background:rgba(255,255,255,0.2); color:#fff;
+                   border:0; border-radius:50%; width:14px; height:14px;
+                   font-size:9px; line-height:1; cursor:pointer;
+                   display:inline-flex; align-items:center; justify-content:center;
+                   padding:0;">×</button>
+        </span>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {# Available tags — click to apply (dimmed if already applied) #}
+      {% if available_tags %}
+      <div style="font-size:10px; font-weight:600; color:var(--muted,#64748b);
+                  text-transform:uppercase; letter-spacing:0.04em;
+                  margin-bottom:6px;">
+        Apply tag
+      </div>
+      <div style="display:flex; flex-wrap:wrap; gap:4px;">
+        {% for t in available_tags %}
+        {% if not t.is_applied %}
+        <button class="edr-tag-apply"
+                hx-post="/ediscovery/documents/{{ doc_id }}/tags"
+                hx-vals='{"tag_id": "{{ t.id }}", "action": "apply"}'
+                hx-target="closest .edr-card-body"
+                hx-swap="innerHTML"
+                title="{{ t.description or '' }}"
+                style="padding:2px 8px; border-radius:10px; font-size:10px;
+                       font-weight:600; cursor:pointer;
+                       border:1px solid {{ t.color or '#6B7280' }};
+                       color:{{ t.color or '#374151' }};
+                       background:var(--surface,#fff);
+                       white-space:nowrap;">
+          + {{ t.name }}
+        </button>
+        {% endif %}
+        {% endfor %}
+      </div>
+      {% else %}
+      <div style="font-size:11px; color:var(--muted,#64748b);">
+        No tags available for this collection.
+      </div>
+      {% endif %}
+
+      {# Create new tag — button + inline form #}
+      <div style="margin-top:10px; padding-top:8px;
+                  border-top:1px solid var(--border-color,#f1f5f9);">
+        <button onclick="document.getElementById('edr-new-tag-form-{{ doc_id }}').style.display='flex';this.style.display='none';"
+                style="font-size:10px; font-weight:600; color:var(--primary,#1B2A4A);
+                       background:none; border:1px solid var(--border-color,#e2e8f0);
+                       border-radius:4px; padding:3px 10px; cursor:pointer; width:100%;">
+          + New Tag
+        </button>
+        <div id="edr-new-tag-form-{{ doc_id }}"
+             style="display:none; gap:4px; margin-top:6px;">
+          <input type="text"
+                 id="edr-new-tag-name-{{ doc_id }}"
+                 placeholder="Tag name"
+                 style="flex:1; padding:4px 6px; font-size:11px;
+                        border:1px solid var(--border-color,#e2e8f0);
+                        border-radius:4px; box-sizing:border-box;">
+          <button
+            hx-post="/ediscovery/collections/{{ collection_id }}/tags"
+            hx-include="#edr-new-tag-name-{{ doc_id }}"
+            hx-vals='js:{
+              name: document.getElementById("edr-new-tag-name-{{ doc_id }}").value,
+              apply_to_doc_id: "{{ doc_id }}"
+            }'
+            hx-target="closest .edr-card-body"
+            hx-swap="innerHTML"
+            style="padding:4px 10px; font-size:11px; border-radius:4px;
+                   border:0; background:var(--primary,#1B2A4A); color:#fff;
+                   cursor:pointer; font-weight:500; white-space:nowrap;">
+            Add
+          </button>
+          <button onclick="document.getElementById('edr-new-tag-form-{{ doc_id }}').style.display='none';this.previousElementSibling.previousElementSibling.previousElementSibling.style.display='block';"
+                  style="padding:4px 8px; font-size:11px; border-radius:4px;
+                         border:1px solid var(--border-color,#e2e8f0);
+                         background:var(--surface,#fff); cursor:pointer; color:var(--muted);">
+            ✕
+          </button>
+        </div>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ── AI Tags stub card ───────────────────────────────────────────────────── #}
+<div class="edr-card" data-edr-card="ai-tags"
+     style="border:1px solid var(--border-color,#e2e8f0);
+            border-radius:6px; background:var(--surface,#fff);
+            margin-bottom:10px; overflow:hidden;">
+  <div class="edr-card-header" onclick="edrToggleCard(this)"
+       style="display:flex; align-items:center; justify-content:space-between;
+              padding:8px 12px; cursor:pointer; user-select:none;
+              border-bottom:1px solid var(--border-color,#f1f5f9);
+              background:#FAFBFC;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span class="edr-card-caret"
+            style="display:inline-block; width:10px; font-size:10px;
+                   color:var(--muted,#64748b); transition:transform 0.15s;">▾</span>
+      <span style="font-size:10px; font-weight:700; color:var(--muted,#64748b);
+                   text-transform:uppercase; letter-spacing:0.06em;">AI Tags</span>
+    </div>
+    <span style="font-size:9px; background:#FEF3C7; color:#92400e;
+                 padding:1px 6px; border-radius:8px; font-weight:500;">
+      Coming Soon
+    </span>
+  </div>
+  <div class="edr-card-body" style="padding:10px 12px;">
+    <div style="font-size:11px; color:var(--muted,#64748b); line-height:1.6;">
+      {# AI intervention point: auto-suggest tags based on document content,
+         privilege analysis, relevance scoring, hot document detection.
+         Wired when Anthropic adapter (Session 2a) is live. #}
+      AI-suggested tags will appear here — relevance, privilege,
+      hot document, and issue-map alignment scored automatically.
+    </div>
+  </div>
+</div>
+
+{# ── Drafting Tags stub card ─────────────────────────────────────────────── #}
+<div class="edr-card" data-edr-card="drafting-tags"
+     style="border:1px solid var(--border-color,#e2e8f0);
+            border-radius:6px; background:var(--surface,#fff);
+            margin-bottom:10px; overflow:hidden;">
+  <div class="edr-card-header" onclick="edrToggleCard(this)"
+       style="display:flex; align-items:center; justify-content:space-between;
+              padding:8px 12px; cursor:pointer; user-select:none;
+              border-bottom:1px solid var(--border-color,#f1f5f9);
+              background:#FAFBFC;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span class="edr-card-caret"
+            style="display:inline-block; width:10px; font-size:10px;
+                   color:var(--muted,#64748b); transition:transform 0.15s;">▾</span>
+      <span style="font-size:10px; font-weight:700; color:var(--muted,#64748b);
+                   text-transform:uppercase; letter-spacing:0.06em;">Drafting Tags</span>
+    </div>
+    <span style="font-size:9px; background:#FEF3C7; color:#92400e;
+                 padding:1px 6px; border-radius:8px; font-weight:500;">
+      Coming Soon
+    </span>
+  </div>
+  <div class="edr-card-body" style="padding:10px 12px;">
+    <div style="font-size:11px; color:var(--muted,#64748b); line-height:1.6;">
+      {# Cross-module tag set — marks documents for motion practice,
+         exhibit sets, and drafting references. Tagged sets feed DMS
+         and Drafting modules directly. No manual download loop. #}
+      Tag documents for motions, exhibit sets, and drafting references.
+      Tagged sets feed DMS and Drafting directly.
+    </div>
+  </div>
+</div>

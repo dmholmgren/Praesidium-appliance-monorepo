@@ -1,0 +1,56 @@
+{# widgets/dms_matter_document_count.html
+   Widget partial — DMS Matter Document Count
+   Context: native_count, folder_count, matter_name, matter_id, total_size_str
+#}
+<div style="display:flex; flex-direction:column; height:100%;">
+
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              padding:8px 12px; border-bottom:1px solid var(--border-color,#f1f5f9);
+              flex-shrink:0;">
+    <span style="font-size:10px; font-weight:700; color:var(--muted,#64748b);
+                 text-transform:uppercase; letter-spacing:0.06em;">
+      Document Count
+    </span>
+    {% if matter_id %}
+    <a href="/dms/matter/{{ matter_id }}"
+       style="font-size:10px; color:var(--primary,#1B2A4A); text-decoration:none;">
+      Open →
+    </a>
+    {% endif %}
+  </div>
+
+  <div style="padding:12px; display:flex; flex-direction:column; gap:8px;">
+
+    <div style="display:flex; align-items:center; justify-content:space-between;
+                padding:8px 10px; background:#f8fafc; border-radius:6px;">
+      <div style="display:flex; align-items:center; gap:6px;">
+        <span style="font-size:14px;">🗂</span>
+        <span style="font-size:12px; color:var(--text,#1a202c); font-weight:500;">Documents</span>
+      </div>
+      <span style="font-size:18px; font-weight:700; color:var(--primary,#1B2A4A);">
+        {{ native_count }}
+      </span>
+    </div>
+
+    <div style="display:flex; align-items:center; justify-content:space-between;
+                padding:8px 10px; background:#f8fafc; border-radius:6px;">
+      <div style="display:flex; align-items:center; gap:6px;">
+        <span style="font-size:14px;">📁</span>
+        <span style="font-size:12px; color:var(--text,#1a202c); font-weight:500;">Folders</span>
+      </div>
+      <span style="font-size:18px; font-weight:700; color:var(--primary,#1B2A4A);">
+        {{ folder_count }}
+      </span>
+    </div>
+
+    <div style="display:flex; align-items:center; justify-content:space-between;
+                padding:6px 10px;">
+      <span style="font-size:11px; color:var(--muted,#64748b);">Total size</span>
+      <span style="font-size:11px; color:var(--muted,#64748b); font-weight:500;">
+        {{ total_size_str }}
+      </span>
+    </div>
+
+  </div>
+
+</div>

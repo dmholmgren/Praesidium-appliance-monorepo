@@ -1,0 +1,126 @@
+{% extends "base_tenant.html" %}
+{% block title %}Prebill — {{ brand.platform_name }}{% endblock %}
+{% block content %}
+<div class="px-6 py-4">
+  <div class="flex items-center gap-2 text-sm text-gray-400 mb-4">
+    <a href="/billing/prebills" class="hover:text-gray-600">Prebills</a>
+    <span>›</span>
+    <span id="prebill-matter" class="text-gray-700">Loading…</span>
+  </div>
+
+  <div class="flex justify-between items-start mb-4">
+    <div>
+      <h1 id="prebill-title" class="text-xl font-semibold text-gray-900">Prebill</h1>
+      <div id="prebill-meta" class="text-sm text-gray-500"></div>
+    </div>
+    <div class="flex gap-2">
+      <button onclick="window.print()" class="border px-3 py-1.5 rounded text-sm text-gray-600 hover:bg-gray-50">
+        🖨 Print
+      </button>
+      <button id="finalize-btn" onclick="finalizeInvoice()"
+              class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm hover:bg-blue-700">
+        Finalize Invoice
+      </button>
+    </div>
+  </div>
+
+  <div class="bg-white border rounded overflow-hidden mb-4">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 border-b">
+        <tr>
+          <th class="px-4 py-2 text-left font-medium text-gray-600">Date</th>
+          <th class="px-4 py-2 text-left font-medium text-gray-600">Timekeeper</th>
+          <th class="px-4 py-2 text-right font-medium text-gray-600">Hours</th>
+          <th class="px-4 py-2 text-right font-medium text-gray-600">Rate</th>
+          <th class="px-4 py-2 text-right font-medium text-gray-600">Value</th>
+          <th class="px-4 py-2 text-left font-medium text-gray-600">Narrative</th>
+        </tr>
+      </thead>
+      <tbody id="prebill-body">
+        <tr><td colspan="6" class="px-4 py-8 text-center text-gray-400">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="bg-white border rounded p-4 max-w-xs ml-auto">
+    <div class="flex justify-between text-sm mb-2">
+      <span class="text-gray-600">Current Fees</span>
+      <span id="total-fees" class="font-medium">$0.00</span>
+    </div>
+    <div class="flex justify-between text-sm mb-2">
+      <span class="text-gray-600">Prior Balance</span>
+      <span id="prior-balance" class="font-medium text-red-600">$0.00</span>
+    </div>
+    <div class="flex justify-between text-sm font-semibold border-t pt-2">
+      <span>Total Due</span>
+      <span id="total-due" class="text-blue-700 text-base">$0.00</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const MATTER_ID = "{{ matter_id }}";
+let prebillData = null;
+
+async function loadPrebill() {
+  const res  = await fetch(`/api/billing/matters/${MATTER_ID}/prebill`);
+  prebillData = await res.json();
+  const m    = prebillData.matter;
+
+  document.getElementById('prebill-matter').textContent = m.display_name;
+  document.getElementById('prebill-title').textContent  = 'Prebill: ' + m.display_name;
+  document.getElementById('prebill-meta').textContent   =
+    'Generated ' + new Date(prebillData.generated_at).toLocaleDateString();
+
+  const tbody = document.getElementById('prebill-body');
+  if (!prebillData.slips.length) {
+    tbody.innerHTML = '<tr><td colspan="6" class="px-4 py-8 text-center text-gray-400">No unbilled slips</td></tr>';
+    document.getElementById('finalize-btn').disabled = true;
+    return;
+  }
+
+  tbody.innerHTML = prebillData.slips.map(s => `
+    <tr class="border-b">
+      <td class="px-4 py-2">${s.slip_date || ''}</td>
+      <td class="px-4 py-2 text-gray-600">${s.timekeeper || ''}</td>
+      <td class="px-4 py-2 text-right">${parseFloat(s.hours||0).toFixed(2)}</td>
+      <td class="px-4 py-2 text-right text-gray-500">$${parseFloat(s.rate||0).toFixed(2)}</td>
+      <td class="px-4 py-2 text-right font-medium">${fmtMoney(s.value)}</td>
+      <td class="px-4 py-2 text-gray-600 max-w-sm">${s.narrative || ''}</td>
+    </tr>
+  `).join('');
+
+  document.getElementById('total-fees').textContent    = fmtMoney(prebillData.total_fees);
+  document.getElementById('prior-balance').textContent = fmtMoney(prebillData.prior_balance);
+  document.getElementById('total-due').textContent     = fmtMoney(prebillData.total_due);
+}
+
+async function finalizeInvoice() {
+  if (!prebillData || !prebillData.slips.length) return;
+  if (!confirm(`Finalize invoice for ${prebillData.matter.display_name}?\nTotal: ${fmtMoney(prebillData.total_due)}`)) return;
+
+  const res = await fetch(`/api/billing/matters/${MATTER_ID}/invoice`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      fee_total:    prebillData.total_fees,
+      invoice_date: new Date().toISOString().split('T')[0],
+    })
+  });
+  if (res.ok) {
+    const data = await res.json();
+    alert(`Invoice #${data.invoice_number} created.`);
+    location.href = '/billing/invoices';
+  } else {
+    alert('Error creating invoice.');
+  }
+}
+
+function fmtMoney(v) {
+  const n = parseFloat(v||0);
+  return '$' + n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+
+loadPrebill();
+</script>
+{% endblock %}

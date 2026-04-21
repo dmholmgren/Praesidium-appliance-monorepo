@@ -1,0 +1,152 @@
+{#
+  firm_matter_tree_pi.html
+  Client → Matter tree for Practice Intelligence Dashboard.
+  Click a matter → piScopeMatter(matterId) scopes center+right panels.
+  Click X → piResetScope().
+#}
+<div style="padding: 0; height: 100%; display: flex; flex-direction: column;">
+
+  {# Header #}
+  <div style="padding: 10px 12px 8px; border-bottom: 1px solid var(--border-color, #e2e8f0);
+              display: flex; align-items: center; justify-content: space-between; flex-shrink: 0;">
+    <span style="font-size: 11px; font-weight: 600; color: var(--text, #1a202c); text-transform: uppercase;
+                 letter-spacing: 0.05em;">Matters</span>
+    {% if not error %}
+    <span style="font-size: 10px; color: var(--muted, #64748b);">
+      {{ total_clients }} client{% if total_clients != 1 %}s{% endif %} ·
+      {{ total_matters }} matter{% if total_matters != 1 %}s{% endif %}
+    </span>
+    {% endif %}
+  </div>
+
+  {# Scope badge — shown when a matter is scoped #}
+  <div id="pi-tree-scope-badge" style="display:none; padding:5px 10px;
+       background:#eff6ff; border-bottom:1px solid #bfdbfe;
+       font-size:10px; color:#1d4ed8; align-items:center; gap:6px;">
+    <span id="pi-tree-scope-label" style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"></span>
+    <button onclick="piResetScope()"
+            style="border:none; background:none; cursor:pointer; color:#1d4ed8;
+                   font-size:13px; line-height:1; padding:0;">✕</button>
+  </div>
+
+  {# Search #}
+  <div style="padding: 8px 10px; flex-shrink: 0;">
+    <input type="text" placeholder="Filter matters…" oninput="piFilterTree(this.value)"
+           style="width:100%; padding:5px 8px; font-size:11px;
+                  border:1px solid var(--border-color,#e2e8f0); border-radius:5px;
+                  background:var(--surface,#fff); color:var(--text); outline:none;
+                  box-sizing:border-box;">
+  </div>
+
+  {# Tree #}
+  <div id="pi-tree-body" style="flex: 1; overflow-y: auto; padding: 0 0 8px;">
+    {% if error %}
+    <div style="padding:12px; font-size:11px; color:#dc2626;">{{ error }}</div>
+    {% elif not clients %}
+    <div style="padding:12px; font-size:11px; color:var(--muted);">No active matters.</div>
+    {% else %}
+    {% for client in clients %}
+    <div class="pi-client-group" data-client-id="{{ client.client_id }}">
+      {# Client row — click to expand/collapse #}
+      <div class="pi-client-row"
+           onclick="piToggleClient('{{ client.client_id }}')"
+           style="display:flex; align-items:center; gap:6px;
+                  padding:6px 12px 6px 10px; cursor:pointer;
+                  font-size:11px; font-weight:600; color:var(--text,#1a202c);
+                  border-bottom:1px solid var(--border-color,#e2e8f0);
+                  user-select:none;">
+        <span id="pi-client-arrow-{{ client.client_id }}"
+              style="font-size:9px; color:var(--muted); transition:transform 0.15s;">▶</span>
+        <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+          {{ client.client_name }}</span>
+        <span style="font-size:10px; color:var(--muted); flex-shrink:0;">
+          {{ client.matters | length }}</span>
+      </div>
+
+      {# Matters list — collapsed by default #}
+      <div id="pi-client-matters-{{ client.client_id }}"
+           style="display:none;">
+        {% for matter in client.matters %}
+        <div class="pi-matter-row"
+             data-matter-id="{{ matter.id }}"
+             data-matter-name="{{ matter.matter_name }}"
+             onclick="piScopeMatter('{{ matter.id }}', '{{ matter.matter_name | replace("'", "\\'") }}')"
+             style="display:flex; align-items:center; gap:6px;
+                    padding:5px 12px 5px 24px; cursor:pointer;
+                    font-size:11px; color:var(--text,#1a202c);
+                    border-bottom:1px solid var(--border-color,#e2e8f0);
+                    transition:background 0.1s;">
+          <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            {{ matter.matter_name }}</span>
+          {% if matter.matter_number %}
+          <span style="font-size:10px; color:var(--muted); flex-shrink:0;">
+            {{ matter.matter_number }}</span>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+    {% endif %}
+  </div>
+
+  {# Link to full DMS #}
+  <div style="padding:8px 12px; border-top:1px solid var(--border-color,#e2e8f0);
+              flex-shrink:0;">
+    <a href="/dms/" style="font-size:11px; color:var(--primary,#1B2A4A);
+       text-decoration:none; display:flex; align-items:center; gap:4px;">
+      Open DMS →
+    </a>
+  </div>
+</div>
+
+<script>
+// Hover style
+document.querySelectorAll('.pi-matter-row').forEach(function(el) {
+  el.addEventListener('mouseenter', function() {
+    this.style.background = 'var(--surface-hover, #f8fafc)';
+  });
+  el.addEventListener('mouseleave', function() {
+    this.style.background = '';
+  });
+});
+
+function piToggleClient(clientId) {
+  const list   = document.getElementById('pi-client-matters-' + clientId);
+  const arrow  = document.getElementById('pi-client-arrow-' + clientId);
+  if (!list) return;
+  const isOpen = list.style.display !== 'none';
+  list.style.display  = isOpen ? 'none' : 'block';
+  arrow.style.transform = isOpen ? '' : 'rotate(90deg)';
+}
+
+function piFilterTree(query) {
+  const q = query.toLowerCase().trim();
+  document.querySelectorAll('.pi-client-group').forEach(function(group) {
+    let groupVisible = false;
+    group.querySelectorAll('.pi-matter-row').forEach(function(row) {
+      const name = (row.dataset.matterName || '').toLowerCase();
+      const show = !q || name.includes(q);
+      row.style.display = show ? '' : 'none';
+      if (show) groupVisible = true;
+    });
+    group.style.display = groupVisible ? '' : 'none';
+    if (q && groupVisible) {
+      const list  = group.querySelector('[id^="pi-client-matters-"]');
+      const arrow = group.querySelector('[id^="pi-client-arrow-"]');
+      if (list)  list.style.display  = 'block';
+      if (arrow) arrow.style.transform = 'rotate(90deg)';
+    }
+  });
+}
+
+// Auto-expand first client on load
+(function() {
+  const first = document.querySelector('[id^="pi-client-matters-"]');
+  const arrow = document.querySelector('[id^="pi-client-arrow-"]');
+  if (first) {
+    first.style.display = 'block';
+    if (arrow) arrow.style.transform = 'rotate(90deg)';
+  }
+})();
+</script>

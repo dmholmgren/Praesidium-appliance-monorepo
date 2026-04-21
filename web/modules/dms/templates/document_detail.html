@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}{{ brand.platform_name }} — {{ doc.title }}{% endblock %}
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-6">
+  <nav class="text-sm text-gray-500 mb-4">
+    <a href="/dms/" class="hover:text-blue-600">DMS</a> /
+    <a href="/dms/matter/{{ doc.matter_id }}" class="hover:text-blue-600">{{ doc.matter_name }}</a> /
+    <span class="text-gray-900 font-medium">{{ doc.title }}</span>
+  </nav>
+
+  <div class="grid grid-cols-3 gap-6">
+    <!-- Document Info -->
+    <div class="col-span-2">
+      <div class="bg-white rounded-lg shadow p-6">
+        <div class="flex justify-between items-start mb-4">
+          <h1 class="text-xl font-bold text-gray-900">{{ doc.title }}</h1>
+          <div class="flex gap-2">
+            <a href="/dms/document/{{ doc.id }}/download"
+               class="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-blue-700">
+              Download
+            </a>
+            <button hx-post="/dms/document/{{ doc.id }}/session/start"
+                    hx-vals='{"activity_type": "viewing"}'
+                    class="bg-gray-100 text-gray-700 px-4 py-2 rounded-lg text-sm hover:bg-gray-200">
+              Open
+            </button>
+          </div>
+        </div>
+
+        <dl class="grid grid-cols-2 gap-4 text-sm">
+          <div><dt class="text-gray-500">Type</dt><dd class="font-medium uppercase">{{ doc.doc_type }}</dd></div>
+          <div><dt class="text-gray-500">Size</dt><dd class="font-medium">{{ (doc.file_size / 1024)|round(1) }} KB</dd></div>
+          <div><dt class="text-gray-500">Client</dt><dd class="font-medium">{{ doc.client_name or '—' }}</dd></div>
+          <div><dt class="text-gray-500">Matter</dt><dd class="font-medium">{{ doc.matter_name or '—' }}</dd></div>
+          <div><dt class="text-gray-500">Created</dt><dd class="font-medium">{{ doc.created_at[:16] if doc.created_at else '—' }}</dd></div>
+          <div><dt class="text-gray-500">Modified</dt><dd class="font-medium">{{ doc.updated_at[:16] if doc.updated_at else '—' }}</dd></div>
+          <div><dt class="text-gray-500">OCR Status</dt><dd class="font-medium">{{ doc.ocr_status or 'pending' }}</dd></div>
+          <div><dt class="text-gray-500">Path</dt><dd class="font-medium text-xs">{{ doc.storage_path }}</dd></div>
+        </dl>
+      </div>
+
+      <!-- OCR Text Preview -->
+      {% if doc.ocr_text %}
+      <div class="bg-white rounded-lg shadow p-6 mt-6">
+        <h2 class="font-semibold text-gray-700 mb-3">Extracted Text</h2>
+        <pre class="text-xs text-gray-600 bg-gray-50 p-4 rounded max-h-96 overflow-y-auto whitespace-pre-wrap">{{ doc.ocr_text[:5000] }}</pre>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Version History -->
+    <div>
+      <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="font-semibold text-gray-700 mb-3">Version History</h2>
+        <div class="space-y-3">
+          {% for ver in versions %}
+          <div class="border rounded-lg p-3">
+            <div class="flex justify-between items-center">
+              <span class="text-sm font-medium">v{{ ver.version_number }}</span>
+              <button hx-post="/dms/document/{{ doc.id }}/restore/{{ ver.id }}"
+                      hx-confirm="Restore version {{ ver.version_number }}?"
+                      class="text-xs text-blue-600 hover:underline">Restore</button>
+            </div>
+            <div class="text-xs text-gray-500 mt-1">
+              {{ ver.created_at[:16] if ver.created_at else '' }} · {{ (ver.file_size / 1024)|round(1) }} KB
+            </div>
+          </div>
+          {% endfor %}
+          {% if not versions %}
+          <p class="text-sm text-gray-500">No previous versions</p>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

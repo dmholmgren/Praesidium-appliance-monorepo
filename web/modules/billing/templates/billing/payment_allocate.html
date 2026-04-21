@@ -1,0 +1,161 @@
+{% extends "base_tenant.html" %}
+{% block title %}Allocate Payment — {{ brand.platform_name }}{% endblock %}
+{% block content %}
+<div class="px-6 py-4 max-w-3xl">
+  <div class="flex items-center gap-2 text-sm text-gray-400 mb-4">
+    <a href="/billing/payments" class="hover:text-gray-600">Payments</a>
+    <span>›</span>
+    <span class="text-gray-700">Allocate Payment</span>
+  </div>
+
+  <div class="bg-blue-50 border border-blue-200 rounded p-4 mb-4">
+    <div class="flex justify-between items-center">
+      <div>
+        <div class="font-semibold text-blue-900" id="payment-summary">Loading payment…</div>
+        <div class="text-sm text-blue-700" id="payment-client"></div>
+      </div>
+      <div class="text-right">
+        <div class="text-xs text-blue-600">Unallocated</div>
+        <div id="unallocated" class="text-xl font-bold text-blue-900">$0.00</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="success-msg" class="hidden mb-4 bg-green-50 border border-green-200 text-green-700 rounded p-3 text-sm"></div>
+  <div id="error-msg"   class="hidden mb-4 bg-red-50 border border-red-200 text-red-700 rounded p-3 text-sm"></div>
+
+  <h3 class="font-medium text-gray-700 mb-2">Open Invoices</h3>
+  <div class="bg-white border rounded overflow-hidden mb-4">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 border-b">
+        <tr>
+          <th class="px-4 py-2 text-left font-medium text-gray-600">Invoice #</th>
+          <th class="px-4 py-2 text-left font-medium text-gray-600">Matter</th>
+          <th class="px-4 py-2 text-right font-medium text-gray-600">Balance Due</th>
+          <th class="px-4 py-2 text-right font-medium text-gray-600">Allocate</th>
+        </tr>
+      </thead>
+      <tbody id="invoices-body">
+        <tr><td colspan="4" class="px-4 py-8 text-center text-gray-400">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="flex justify-between items-center">
+    <div class="text-sm text-gray-600">
+      Total allocated: <span id="total-allocated" class="font-semibold">$0.00</span>
+    </div>
+    <div class="flex gap-3">
+      <a href="/billing/payments" class="px-4 py-2 border rounded text-sm text-gray-600 hover:bg-gray-50">
+        Skip
+      </a>
+      <button onclick="saveAllocations()"
+              class="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
+        Save Allocations
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+const PAYMENT_ID = "{{ payment_id }}";
+let paymentData = null;
+
+async function loadPayment() {
+  const res = await fetch(`/api/billing/payments/${PAYMENT_ID}/open-invoices`);
+  paymentData = await res.json();
+
+  document.getElementById('payment-summary').textContent =
+    `Payment of ${fmtMoney(paymentData.amount)} on ${new Date().toLocaleDateString()}`;
+  document.getElementById('payment-client').textContent = `Client: ${paymentData.client_code}`;
+  document.getElementById('unallocated').textContent    = fmtMoney(paymentData.unallocated);
+
+  const tbody = document.getElementById('invoices-body');
+  const all   = paymentData.invoices;
+
+  if (!all.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="px-4 py-8 text-center text-gray-400">No open invoices for this client</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = all.map((inv, i) => `
+    <tr class="border-b">
+      <td class="px-4 py-2.5 font-medium text-gray-700">#${inv.invoice_number}</td>
+      <td class="px-4 py-2.5 text-gray-600">${inv.matter_name || '—'}</td>
+      <td class="px-4 py-2.5 text-right text-red-700 font-medium">${fmtMoney(inv.balance_due)}</td>
+      <td class="px-4 py-2.5 text-right">
+        <input type="number" id="alloc-${i}" data-inv="${inv.id}"
+               step="0.01" min="0" max="${inv.balance_due}"
+               class="border rounded px-2 py-1 text-sm w-28 text-right"
+               placeholder="0.00" oninput="updateTotal()">
+        <button onclick="fillFull(${i}, ${inv.balance_due})"
+                class="ml-1 text-xs text-blue-600 hover:underline">Full</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function fillFull(i, amount) {
+  document.getElementById(`alloc-${i}`).value = parseFloat(amount).toFixed(2);
+  updateTotal();
+}
+
+function updateTotal() {
+  let total = 0;
+  document.querySelectorAll('[id^="alloc-"]').forEach(inp => {
+    total += parseFloat(inp.value || 0);
+  });
+  document.getElementById('total-allocated').textContent = fmtMoney(total);
+
+  const unalloc = parseFloat(paymentData?.unallocated || 0);
+  document.getElementById('total-allocated').className =
+    total > unalloc ? 'font-semibold text-red-700' : 'font-semibold text-green-700';
+}
+
+async function saveAllocations() {
+  const allocations = [];
+  let total = 0;
+  document.querySelectorAll('[id^="alloc-"]').forEach(inp => {
+    const amt = parseFloat(inp.value || 0);
+    if (amt > 0) {
+      allocations.push({invoice_id: inp.dataset.inv, amount: amt});
+      total += amt;
+    }
+  });
+
+  const unalloc = parseFloat(paymentData?.unallocated || 0);
+  const errEl   = document.getElementById('error-msg');
+  errEl.classList.add('hidden');
+
+  if (total > unalloc) {
+    errEl.textContent = `Total allocation ($${total.toFixed(2)}) exceeds unallocated balance ($${unalloc.toFixed(2)}).`;
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  const res = await fetch(`/api/billing/payments/${PAYMENT_ID}/allocate`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({allocations})
+  });
+
+  if (res.ok) {
+    const successEl = document.getElementById('success-msg');
+    successEl.textContent = `${fmtMoney(total)} allocated successfully.`;
+    successEl.classList.remove('hidden');
+    setTimeout(() => location.href = '/billing/payments', 1500);
+  } else {
+    const err = await res.json();
+    errEl.textContent = err.detail || 'Allocation error.';
+    errEl.classList.remove('hidden');
+  }
+}
+
+function fmtMoney(v) {
+  const n = parseFloat(v||0);
+  return '$' + n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+
+loadPayment();
+</script>
+{% endblock %}

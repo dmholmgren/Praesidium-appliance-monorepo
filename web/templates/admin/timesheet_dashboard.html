@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block title %}Timesheet Reconciliation — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Timesheet Reconciliation{% endblock %}
+{% block content %}
+
+{# ── Header ──────────────────────────────────────────────────────────────────── #}
+<div style="margin-bottom:16px; display:flex; justify-content:space-between; align-items:flex-end;">
+  <div>
+    <h2 style="font-family:'Lora',serif; font-size:20px; font-weight:600; color:var(--text); margin:0 0 4px 0;">
+      Timesheet Reconciliation
+    </h2>
+    <p style="font-size:12px; color:var(--muted); margin:0;">
+      Aggregate data sources, match to matters, review and approve time entries
+    </p>
+  </div>
+  <a href="/billing/" style="font-size:12px; color:var(--primary); text-decoration:none;">← Billing</a>
+</div>
+
+{# ── New Session ─────────────────────────────────────────────────────────────── #}
+<div class="card" style="padding:20px; margin-bottom:16px;">
+  <div style="font-size:14px; font-weight:600; color:var(--text); margin-bottom:14px;">
+    Start New Reconciliation
+  </div>
+
+  <form action="/admin/timesheet/start" method="post" enctype="multipart/form-data" id="rec-form">
+    <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+
+    <div style="display:flex; gap:16px; align-items:flex-end; flex-wrap:wrap; margin-bottom:16px;">
+      <div>
+        <div style="font-size:11px; font-weight:500; color:var(--muted); margin-bottom:3px;">DATE FROM</div>
+        <input type="date" name="date_from" id="rec-from" value="{{ default_from }}"
+               style="border:1px solid #D1D5DB; border-radius:5px; padding:5px 10px;
+                      font-size:12px; font-family:inherit;">
+      </div>
+      <div>
+        <div style="font-size:11px; font-weight:500; color:var(--muted); margin-bottom:3px;">DATE TO</div>
+        <input type="date" name="date_to" id="rec-to" value="{{ default_to }}"
+               style="border:1px solid #D1D5DB; border-radius:5px; padding:5px 10px;
+                      font-size:12px; font-family:inherit;">
+      </div>
+      <div style="display:flex; gap:6px;">
+        <button type="button" onclick="setRange('last_month')"
+                style="padding:5px 10px; font-size:11px; background:#F1F5F9; border:1px solid #D1D5DB;
+                       border-radius:4px; cursor:pointer;">Last Month</button>
+        <button type="button" onclick="setRange('this_month')"
+                style="padding:5px 10px; font-size:11px; background:#F1F5F9; border:1px solid #D1D5DB;
+                       border-radius:4px; cursor:pointer;">This Month</button>
+        <button type="button" onclick="setRange('this_week')"
+                style="padding:5px 10px; font-size:11px; background:#F1F5F9; border:1px solid #D1D5DB;
+                       border-radius:4px; cursor:pointer;">This Week</button>
+      </div>
+    </div>
+
+    {# ── Drop Zones ────────────────────────────────────────────────────────── #}
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
+
+      <div id="drop-phone" class="drop-zone" onclick="document.getElementById('file-phone').click();"
+           ondragover="event.preventDefault(); this.classList.add('drag-over');"
+           ondragleave="this.classList.remove('drag-over');"
+           ondrop="handleDrop(event, 'file-phone'); this.classList.remove('drag-over');">
+        <div style="font-size:20px; margin-bottom:4px;">📱</div>
+        <div style="font-size:12px; font-weight:500;">Phone CDR (CSV)</div>
+        <div style="font-size:11px; color:var(--muted);">Carrier call log export — calls under 2 min auto-dropped</div>
+        <div id="phone-file-name" style="font-size:11px; color:var(--primary); margin-top:4px; display:none;"></div>
+        <input type="file" name="files" id="file-phone" accept=".csv"
+               style="display:none;" onchange="showFileName(this, 'phone-file-name');">
+      </div>
+
+      <div id="drop-imazing" class="drop-zone" onclick="document.getElementById('file-imazing').click();"
+           ondragover="event.preventDefault(); this.classList.add('drag-over');"
+           ondragleave="this.classList.remove('drag-over');"
+           ondrop="handleDrop(event, 'file-imazing'); this.classList.remove('drag-over');">
+        <div style="font-size:20px; margin-bottom:4px;">💬</div>
+        <div style="font-size:12px; font-weight:500;">iMazing Texts (CSV)</div>
+        <div style="font-size:11px; color:var(--muted);">iMazing text message export — threads grouped by contact+day</div>
+        <div id="imazing-file-name" style="font-size:11px; color:var(--primary); margin-top:4px; display:none;"></div>
+        <input type="file" name="files" id="file-imazing" accept=".csv"
+               style="display:none;" onchange="showFileName(this, 'imazing-file-name');">
+      </div>
+
+    </div>
+
+    <div style="font-size:11px; color:var(--muted); margin-bottom:14px;">
+      <strong>Automatic sources:</strong> Exchange calendar + email, ManicTime, AI usage, Timeslips historical — pulled from the database automatically.
+      Files above are optional additional sources.
+    </div>
+
+    <button type="submit" id="start-btn"
+            style="padding:8px 24px; background:var(--primary); color:#fff;
+                   border:none; border-radius:5px; font-size:13px;
+                   font-weight:500; cursor:pointer;">
+      Start Reconciliation
+    </button>
+  </form>
+</div>
+
+{# ── Past Sessions ───────────────────────────────────────────────────────────── #}
+{% if sessions %}
+<div class="card" style="padding:0; overflow:hidden;">
+  <div style="padding:12px 16px; border-bottom:1px solid var(--border);">
+    <div style="font-size:13px; font-weight:600;">Past Sessions</div>
+  </div>
+  <table class="data-table" style="margin:0;">
+    <thead>
+      <tr>
+        <th>Period</th>
+        <th>Status</th>
+        <th>Drafts</th>
+        <th>Approved</th>
+        <th>Pushed</th>
+        <th>Started</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for s in sessions %}
+      <tr>
+        <td style="font-size:12px;">{{ s.date_from }} – {{ s.date_to }}</td>
+        <td>
+          {% if s.status == 'complete' %}
+            <span style="padding:2px 8px; background:#DCFCE7; color:#166534;
+                         border-radius:10px; font-size:11px; font-weight:500;">Complete</span>
+          {% elif s.status == 'running' %}
+            <span style="padding:2px 8px; background:#DBEAFE; color:#1E40AF;
+                         border-radius:10px; font-size:11px; font-weight:500;">Running…</span>
+          {% elif s.status == 'failed' %}
+            <span style="padding:2px 8px; background:#FEE2E2; color:#991B1B;
+                         border-radius:10px; font-size:11px; font-weight:500;">Failed</span>
+          {% else %}
+            <span style="padding:2px 8px; background:#F1F5F9; color:#475569;
+                         border-radius:10px; font-size:11px; font-weight:500;">{{ s.status }}</span>
+          {% endif %}
+        </td>
+        <td style="font-size:12px;">{{ s.draft_count }}</td>
+        <td style="font-size:12px;">{{ s.approved_count }}</td>
+        <td style="font-size:12px;">{{ s.pushed_count }}</td>
+        <td style="font-size:11px; color:var(--muted);">{{ s.created_at.strftime('%b %d %I:%M %p') if s.created_at else '' }}</td>
+        <td>
+          <a href="/admin/timesheet/{{ s.id }}?tenant_id={{ tenant_id }}"
+             style="font-size:12px; color:var(--primary); text-decoration:none;">
+            {% if s.status == 'running' %}View{% else %}Review{% endif %} →
+          </a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div style="padding:32px; text-align:center; font-size:12px; color:var(--muted);">
+  No reconciliation sessions yet. Start one above.
+</div>
+{% endif %}
+
+<style>
+  .drop-zone {
+    border: 2px dashed #D1D5DB;
+    border-radius: 8px;
+    padding: 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+  }
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color: var(--primary);
+    background: #F8FAFF;
+  }
+  .data-table { width:100%; border-collapse:collapse; }
+  .data-table th {
+    padding:8px 12px; font-size:11px; font-weight:600;
+    color:var(--muted); text-align:left; border-bottom:1px solid var(--border);
+    background:#FAFBFC;
+  }
+  .data-table td {
+    padding:8px 12px; border-bottom:1px solid var(--border);
+  }
+  .data-table tr:hover { background:#F8FAFF; }
+</style>
+
+<script>
+function setRange(preset) {
+  var today = new Date();
+  var from, to;
+  if (preset === 'last_month') {
+    from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    to   = new Date(today.getFullYear(), today.getMonth(), 0);
+  } else if (preset === 'this_month') {
+    from = new Date(today.getFullYear(), today.getMonth(), 1);
+    to   = today;
+  } else if (preset === 'this_week') {
+    var dow = today.getDay();
+    from = new Date(today);
+    from.setDate(today.getDate() - dow);
+    to = today;
+  }
+  document.getElementById('rec-from').value = from.toISOString().split('T')[0];
+  document.getElementById('rec-to').value   = to.toISOString().split('T')[0];
+}
+
+function handleDrop(event, inputId) {
+  event.preventDefault();
+  var input = document.getElementById(inputId);
+  if (event.dataTransfer.files.length) {
+    input.files = event.dataTransfer.files;
+    input.dispatchEvent(new Event('change'));
+  }
+}
+
+function showFileName(input, labelId) {
+  var label = document.getElementById(labelId);
+  if (input.files.length) {
+    label.textContent = '✓ ' + input.files[0].name;
+    label.style.display = 'block';
+  }
+}
+
+// Disable double-submit
+document.getElementById('rec-form').addEventListener('submit', function() {
+  var btn = document.getElementById('start-btn');
+  btn.disabled = true;
+  btn.textContent = 'Starting…';
+});
+</script>
+
+{% endblock %}

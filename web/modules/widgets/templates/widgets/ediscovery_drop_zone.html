@@ -1,0 +1,560 @@
+{# widgets/ediscovery_drop_zone.html
+   eDiscovery Drop Zone — v2
+   - Accepts OS file drops AND legacy share browser folder/file drags
+   - Resolves matter from matter_folders when dragged from share browser
+   - Holds queue until attorney commits — supports multi-volume productions
+   - POSTs files via multipart to /api/v1/ediscovery/upload (OS drops)
+   - POSTs JSON to /api/v1/ediscovery/ingest-path (share browser drags)
+#}
+
+<div style="display:flex; flex-direction:column; height:100%; min-height:0;">
+
+  {# Drop zone #}
+  <div id="edz-dropzone"
+       ondragover="edzDragOver(event)"
+       ondragleave="edzDragLeave(event)"
+       ondrop="edzDrop(event)"
+       onclick="edzClick()"
+       style="margin:10px 10px 6px; border:2px dashed var(--border-color,#e2e8f0);
+              border-radius:8px; padding:16px 12px; text-align:center;
+              cursor:pointer; transition:all 0.15s; flex-shrink:0;">
+    <div style="font-size:24px; margin-bottom:4px;">📥</div>
+    <div style="font-size:12px; font-weight:600; color:var(--text); margin-bottom:2px;">
+      Drop files or folders to ingest
+    </div>
+    <div style="font-size:10px; color:var(--muted);">
+      Or drag from the legacy share browser ←
+    </div>
+    <input type="file" id="edz-file-input" style="display:none;" multiple
+           onchange="edzFileSelected(this.files)">
+  </div>
+
+  {# Queue #}
+  <div id="edz-queue" style="display:none; margin:0 10px; overflow-y:auto; max-height:160px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
+      <span style="font-size:10px; font-weight:700; color:var(--muted);
+                   text-transform:uppercase; letter-spacing:0.05em;">Queued</span>
+      <button onclick="edzClick()"
+              style="font-size:10px; color:var(--primary); background:none; border:none; cursor:pointer; padding:0;">
+        + Add more
+      </button>
+    </div>
+    <div id="edz-queue-list"></div>
+    <div style="margin-top:6px; display:flex; gap:6px;">
+      <button onclick="edzClearQueue()"
+              style="flex:1; padding:5px; font-size:11px;
+                     border:1px solid var(--border-color,#e2e8f0); border-radius:4px;
+                     cursor:pointer; background:var(--surface,#fff); color:var(--muted);">
+        Clear
+      </button>
+      <button onclick="edzStartCollection()" class="btn-primary"
+              style="flex:2; padding:5px; font-size:11px;">
+        Create Collection →
+      </button>
+    </div>
+  </div>
+
+</div>
+
+{# ── Modal ─────────────────────────────────────────────────────────────────── #}
+<div id="edz-modal"
+     style="display:none; position:fixed; inset:0;
+            background:rgba(0,0,0,0.55); align-items:center; justify-content:center; z-index:9000;">
+  <div style="background:var(--surface,#fff); border-radius:10px; padding:22px;
+              width:500px; max-height:90vh; overflow-y:auto;
+              box-shadow:0 8px 40px rgba(0,0,0,0.25);">
+
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+      <h3 style="font-size:15px; font-weight:600; margin:0; color:var(--text);">
+        New eDiscovery Collection
+      </h3>
+      <button onclick="edzCloseModal()"
+              style="border:none; background:none; font-size:20px; cursor:pointer; color:var(--muted); line-height:1;">×</button>
+    </div>
+
+    {# Files summary #}
+    <div id="edz-source-info"
+         style="background:#f8fafc; border:1px solid var(--border-color,#e2e8f0);
+                border-radius:6px; padding:8px 12px; margin-bottom:14px;
+                font-size:11px; color:var(--muted); max-height:80px; overflow-y:auto;">
+    </div>
+
+    {# Collection name #}
+    <div style="margin-bottom:12px;">
+      <label style="display:block; font-size:12px; font-weight:500; margin-bottom:4px; color:var(--text);">
+        Collection Name <span style="color:#dc2626;">*</span>
+      </label>
+      <input type="text" id="edz-col-name" placeholder="e.g. Smith Production Vol. 1"
+             style="width:100%; padding:7px 9px; font-size:12px;
+                    border:1px solid var(--border-color,#e2e8f0); border-radius:5px;
+                    box-sizing:border-box; font-family:inherit;">
+    </div>
+
+    {# Matter — auto-resolved or picker #}
+    <div style="margin-bottom:12px;">
+      <label style="display:block; font-size:12px; font-weight:500; margin-bottom:4px; color:var(--text);">
+        Matter <span style="color:#dc2626;">*</span>
+      </label>
+
+      {# Resolved matter display #}
+      <div id="edz-matter-resolved"
+           style="display:none; padding:7px 9px; background:#F0FDF4;
+                  border:1px solid #BBF7D0; border-radius:5px; font-size:12px;
+                  display:flex; align-items:center; justify-content:space-between;">
+        <span id="edz-matter-resolved-text" style="color:#166534; font-weight:500;"></span>
+        <button onclick="edzClearMatter()"
+                style="border:none; background:none; cursor:pointer; color:#166534; font-size:11px;">
+          Change
+        </button>
+      </div>
+
+      {# Manual picker (shown when not auto-resolved) #}
+      <div id="edz-matter-picker">
+        <div style="position:relative; margin-bottom:6px;">
+          <input type="text" id="edz-client-search" placeholder="Search client…"
+                 autocomplete="off"
+                 oninput="edzSearchClients(this.value)"
+                 style="width:100%; padding:7px 9px; font-size:12px;
+                        border:1px solid var(--border-color,#e2e8f0); border-radius:5px;
+                        box-sizing:border-box; font-family:inherit;">
+          <div id="edz-client-drop"
+               style="display:none; position:absolute; left:0; top:100%; z-index:9100;
+                      background:var(--surface,#fff); border:1px solid var(--border-color,#e2e8f0);
+                      border-radius:4px; box-shadow:0 4px 12px rgba(0,0,0,0.12);
+                      width:100%; max-height:180px; overflow-y:auto; font-size:11px;">
+          </div>
+        </div>
+        <div id="edz-matter-row" style="display:none;">
+          <select id="edz-matter-select"
+                  style="width:100%; padding:7px 9px; font-size:12px;
+                         border:1px solid var(--border-color,#e2e8f0); border-radius:5px;
+                         background:var(--surface,#fff); color:var(--text); font-family:inherit;">
+            <option value="">— select matter —</option>
+          </select>
+        </div>
+      </div>
+      <input type="hidden" id="edz-matter-id" value="">
+    </div>
+
+    {# Source type #}
+    <div style="margin-bottom:12px;">
+      <label style="display:block; font-size:12px; font-weight:500; margin-bottom:4px; color:var(--text);">
+        Source Type
+      </label>
+      <select id="edz-source-type"
+              style="width:100%; padding:7px 9px; font-size:12px;
+                     border:1px solid var(--border-color,#e2e8f0); border-radius:5px;
+                     background:var(--surface,#fff); color:var(--text); font-family:inherit;">
+        <option value="opposing_production">Opposing Production</option>
+        <option value="client_collection_dms">Client Collection (DMS)</option>
+        <option value="client_collection_dedicated">Client Collection (Bulk)</option>
+        <option value="third_party_subpoena">Third Party / Subpoena</option>
+        <option value="internal_collection">Internal Collection</option>
+      </select>
+    </div>
+
+    {# Source party #}
+    <div style="margin-bottom:16px;">
+      <label style="display:block; font-size:12px; font-weight:500; margin-bottom:4px; color:var(--text);">
+        Source Party
+      </label>
+      <input type="text" id="edz-source-party" placeholder="e.g. Plaintiff, Smith & Jones LLP…"
+             style="width:100%; padding:7px 9px; font-size:12px;
+                    border:1px solid var(--border-color,#e2e8f0); border-radius:5px;
+                    box-sizing:border-box; font-family:inherit;">
+    </div>
+
+    {# Progress bar (shown during upload) #}
+    <div id="edz-progress-wrap" style="display:none; margin-bottom:12px;">
+      <div style="font-size:11px; color:var(--muted); margin-bottom:4px;" id="edz-progress-label">
+        Uploading…
+      </div>
+      <div style="height:6px; background:#E2E8F0; border-radius:3px; overflow:hidden;">
+        <div id="edz-progress-bar"
+             style="height:100%; background:var(--primary,#0D1F3C); border-radius:3px;
+                    width:0%; transition:width 0.3s;"></div>
+      </div>
+    </div>
+
+    <div id="edz-modal-status"
+         style="font-size:11px; min-height:16px; margin-bottom:10px;"></div>
+
+    <div style="display:flex; justify-content:flex-end; gap:8px;">
+      <button onclick="edzCloseModal()" id="edz-cancel-btn"
+              style="padding:7px 16px; font-size:12px;
+                     border:1px solid var(--border-color,#e2e8f0); border-radius:5px;
+                     cursor:pointer; background:var(--surface,#fff);">
+        Cancel
+      </button>
+      <button onclick="edzSubmitCollection()" id="edz-submit-btn" class="btn-primary"
+              style="padding:7px 18px; font-size:12px;">
+        Create Collection
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<style>
+#edz-dropzone.dragover {
+  border-color: var(--primary, #1B2A4A);
+  background: #EFF6FF;
+}
+.edz-queue-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; background: #f8fafc;
+  border: 1px solid var(--border-color,#e2e8f0);
+  border-radius: 4px; font-size: 11px; margin-bottom: 4px;
+}
+.edz-queue-item .edz-size {
+  font-size: 9px; color: var(--muted); font-family: monospace; flex-shrink: 0;
+}
+</style>
+
+<script>
+(function() {
+
+  // ── State ────────────────────────────────────────────────────────────────
+  let _queue = [];        // [{type:'file'|'folder', name, path, share, diskRoot, file?, size?}]
+  let _clientTimer = null;
+
+  // ── Drag / drop ──────────────────────────────────────────────────────────
+  window.edzDragOver = function(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    document.getElementById('edz-dropzone').classList.add('dragover');
+  };
+  window.edzDragLeave = function(e) {
+    document.getElementById('edz-dropzone').classList.remove('dragover');
+  };
+  window.edzDrop = function(e) {
+    e.preventDefault();
+    document.getElementById('edz-dropzone').classList.remove('dragover');
+
+    // Share browser drag (folder or file on server)
+    const pathData = e.dataTransfer.getData('application/x-praesidium-path');
+    if (pathData) {
+      try {
+        const info = JSON.parse(pathData);
+        _addToQueue({
+          type: info.type || 'folder',
+          name: info.name,
+          path: info.path,
+          share: info.share,
+          diskRoot: info.diskRoot,
+          size: info.size || 0,
+          serverSide: true,
+        });
+      } catch(err) {}
+      return;
+    }
+
+    // OS file drop
+    const files = e.dataTransfer.files;
+    if (files && files.length) {
+      Array.from(files).forEach(f => _addToQueue({
+        type: 'file', name: f.name, file: f,
+        size: f.size, serverSide: false,
+      }));
+    }
+  };
+  window.edzClick = function() {
+    document.getElementById('edz-file-input').click();
+  };
+  window.edzFileSelected = function(files) {
+    Array.from(files).forEach(f => _addToQueue({
+      type: 'file', name: f.name, file: f,
+      size: f.size, serverSide: false,
+    }));
+  };
+
+  // ── Queue management ─────────────────────────────────────────────────────
+  function _addToQueue(item) {
+    _queue.push(item);
+    _renderQueue();
+  }
+  function _renderQueue() {
+    const qEl   = document.getElementById('edz-queue');
+    const listEl = document.getElementById('edz-queue-list');
+    if (!_queue.length) { qEl.style.display='none'; const f=document.getElementById('edz-footer'); if(f) f.style.display='none'; return; }
+    qEl.style.display='block'; const fEl=document.getElementById('edz-footer'); if(fEl) fEl.style.display='block';
+    listEl.innerHTML = _queue.map((item, i) => {
+      const sizeStr = item.size > 0
+        ? (item.size > 1048576
+          ? (item.size/1048576).toFixed(1) + ' MB'
+          : Math.round(item.size/1024) + ' KB')
+        : '';
+      const icon = item.type === 'folder' ? '📁' : (item.name.match(/\.zip$/i) ? '🗜️' : '📄');
+      return `<div class="edz-queue-item">
+        <span>${icon}</span>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+          ${item.name}${item.share ? ' <span style="color:var(--muted);">('+item.share+')</span>' : ''}
+        </span>
+        ${sizeStr ? `<span class="edz-size">${sizeStr}</span>` : ''}
+        <button onclick="edzRemoveItem(${i})"
+                style="border:none;background:none;cursor:pointer;color:var(--muted);font-size:14px;line-height:1;padding:0;">×</button>
+      </div>`;
+    }).join('');
+  }
+  window.edzRemoveItem = function(i) {
+    _queue.splice(i, 1);
+    _renderQueue();
+  };
+  window.edzClearQueue = function() {
+    _queue = [];
+    _renderQueue();
+  };
+
+  // ── Open modal ───────────────────────────────────────────────────────────
+  window.edzStartCollection = async function() {
+    if (!_queue.length) return;
+
+    // Populate source info
+    const srcEl = document.getElementById('edz-source-info');
+    srcEl.innerHTML = _queue.map(item => {
+      const sizeStr = item.size > 1048576
+        ? `${(item.size/1048576).toFixed(1)} MB` : '';
+      return `<div>${item.type==='folder'?'📁':'📄'} <strong>${item.name}</strong>${item.share?' · '+item.share:''}${sizeStr?' · '+sizeStr:''}</div>`;
+    }).join('');
+
+    // Auto-populate collection name from first item
+    const nameEl = document.getElementById('edz-col-name');
+    if (nameEl && !nameEl.value) {
+      nameEl.value = _queue[0].name.replace(/\.(zip|tar|gz|rar)$/i, '');
+    }
+
+    // Try to resolve matter from first server-side item
+    const serverItem = _queue.find(i => i.serverSide && i.path);
+    if (serverItem) {
+      await _resolveMatter(serverItem.path, serverItem.diskRoot || '');
+    } else {
+      _showMatterPicker();
+    }
+
+    document.getElementById('edz-modal-status').textContent = '';
+    document.getElementById('edz-modal').style.display = 'flex';
+    setTimeout(() => document.getElementById('edz-col-name')?.focus(), 50);
+  };
+
+  async function _resolveMatter(path, diskRoot) {
+    try {
+      const resp = await fetch(
+        `/api/v1/ediscovery/resolve-path?path=${encodeURIComponent(path)}&disk_root=${encodeURIComponent(diskRoot)}`
+      );
+      const data = await resp.json();
+      if (data.resolved && data.matter_id) {
+        document.getElementById('edz-matter-id').value = data.matter_id;
+        const label = [data.client_name, data.matter_name, data.matter_number]
+          .filter(Boolean).join(' · ');
+        document.getElementById('edz-matter-resolved-text').textContent = label;
+        document.getElementById('edz-matter-resolved').style.display = 'flex';
+        document.getElementById('edz-matter-picker').style.display = 'none';
+        return;
+      }
+    } catch(e) {}
+    _showMatterPicker();
+  }
+
+  function _showMatterPicker() {
+    document.getElementById('edz-matter-resolved').style.display = 'none';
+    document.getElementById('edz-matter-picker').style.display = 'block';
+    setTimeout(() => document.getElementById('edz-client-search')?.focus(), 50);
+  }
+
+  window.edzClearMatter = function() {
+    document.getElementById('edz-matter-id').value = '';
+    _showMatterPicker();
+  };
+
+  window.edzCloseModal = function() {
+    document.getElementById('edz-modal').style.display = 'none';
+  };
+
+  // ── Client search typeahead ──────────────────────────────────────────────
+  window.edzSearchClients = function(q) {
+    clearTimeout(_clientTimer);
+    const drop = document.getElementById('edz-client-drop');
+    if (!q || q.length < 1) { drop.style.display = 'none'; return; }
+    _clientTimer = setTimeout(async () => {
+      try {
+        const resp = await fetch(`/tenant-admin/client-matter-cleanup/search-clients?q=${encodeURIComponent(q)}&exclude=`);
+        const data = await resp.json();
+        if (!data.clients || !data.clients.length) {
+          drop.innerHTML = '<div style="padding:7px 10px;color:var(--muted);">No clients found</div>';
+          drop.style.display = 'block';
+          return;
+        }
+        drop.innerHTML = data.clients.map(c => `
+          <div style="padding:6px 10px; cursor:pointer;"
+               onmouseover="this.style.background='#f1f5f9'"
+               onmouseout="this.style.background=''"
+               onmousedown="edzSelectClient('${c.id}','${(c.name||'').replace(/'/g,"\\'")}')">
+            <div style="font-weight:500;">${c.name}</div>
+            <div style="font-size:10px;color:var(--muted);">${c.matter_count||0} matter${c.matter_count!==1?'s':''}</div>
+          </div>`).join('');
+        drop.style.display = 'block';
+      } catch(e) { drop.style.display = 'none'; }
+    }, 200);
+  };
+
+  window.edzSelectClient = async function(clientId, clientName) {
+    document.getElementById('edz-client-search').value = clientName;
+    document.getElementById('edz-client-drop').style.display = 'none';
+    try {
+      const resp = await fetch(`/tenant-admin/folder-reconciliation/matters?client_id=${clientId}`);
+      const data = await resp.json();
+      const sel  = document.getElementById('edz-matter-select');
+      sel.innerHTML = '<option value="">— select matter —</option>' +
+        (data.matters || []).map(m =>
+          `<option value="${m.id}">${m.name}${m.number?" ("+m.number+")":""}</option>`
+        ).join('');
+      document.getElementById('edz-matter-row').style.display = 'block';
+      sel.onchange = () => {
+        document.getElementById('edz-matter-id').value = sel.value;
+      };
+    } catch(e) {}
+  };
+
+  // ── Submit ────────────────────────────────────────────────────────────────
+  window.edzSubmitCollection = async function() {
+    const name      = document.getElementById('edz-col-name')?.value.trim();
+    const matterId  = document.getElementById('edz-matter-id')?.value;
+    const srcType   = document.getElementById('edz-source-type')?.value;
+    const srcParty  = document.getElementById('edz-source-party')?.value.trim();
+    const statusEl  = document.getElementById('edz-modal-status');
+    const submitBtn = document.getElementById('edz-submit-btn');
+    const cancelBtn = document.getElementById('edz-cancel-btn');
+
+    if (!name)     { _setStatus('Collection name required.', 'error'); return; }
+    if (!matterId) { _setStatus('Select a matter first.', 'error'); return; }
+
+    submitBtn.disabled = true;
+    cancelBtn.disabled = true;
+    _setStatus('', '');
+
+    const serverItems = _queue.filter(i => i.serverSide);
+    const fileItems   = _queue.filter(i => !i.serverSide && i.file);
+
+    try {
+      if (serverItems.length > 0) {
+        // Server-side path ingest (dragged from share browser)
+        _setStatus('Creating collection…', 'info');
+        const item = serverItems[0];
+        const resp = await fetch('/api/v1/ediscovery/ingest-path', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            collection_name: name,
+            matter_id:       matterId,
+            source_type:     srcType,
+            source_party:    srcParty || null,
+            path:            item.path,
+            disk_root:       item.diskRoot || '',
+          }),
+        });
+        const data = await resp.json();
+        if (resp.ok) {
+          _onSuccess(data);
+        } else {
+          _setStatus('Error: ' + (data.error || 'failed'), 'error');
+          submitBtn.disabled = false;
+          cancelBtn.disabled = false;
+        }
+
+      } else if (fileItems.length > 0) {
+        // File upload (OS drop)
+        _showProgress(true);
+        _setStatus(`Uploading ${fileItems.length} file${fileItems.length>1?'s':''}…`, 'info');
+
+        const formData = new FormData();
+        formData.append('collection_name', name);
+        formData.append('matter_id',       matterId);
+        formData.append('source_type',     srcType);
+        if (srcParty) formData.append('source_party', srcParty);
+        fileItems.forEach(item => formData.append('files', item.file));
+
+        // Use XMLHttpRequest for upload progress
+        const result = await _uploadWithProgress(formData);
+        _showProgress(false);
+
+        if (result.ok) {
+          _onSuccess(result.data);
+        } else {
+          _setStatus('Error: ' + (result.error || 'upload failed'), 'error');
+          submitBtn.disabled = false;
+          cancelBtn.disabled = false;
+        }
+      }
+
+    } catch(e) {
+      _showProgress(false);
+      _setStatus('Network error: ' + e.message, 'error');
+      submitBtn.disabled = false;
+      cancelBtn.disabled = false;
+    }
+  };
+
+  function _uploadWithProgress(formData) {
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest();
+      xhr.upload.onprogress = e => {
+        if (e.lengthComputable) {
+          const pct = Math.round(e.loaded / e.total * 100);
+          document.getElementById('edz-progress-bar').style.width = pct + '%';
+          document.getElementById('edz-progress-label').textContent =
+            `Uploading… ${pct}% (${(e.loaded/1048576).toFixed(1)} MB / ${(e.total/1048576).toFixed(1)} MB)`;
+        }
+      };
+      xhr.onload = () => {
+        try {
+          const data = JSON.parse(xhr.responseText);
+          resolve({ ok: xhr.status < 400, data, error: data.error });
+        } catch(e) {
+          resolve({ ok: false, error: 'Invalid response' });
+        }
+      };
+      xhr.onerror = () => resolve({ ok: false, error: 'Network error' });
+      xhr.open('POST', '/api/v1/ediscovery/upload');
+      xhr.send(formData);
+    });
+  }
+
+  function _onSuccess(data) {
+    _setStatus('✓ Collection created — ingestion queued', 'ok');
+    _queue = [];
+    _renderQueue();
+    setTimeout(() => {
+      edzCloseModal();
+      document.getElementById('edz-col-name').value = '';
+      document.getElementById('edz-source-party').value = '';
+      document.getElementById('edz-matter-id').value = '';
+      document.getElementById('edz-submit-btn').disabled = false;
+      document.getElementById('edz-cancel-btn').disabled = false;
+      // Refresh collection status widget
+      const colWidget = document.getElementById('widget-ediscovery_collection_status');
+      if (colWidget) htmx.trigger(colWidget, 'refresh');
+      const ingestWidget = document.getElementById('widget-ingest-status');
+      if (ingestWidget) htmx.trigger(ingestWidget, 'refresh');
+      // Navigate to status page if we have collection_id
+      if (data.collection_id) {
+        window.location.href = '/ediscovery/collections/' + data.collection_id + '/status-page';
+      }
+    }, 1200);
+  }
+
+  function _setStatus(msg, type) {
+    const el = document.getElementById('edz-modal-status');
+    if (!el) return;
+    el.textContent = msg;
+    el.style.color = type === 'error' ? '#DC2626'
+                   : type === 'ok'    ? '#166534'
+                   : 'var(--muted)';
+  }
+
+  function _showProgress(show) {
+    document.getElementById('edz-progress-wrap').style.display = show ? 'block' : 'none';
+    if (!show) document.getElementById('edz-progress-bar').style.width = '0%';
+  }
+
+})();
+</script>

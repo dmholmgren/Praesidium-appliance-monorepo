@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}{{ meta.label }} — Connector{% endblock %}
+
+{% block content %}
+<div class="p-6 max-w-5xl mx-auto">
+
+  <!-- Breadcrumb -->
+  <div class="text-sm text-gray-400 mb-4">
+    <a href="/tenant-admin/connectors" class="hover:text-blue-500">Connectors</a>
+    <span class="mx-2">/</span>
+    <span class="text-gray-700 dark:text-white">{{ meta.label }}</span>
+  </div>
+
+  <!-- Header row -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ meta.label }}</h1>
+      <p class="text-sm text-gray-500 mt-1">{{ meta.description }}</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <!-- Status badge -->
+      {% set status = connector.status if connector else 'unconfigured' %}
+      {% if status == 'healthy' %}
+        <span class="px-3 py-1 rounded-full text-sm bg-green-100 text-green-800 font-medium">● Healthy</span>
+      {% elif status == 'error' %}
+        <span class="px-3 py-1 rounded-full text-sm bg-red-100 text-red-800 font-medium">● Error</span>
+      {% elif status == 'degraded' %}
+        <span class="px-3 py-1 rounded-full text-sm bg-yellow-100 text-yellow-800 font-medium">● Degraded</span>
+      {% else %}
+        <span class="px-3 py-1 rounded-full text-sm bg-gray-100 text-gray-600 font-medium">● Not Configured</span>
+      {% endif %}
+
+      <!-- Enable/disable toggle -->
+      <form method="post" action="/tenant-admin/connectors/{{ connector_type }}/toggle">
+        {% if connector and connector.enabled %}
+          <button type="submit" class="px-4 py-2 rounded-lg bg-gray-200 text-gray-700 text-sm hover:bg-gray-300">
+            Disable
+          </button>
+        {% else %}
+          <button type="submit" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm hover:bg-blue-700">
+            Enable
+          </button>
+        {% endif %}
+      </form>
+      <a href="/tenant-admin/connectors/{{ connector_type }}/configure" class="px-4 py-2 rounded-lg bg-gray-600 text-white text-sm hover:bg-gray-700">Configure</a>
+    </div>
+  </div>
+
+  {% if request.query_params.get('saved') %}
+  <div class="mb-4 p-3 bg-green-50 border border-green-200 rounded text-green-800 text-sm">Configuration saved.</div>
+  {% endif %}
+  {% if request.query_params.get('imported') %}
+  <div class="mb-4 p-3 bg-blue-50 border border-blue-200 rounded text-blue-800 text-sm">
+    Import queued — {{ request.query_params.get('imported') }} rows accepted.
+  </div>
+  {% endif %}
+
+  <div class="space-y-6">
+
+    <!-- Last sync info -->
+    {% if connector %}
+    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">Status</h2>
+      <div class="grid grid-cols-2 gap-4 text-sm">
+        <div>
+          <span class="text-gray-500">Last sync:</span>
+          <span class="ml-2 text-gray-900 dark:text-white">
+            {{ connector.last_sync_at[:19] | replace('T', ' ') if connector.last_sync_at else 'Never' }}
+          </span>
+        </div>
+        <div>
+          <span class="text-gray-500">Frequency:</span>
+          <span class="ml-2 text-gray-900 dark:text-white">{{ connector.sync_frequency | title }}</span>
+        </div>
+      </div>
+      {% if connector.last_error and connector.status == 'error' %}
+      <div class="mt-3 p-3 bg-red-50 rounded text-red-800 text-sm font-mono break-all">
+        {{ connector.last_error }}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Configuration -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">Configuration</h2>
+      <form method="post" action="/tenant-admin/connectors/{{ connector_type }}/config">
+        <div class="space-y-3 mb-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Sync Frequency</label>
+            <select name="sync_frequency" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+              {% for freq in ['15min', 'hourly', '4hour', 'nightly'] %}
+              <option value="{{ freq }}" {% if connector and connector.sync_frequency == freq %}selected{% endif %}>
+                {{ {'15min': 'Every 15 minutes', 'hourly': 'Every hour', '4hour': 'Every 4 hours', 'nightly': 'Nightly (2:00 AM)'}[freq] }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <!-- Connector-specific config fields injected by child templates via block -->
+          {% block connector_config %}
+          <p class="text-sm text-gray-500 italic">Connector-specific configuration will appear here once {{ meta.label }} adapter is built.</p>
+          {% endblock %}
+        </div>
+        <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+          Save Configuration
+        </button>
+      </form>
+      <a href="/tenant-admin/connectors/{{ connector_type }}/configure" class="px-4 py-2 rounded-lg bg-gray-600 text-white text-sm hover:bg-gray-700">Configure</a>
+    </div>
+
+    <!-- Manual trigger (live connectors) or CSV import (csv_import connectors) -->
+    {% if meta.type in ['live_push', 'live_pull'] %}
+    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">Manual Sync</h2>
+      <p class="text-sm text-gray-500 mb-3">Enqueue an immediate sync run outside the normal schedule.</p>
+      <button
+        hx-post="/tenant-admin/connectors/{{ connector_type }}/trigger"
+        hx-target="#trigger-result"
+        hx-swap="innerHTML"
+        class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">
+        Run Now
+      </button>
+      <div id="trigger-result" class="mt-3 text-sm text-gray-600"></div>
+    </div>
+    {% else %}
+    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">Import CSV</h2>
+      <p class="text-sm text-gray-500 mb-3">Drag and drop a CSV export from {{ meta.label }}.</p>
+      <form method="post" action="/tenant-admin/connectors/{{ connector_type }}/import" enctype="multipart/form-data">
+        <div class="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-8 text-center mb-3">
+          <input type="file" name="file" accept=".csv" class="hidden" id="csv-file-input">
+          <label for="csv-file-input" class="cursor-pointer">
+            <div class="text-gray-400 text-sm">Click to select a CSV file or drag it here</div>
+            <div id="csv-filename" class="text-blue-600 text-sm mt-2"></div>
+          </label>
+        </div>
+        <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700">
+          Import
+        </button>
+      </form>
+      <a href="/tenant-admin/connectors/{{ connector_type }}/configure" class="px-4 py-2 rounded-lg bg-gray-600 text-white text-sm hover:bg-gray-700">Configure</a>
+      <!-- Import history -->
+      {% if csv_history %}
+      <div class="mt-4">
+        <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Import History</h3>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs">
+            <thead>
+              <tr class="text-gray-500 border-b border-gray-200">
+                <th class="text-left py-1">File</th>
+                <th class="text-right py-1">Rows</th>
+                <th class="text-right py-1">Imported</th>
+                <th class="text-right py-1">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for imp in csv_history %}
+              <tr class="border-b border-gray-100 dark:border-gray-700">
+                <td class="py-1 text-gray-800 dark:text-gray-200 truncate max-w-xs">{{ imp.filename }}</td>
+                <td class="text-right py-1 text-gray-600">{{ imp.row_count }}</td>
+                <td class="text-right py-1 text-gray-400">{{ imp.imported_at[:16] | replace('T', ' ') if imp.imported_at else '' }}</td>
+                <td class="text-right py-1">
+                  {% if imp.status == 'complete' %}
+                    <span class="text-green-600">✓</span>
+                  {% else %}
+                    <span class="text-red-600">✗</span>
+                  {% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Sync history -->
+    {% if sync_history %}
+    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-3">Sync History</h2>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="text-gray-500 border-b border-gray-200">
+              <th class="text-left py-1">Started</th>
+              <th class="text-right py-1">Duration</th>
+              <th class="text-right py-1">Processed</th>
+              <th class="text-right py-1">Skipped</th>
+              <th class="text-right py-1">Errors</th>
+              <th class="text-left py-1 pl-4">Last Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for run in sync_history %}
+            <tr class="border-b border-gray-100 dark:border-gray-700 {% if run.error_count > 0 %}bg-red-50 dark:bg-red-900/10{% endif %}">
+              <td class="py-1 text-gray-600">{{ run.started_at[:19] | replace('T', ' ') if run.started_at else '' }}</td>
+              <td class="text-right py-1 text-gray-500">{{ run.duration_seconds ~ 's' if run.duration_seconds is not none else '—' }}</td>
+              <td class="text-right py-1 text-green-700">{{ run.records_processed }}</td>
+              <td class="text-right py-1 text-gray-500">{{ run.records_skipped }}</td>
+              <td class="text-right py-1 {% if run.error_count > 0 %}text-red-600{% else %}text-gray-400{% endif %}">{{ run.error_count }}</td>
+              <td class="pl-4 py-1 text-red-600 truncate max-w-xs" title="{{ run.last_error or '' }}">
+                {{ (run.last_error or '')[:60] }}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+
+<script>
+document.getElementById('csv-file-input').addEventListener('change', function(e) {
+  const fn = e.target.files[0]?.name || '';
+  document.getElementById('csv-filename').textContent = fn;
+});
+</script>
+{% endblock %}

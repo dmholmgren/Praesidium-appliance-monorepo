@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}{{ production.production_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block page_title %}{{ production.production_name }}{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<div style="font-size:12px; color:var(--muted); margin-bottom:16px;">
+  <a href="/matters" style="color:var(--muted); text-decoration:none;">Matters</a>
+  <span style="margin:0 6px;">›</span>
+  <a href="/matters/{{ production.matter_id }}" style="color:var(--muted); text-decoration:none;">{{ production.matter_name }}</a>
+  <span style="margin:0 6px;">›</span>
+  <a href="/ediscovery/matters/{{ production.matter_id }}/productions" style="color:var(--muted); text-decoration:none;">Productions</a>
+  <span style="margin:0 6px;">›</span>
+  <span style="color:var(--text);">{{ production.production_name }}</span>
+</div>
+
+<div style="display:flex; align-items:center; gap:10px; margin-bottom:20px;">
+  <span id="status-badge" class="badge
+    {% if production.status == 'complete' %}badge-green
+    {% elif production.status == 'running' %}badge-blue
+    {% elif production.status == 'partial' %}badge-yellow
+    {% elif production.status == 'failed' %}badge-red
+    {% else %}badge-gray{% endif %}">{{ production.status }}</span>
+  {% if production.producing_party %}<span style="font-size:12px; color:var(--muted);">From: {{ production.producing_party }}</span>{% endif %}
+
+  {% if production.status == 'pending' %}
+  <div style="margin-left:auto; display:flex; gap:8px;">
+    <a href="/ediscovery/productions/{{ production.id }}/field-mapping" class="btn-secondary">Field Mapping</a>
+    <button onclick="startImport()" class="btn-primary">Start Import</button>
+  </div>
+  {% endif %}
+</div>
+
+<!-- Stats -->
+<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px;">
+  <div class="card" style="text-align:center;">
+    <p style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:6px;">Total Rows</p>
+    <p id="stat-total" style="font-size:24px; font-weight:600; color:var(--text);">{{ production.row_count_total or '—' }}</p>
+  </div>
+  <div class="card" style="text-align:center;">
+    <p style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:6px;">Imported</p>
+    <p id="stat-imported" style="font-size:24px; font-weight:600; color:#059669;">{{ production.row_count_imported or 0 }}</p>
+  </div>
+  <div class="card" style="text-align:center;">
+    <p style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:6px;">Failed</p>
+    <p id="stat-failed" style="font-size:24px; font-weight:600; color:#DC2626;">{{ production.row_count_failed or 0 }}</p>
+  </div>
+  <div class="card" style="text-align:center;">
+    <p style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:6px;">Skipped</p>
+    <p id="stat-skipped" style="font-size:24px; font-weight:600; color:var(--muted);">{{ production.row_count_skipped or 0 }}</p>
+  </div>
+</div>
+
+<!-- Progress bar -->
+{% if production.status == 'running' or production.row_count_total %}
+<div class="card" style="margin-bottom:16px;">
+  <div style="display:flex; align-items:center; justify-content:space-between; font-size:12px; color:var(--muted); margin-bottom:8px;">
+    <span>Import Progress</span>
+    <span id="stat-pct">{% if production.row_count_total and production.row_count_total > 0 %}{{ ((production.row_count_imported or 0) / production.row_count_total * 100) | round(1) }}%{% else %}0%{% endif %}</span>
+  </div>
+  <div style="height:6px; background:#E5E7EB; border-radius:6px; overflow:hidden;">
+    <div id="progress-bar" style="height:100%; border-radius:6px; transition:width 0.5s;
+      background:{% if production.status == 'complete' %}#10B981{% elif production.status == 'failed' %}#EF4444{% elif production.status == 'partial' %}#F59E0B{% else %}var(--primary){% endif %};
+      width:{% if production.row_count_total and production.row_count_total > 0 %}{{ ((production.row_count_imported or 0) / production.row_count_total * 100) | round(1) }}{% else %}0{% endif %}%;"></div>
+  </div>
+  {% if production.status == 'running' %}
+  <p style="font-size:11px; color:var(--primary); margin-top:6px;">Import running — refreshing automatically…</p>
+  {% endif %}
+</div>
+{% endif %}
+
+<!-- Meta info -->
+<div class="card" style="margin-bottom:16px;">
+  <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:16px; font-size:12px;">
+    <div>
+      <p style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:4px;">Format</p>
+      <p style="font-weight:500; color:var(--text); text-transform:uppercase;">{{ production.load_file_format }}</p>
+    </div>
+    <div>
+      <p style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:4px;">Load File</p>
+      <p style="color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ production.load_file_name }}">{{ production.load_file_name or '—' }}</p>
+    </div>
+    <div>
+      <p style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:4px;">Created</p>
+      <p style="color:var(--text);">{{ production.created_at.strftime('%b %d, %Y %H:%M') if production.created_at else '—' }}</p>
+    </div>
+    <div>
+      <p style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:4px;">Completed</p>
+      <p style="color:var(--text);">{{ production.completed_at.strftime('%b %d, %Y %H:%M') if production.completed_at else '—' }}</p>
+    </div>
+  </div>
+  {% if production.error_message %}
+  <div style="margin-top:12px; padding:10px 12px; background:#FEF2F2; border:1px solid #FECACA; border-radius:6px; font-size:12px; color:#991B1B;">
+    <span style="font-weight:600;">Error:</span> {{ production.error_message }}
+  </div>
+  {% endif %}
+</div>
+
+<!-- Row table -->
+{% if rows %}
+<div class="card" style="padding:0; overflow:hidden;">
+  <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
+    <span style="font-size:13px; font-weight:500; color:var(--text);">Production Rows</span>
+    <span style="font-size:11px; color:var(--muted);">Showing first {{ rows | length }} rows</span>
+  </div>
+  <div style="overflow-x:auto;">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:40px;">#</th>
+          <th>Bates Begin</th>
+          <th>Bates End</th>
+          <th>Status</th>
+          <th>Processed</th>
+          <th>Error</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td style="font-family:monospace; font-size:11px; color:var(--muted);">{{ row.row_number }}</td>
+          <td style="font-family:monospace; font-size:11px; color:var(--text);">{{ row.bates_begin or '—' }}</td>
+          <td style="font-family:monospace; font-size:11px; color:var(--muted);">{{ row.bates_end or '—' }}</td>
+          <td>
+            {% if row.status == 'imported' %}<span class="badge badge-green">imported</span>
+            {% elif row.status == 'failed' %}<span class="badge badge-red">failed</span>
+            {% elif row.status == 'skipped' %}<span class="badge badge-gray">skipped</span>
+            {% else %}<span class="badge badge-blue">{{ row.status }}</span>{% endif %}
+          </td>
+          <td style="font-size:11px; color:var(--muted);">{{ row.processed_at.strftime('%H:%M:%S') if row.processed_at else '—' }}</td>
+          <td style="font-size:11px; color:#DC2626; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="{{ row.error_message or '' }}">{{ row.error_message or '' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{% elif production.status == 'pending' %}
+<div class="empty-state card">
+  <p style="font-size:13px; color:var(--muted); margin-bottom:12px;">Configure field mapping and start the import to see row results.</p>
+  <a href="/ediscovery/productions/{{ production.id }}/field-mapping" class="btn-primary">Configure Field Mapping →</a>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+{% if production.status == 'running' %}
+const productionId = '{{ production.id }}';
+let pollInterval = setInterval(async () => {
+  try {
+    const resp = await fetch(`/ediscovery/productions/${productionId}/status`);
+    if (!resp.ok) return;
+    const data = await resp.json();
+    document.getElementById('stat-total').textContent = data.row_count_total || '—';
+    document.getElementById('stat-imported').textContent = data.row_count_imported || 0;
+    document.getElementById('stat-failed').textContent = data.row_count_failed || 0;
+    document.getElementById('stat-skipped').textContent = data.row_count_skipped || 0;
+    document.getElementById('stat-pct').textContent = data.percent_complete + '%';
+    document.getElementById('progress-bar').style.width = data.percent_complete + '%';
+    document.getElementById('status-badge').textContent = data.status;
+    if (data.done) { clearInterval(pollInterval); setTimeout(() => window.location.reload(), 800); }
+  } catch(e) {}
+}, 3000);
+{% endif %}
+
+async function startImport() {
+  const btn = event.target;
+  btn.disabled = true; btn.textContent = 'Starting…';
+  try {
+    const resp = await fetch('/ediscovery/productions/{{ production.id }}/start', { method: 'POST' });
+    if (!resp.ok) {
+      const e = await resp.json();
+      alert('Error: ' + (e.detail || 'Unknown error'));
+      btn.disabled = false; btn.textContent = 'Start Import';
+      return;
+    }
+    window.location.reload();
+  } catch(err) {
+    alert('Network error: ' + err.message);
+    btn.disabled = false; btn.textContent = 'Start Import';
+  }
+}
+</script>
+{% endblock %}

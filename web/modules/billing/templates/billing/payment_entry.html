@@ -1,0 +1,117 @@
+{% extends "base_tenant.html" %}
+{% block title %}New Payment — {{ brand.platform_name }}{% endblock %}
+{% block content %}
+<div class="px-6 py-4 max-w-xl">
+  <div class="flex items-center gap-2 text-sm text-gray-400 mb-4">
+    <a href="/billing/payments" class="hover:text-gray-600">Payments</a>
+    <span>›</span>
+    <span class="text-gray-700">New Payment</span>
+  </div>
+
+  <div class="bg-white border rounded p-6">
+    <h2 class="text-lg font-semibold text-gray-900 mb-4">Enter Payment</h2>
+    <p class="text-sm text-gray-500 mb-4">
+      Enter a single payment at the client level. You'll allocate across matters and invoices on the next step.
+    </p>
+    <div id="form-error" class="hidden mb-4 bg-red-50 border border-red-200 text-red-700 rounded p-3 text-sm"></div>
+
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Client *</label>
+        <select id="client_code" class="w-full border rounded px-3 py-2 text-sm">
+          <option value="">Select client…</option>
+        </select>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Payment Date *</label>
+          <input type="date" id="payment_date" class="w-full border rounded px-3 py-2 text-sm">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Amount *</label>
+          <input type="number" id="amount" step="0.01" min="0"
+                 class="w-full border rounded px-3 py-2 text-sm" placeholder="0.00">
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Method</label>
+          <select id="payment_method" class="w-full border rounded px-3 py-2 text-sm">
+            <option value="">—</option>
+            <option value="check">Check</option>
+            <option value="ach">ACH / Wire</option>
+            <option value="credit_card">Credit Card</option>
+            <option value="cash">Cash</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Reference / Check #</label>
+          <input type="text" id="reference" class="w-full border rounded px-3 py-2 text-sm" placeholder="Optional">
+        </div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Notes</label>
+        <textarea id="notes" rows="2" class="w-full border rounded px-3 py-2 text-sm" placeholder="Optional"></textarea>
+      </div>
+    </div>
+
+    <div class="flex justify-end gap-3 pt-4 border-t mt-4">
+      <a href="/billing/payments" class="px-4 py-2 border rounded text-sm text-gray-600 hover:bg-gray-50">
+        Cancel
+      </a>
+      <button onclick="savePayment()"
+              class="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">
+        Save & Allocate →
+      </button>
+    </div>
+  </div>
+</div>
+<script>
+async function loadClients() {
+  const res  = await fetch('/api/billing/matters?status=active');
+  const data = await res.json();
+  // Get unique client codes
+  const clients = [...new Map(data.matters.map(m => [m.client_code, m.client_code])).values()].sort();
+  const sel = document.getElementById('client_code');
+  clients.forEach(cc => {
+    const opt = document.createElement('option');
+    opt.value = opt.textContent = cc;
+    sel.appendChild(opt);
+  });
+  document.getElementById('payment_date').value = new Date().toISOString().split('T')[0];
+}
+
+async function savePayment() {
+  const client_code    = document.getElementById('client_code').value;
+  const payment_date   = document.getElementById('payment_date').value;
+  const amount         = parseFloat(document.getElementById('amount').value || 0);
+  const payment_method = document.getElementById('payment_method').value;
+  const reference      = document.getElementById('reference').value;
+  const notes          = document.getElementById('notes').value;
+  const errEl          = document.getElementById('form-error');
+  errEl.classList.add('hidden');
+
+  if (!client_code || !payment_date || !amount) {
+    errEl.textContent = 'Client, date, and amount are required.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  const res = await fetch('/api/billing/payments', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({client_code, payment_date, amount, payment_method, reference, notes})
+  });
+
+  if (res.ok) {
+    const data = await res.json();
+    location.href = `/billing/payments/${data.payment_id}/allocate`;
+  } else {
+    const err = await res.json();
+    errEl.textContent = err.detail || 'Error saving payment.';
+    errEl.classList.remove('hidden');
+  }
+}
+loadClients();
+</script>
+{% endblock %}

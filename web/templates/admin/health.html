@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title_suffix %} — Health{% endblock %}
+{% block page_title %}VM Health Grid{% endblock %}
+{% block header_right %}
+  <span id="health-ts">{{ now[:19] }} UTC</span>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+  <!-- Auto-refreshing health grid -->
+  <section>
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-gray-300 font-medium text-sm uppercase tracking-wide">Infrastructure VMs</h2>
+      <button
+        hx-get="/admin/htmx/health-grid"
+        hx-target="#health-grid"
+        hx-swap="innerHTML"
+        hx-indicator="#global-spinner"
+        class="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1"
+      >
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        Refresh
+      </button>
+    </div>
+
+    <div id="health-grid"
+         hx-get="/admin/htmx/health-grid"
+         hx-trigger="load, every 30s"
+         hx-swap="innerHTML"
+         hx-indicator="#global-spinner"
+    >
+      <!-- Loaded by HTMX -->
+      <div class="text-gray-500 text-sm py-4">Loading health grid...</div>
+    </div>
+  </section>
+
+  <!-- Static server list from DB (page load) -->
+  <section>
+    <h2 class="text-gray-300 font-medium text-sm uppercase tracking-wide mb-3">Registered Middleware Servers</h2>
+    <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-gray-800 bg-gray-800/50">
+            <th class="text-left px-4 py-2.5 text-gray-400 font-medium text-xs uppercase tracking-wide">Name</th>
+            <th class="text-left px-4 py-2.5 text-gray-400 font-medium text-xs uppercase tracking-wide">IP</th>
+            <th class="text-left px-4 py-2.5 text-gray-400 font-medium text-xs uppercase tracking-wide">Role</th>
+            <th class="text-left px-4 py-2.5 text-gray-400 font-medium text-xs uppercase tracking-wide">Status</th>
+            <th class="text-left px-4 py-2.5 text-gray-400 font-medium text-xs uppercase tracking-wide">Last Seen</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in servers %}
+          <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+            <td class="px-4 py-2.5 font-mono text-xs text-gray-200">{{ s.name }}</td>
+            <td class="px-4 py-2.5 font-mono text-xs text-gray-400">{{ s.ip }}:{{ s.port }}</td>
+            <td class="px-4 py-2.5">
+              <span class="badge status-unk">{{ s.role }}</span>
+            </td>
+            <td class="px-4 py-2.5">
+              {% if s.status == 'active' %}
+              <span class="badge status-ok">active</span>
+              {% elif s.status == 'draining' %}
+              <span class="badge status-warn">draining</span>
+              {% else %}
+              <span class="badge status-err">{{ s.status }}</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2.5 text-gray-500 text-xs">
+              {% if s.last_seen %}{{ s.last_seen }}{% else %}—{% endif %}
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="px-4 py-6 text-center text-gray-500">No servers registered</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Sidecar quick links -->
+  <section>
+    <h2 class="text-gray-300 font-medium text-sm uppercase tracking-wide mb-3">RPRX Sidecar</h2>
+    <div class="flex gap-3">
+      <a href="/admin/api/sidecar/health" target="_blank"
+         class="px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs text-gray-300 transition-colors">
+        /health
+      </a>
+      <a href="/admin/api/sidecar/slots" target="_blank"
+         class="px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs text-gray-300 transition-colors">
+        /slots
+      </a>
+      <a href="/admin/api/sidecar/storage" target="_blank"
+         class="px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs text-gray-300 transition-colors">
+        /storage
+      </a>
+      <a href="/admin/api/sidecar/events" target="_blank"
+         class="px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded text-xs text-gray-300 transition-colors">
+        /events
+      </a>
+    </div>
+  </section>
+
+</div>
+{% endblock %}

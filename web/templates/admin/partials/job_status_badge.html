@@ -1,0 +1,27 @@
+<!-- partials/job_status_badge.html — HTMX fragment: RQ job status badge -->
+{% set s = job.status %}
+{% if s == 'finished' %}
+  {% if job.result and job.result.status == 'error' %}
+    <span class="badge status-err">failed</span>
+    <span class="text-red-400 text-xs ml-1">{{ job.result.error | truncate(60) }}</span>
+  {% else %}
+    <span class="badge status-ok">done</span>
+  {% endif %}
+{% elif s == 'failed' %}
+  <span class="badge status-err">failed</span>
+  {% if job.exc_info %}
+  <span class="text-red-400 text-xs ml-1">{{ job.exc_info | truncate(60) }}</span>
+  {% endif %}
+{% elif s == 'started' %}
+  <span class="badge status-warn"
+        hx-get="/admin/htmx/job-status/{{ job.job_id }}"
+        hx-trigger="every 3s"
+        hx-swap="outerHTML">running...</span>
+{% elif s == 'queued' or s == 'deferred' %}
+  <span class="badge status-unk"
+        hx-get="/admin/htmx/job-status/{{ job.job_id }}"
+        hx-trigger="every 3s"
+        hx-swap="outerHTML">queued</span>
+{% else %}
+  <span class="badge status-unk">{{ s }}</span>
+{% endif %}

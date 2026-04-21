@@ -1,0 +1,76 @@
+{% extends "admin/base.html" %}
+{% block title %}Provisioning Progress{% endblock %}
+{% block content %}
+<div class="max-w-xl mx-auto py-10 px-4">
+
+  <h1 class="text-2xl font-bold text-yellow-400 mb-1">Provisioning in Progress</h1>
+  <p class="text-gray-400 mb-8">Job ID: <code class="text-xs text-gray-500">{{ job_id }}</code></p>
+
+  <div id="progress-panel"
+       {% if status not in ('finished', 'failed') %}
+       hx-get="/admin/provision/progress/{{ job_id }}"
+       hx-trigger="every 2s"
+       hx-target="#progress-panel"
+       hx-swap="outerHTML"
+       {% endif %}>
+
+    {% if status == 'queued' or status == 'started' %}
+    <div class="flex items-center gap-3 text-yellow-400">
+      <svg class="animate-spin h-6 w-6" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+      </svg>
+      <span class="text-lg font-semibold">{{ status|title }}…</span>
+    </div>
+    <p class="text-gray-400 text-sm mt-3">
+      Creating DB record, seeding feature flags, creating storage directory,
+      writing nginx config. This takes 10–60 seconds.
+    </p>
+
+    {% elif status == 'finished' %}
+    <div class="bg-green-900/30 border border-green-600 rounded p-5">
+      <div class="flex items-center gap-2 text-green-400 text-lg font-bold mb-3">
+        ✓ Provisioning Complete
+      </div>
+      {% if result %}
+      <table class="text-sm w-full">
+        <tr><td class="text-gray-400 pr-4">Tenant ID</td><td class="text-white font-mono text-xs">{{ result.tenant_id }}</td></tr>
+        <tr><td class="text-gray-400 pr-4">Slug</td><td class="text-white">{{ result.slug }}</td></tr>
+        <tr><td class="text-gray-400 pr-4">Status</td><td class="text-green-400">{{ result.status }}</td></tr>
+        {% if result.errors %}
+        <tr><td class="text-gray-400 pr-4">Warnings</td><td class="text-yellow-400">{{ result.errors | join(', ') }}</td></tr>
+        {% endif %}
+      </table>
+      {% endif %}
+      <div class="mt-5 flex gap-3">
+        <a href="/admin/tenants" class="flex-1 text-center bg-yellow-500 hover:bg-yellow-400 text-gray-900 font-bold py-2 rounded">
+          View All Tenants
+        </a>
+        <a href="/admin/provision/new" class="flex-1 text-center border border-gray-600 text-gray-300 py-2 rounded hover:bg-gray-800">
+          Provision Another
+        </a>
+      </div>
+    </div>
+
+    {% elif status == 'failed' %}
+    <div class="bg-red-900/30 border border-red-600 rounded p-5">
+      <div class="flex items-center gap-2 text-red-400 text-lg font-bold mb-3">
+        ✗ Provisioning Failed
+      </div>
+      {% if error %}
+      <pre class="text-xs text-red-300 bg-gray-900 rounded p-3 overflow-x-auto whitespace-pre-wrap">{{ error }}</pre>
+      {% endif %}
+      <div class="mt-4">
+        <a href="/admin/provision/new" class="bg-yellow-500 hover:bg-yellow-400 text-gray-900 font-bold py-2 px-4 rounded">
+          ← Try Again
+        </a>
+      </div>
+    </div>
+
+    {% else %}
+    <div class="text-gray-400">Status: {{ status }}</div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

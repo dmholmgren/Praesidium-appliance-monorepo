@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title_suffix %} — Crawl Job{% endblock %}
+{% block page_title %}Crawl Job Detail{% endblock %}
+
+{% block content %}
+<div class="space-y-5">
+
+  <!-- Back -->
+  <a href="/admin/crawl?tenant_id={{ tenant_id }}"
+     class="text-sm text-gray-400 hover:text-gray-200 flex items-center gap-1">
+    ← Back to Crawl Jobs
+  </a>
+
+  <!-- Job summary -->
+  <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+    <div class="grid grid-cols-4 gap-4">
+      <div>
+        <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Mount</p>
+        <span class="badge
+          {% if job.mount == 'clients' %}bg-blue-900 text-blue-200
+          {% elif job.mount == 'docsend' %}bg-purple-900 text-purple-200
+          {% else %}bg-teal-900 text-teal-200{% endif %}">
+          {{ job.mount }}
+        </span>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Status</p>
+        <span class="badge
+          {% if job.status == 'complete' %}status-ok
+          {% elif job.status == 'running' %}bg-blue-900 text-blue-200
+          {% elif job.status == 'queued' %}bg-gray-700 text-gray-300
+          {% elif job.status == 'failed' %}status-err
+          {% else %}status-unk{% endif %}">
+          {{ job.status }}
+        </span>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Root Path</p>
+        <p class="text-sm text-gray-300 font-mono">/{{ job.root_path or '' }}</p>
+      </div>
+      <div>
+        <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Queued</p>
+        <p class="text-sm text-gray-300">
+          {{ job.queued_at.strftime('%b %d %Y %H:%M') if job.queued_at else '—' }}
+        </p>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-gray-800">
+      <div class="text-center">
+        <p class="text-2xl font-bold text-gray-100">{{ job.files_discovered }}</p>
+        <p class="text-xs text-gray-500 mt-0.5">Discovered</p>
+      </div>
+      <div class="text-center">
+        <p class="text-2xl font-bold text-green-400">{{ job.files_indexed }}</p>
+        <p class="text-xs text-gray-500 mt-0.5">Indexed</p>
+      </div>
+      <div class="text-center">
+        <p class="text-2xl font-bold text-gray-500">{{ job.files_skipped }}</p>
+        <p class="text-xs text-gray-500 mt-0.5">Skipped</p>
+      </div>
+    </div>
+
+    {% if job.error_message %}
+    <div class="mt-4 px-3 py-2 bg-red-900/30 border border-red-800 rounded text-xs text-red-300">
+      {{ job.error_message }}
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Entry list -->
+  <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+    <div class="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
+      <h2 class="text-sm font-semibold text-gray-300">
+        Files ({{ total_entries }} total)
+      </h2>
+      {% if total_pages > 1 %}
+      <div class="flex items-center gap-2 text-xs text-gray-400">
+        {% if current_page > 1 %}
+        <a href="/admin/crawl/{{ job.id }}?tenant_id={{ tenant_id }}&page={{ current_page - 1 }}"
+           class="hover:text-gray-200">← Prev</a>
+        {% endif %}
+        <span>Page {{ current_page }} of {{ total_pages }}</span>
+        {% if current_page < total_pages %}
+        <a href="/admin/crawl/{{ job.id }}?tenant_id={{ tenant_id }}&page={{ current_page + 1 }}"
+           class="hover:text-gray-200">Next →</a>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-800 text-gray-400 text-xs uppercase tracking-wider">
+          <th class="text-left px-4 py-2">Path</th>
+          <th class="text-left px-4 py-2">Type</th>
+          <th class="text-right px-4 py-2">Size</th>
+          <th class="text-left px-4 py-2">Modified</th>
+          <th class="text-left px-4 py-2">Matter Match</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for e in entries %}
+        <tr class="hover:bg-gray-800/30">
+          <td class="px-4 py-2 font-mono text-xs text-gray-300 max-w-xs truncate"
+              title="{{ e.file_path }}">
+            {{ e.file_path }}
+          </td>
+          <td class="px-4 py-2 text-xs text-gray-500">
+            {{ e.mime_type or '—' }}
+          </td>
+          <td class="px-4 py-2 text-right text-xs text-gray-400">
+            {% if e.file_size_bytes %}
+              {% if e.file_size_bytes < 1024 %}{{ e.file_size_bytes }} B
+              {% elif e.file_size_bytes < 1048576 %}{{ (e.file_size_bytes // 1024) }} KB
+              {% else %}{{ (e.file_size_bytes // 1048576) }} MB{% endif %}
+            {% else %}—{% endif %}
+          </td>
+          <td class="px-4 py-2 text-xs text-gray-500">
+            {{ e.modified_at.strftime('%b %d %Y') if e.modified_at else '—' }}
+          </td>
+          <td class="px-4 py-2 text-xs">
+            {% if e.matter_id %}
+            <span class="text-green-400">Matched</span>
+            {% else %}
+            <span class="text-gray-600">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="5" class="px-4 py-8 text-center text-gray-500 text-sm">
+            No entries yet.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</div>
+{% endblock %}

@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% block title %}Collections — {{ matter.name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto py-8 px-4">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <p class="text-sm text-gray-500 mb-1">
+        <a href="/matters" class="hover:underline">Matters</a>
+        <span class="mx-1">›</span>
+        <span>{{ matter.name }}</span>
+      </p>
+      <h1 class="text-2xl font-bold text-gray-900">Collections</h1>
+    </div>
+    <button
+      onclick="document.getElementById('new-collection-modal').classList.remove('hidden')"
+      class="inline-flex items-center px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-md shadow-sm hover:bg-blue-700">
+      + New Collection
+    </button>
+  </div>
+
+  <!-- Collection cards -->
+  {% if collections %}
+  <div class="grid gap-4">
+    {% for c in collections %}
+    <a href="/ediscovery/collections/{{ c.id }}"
+       class="block bg-white border border-gray-200 rounded-lg p-5 hover:border-blue-400 hover:shadow-sm transition">
+      <div class="flex items-start justify-between">
+        <div>
+          <h2 class="text-base font-semibold text-gray-900">{{ c.name }}</h2>
+          {% if c.description %}
+          <p class="text-sm text-gray-500 mt-0.5">{{ c.description }}</p>
+          {% endif %}
+        </div>
+        <span class="ml-4 inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+          {% if c.status == 'active' %}bg-green-100 text-green-800
+          {% elif c.status == 'closed' %}bg-gray-100 text-gray-600
+          {% else %}bg-yellow-100 text-yellow-800{% endif %}">
+          {{ c.status }}
+        </span>
+      </div>
+      <div class="mt-3 flex items-center gap-4 text-sm text-gray-500">
+        <span>{{ c.doc_count or 0 }} documents</span>
+        <span>{{ c.ingested_count or 0 }} ingested</span>
+        {% if c.dms_count and c.dms_count > 0 %}
+        <span class="text-amber-600">{{ c.dms_count }} DMS flagged</span>
+        {% endif %}
+        <span class="ml-auto">{{ c.created_at.strftime('%b %d, %Y') if c.created_at else '' }}</span>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="text-center py-16 text-gray-400">
+    <p class="text-lg font-medium">No collections yet</p>
+    <p class="text-sm mt-1">Create a collection to begin ingesting documents for this matter.</p>
+  </div>
+  {% endif %}
+
+</div>
+
+<!-- New Collection Modal -->
+<div id="new-collection-modal" class="hidden fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+  <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+    <h2 class="text-lg font-semibold mb-4">New Collection</h2>
+    <div class="space-y-4">
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Name</label>
+        <input id="col-name" type="text" placeholder="e.g. Plaintiff Production Vol. 1"
+          class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Description (optional)</label>
+        <textarea id="col-desc" rows="2" placeholder="Optional notes"
+          class="w-full border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"></textarea>
+      </div>
+    </div>
+    <div class="mt-5 flex justify-end gap-3">
+      <button onclick="document.getElementById('new-collection-modal').classList.add('hidden')"
+        class="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50">
+        Cancel
+      </button>
+      <button onclick="createCollection()"
+        class="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700">
+        Create
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+async function createCollection() {
+  const name = document.getElementById('col-name').value.trim();
+  if (!name) { alert('Name is required'); return; }
+  const desc = document.getElementById('col-desc').value.trim();
+  const resp = await fetch('/ediscovery/matters/{{ matter.id }}/collections', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({name, description: desc || null})
+  });
+  if (resp.ok) {
+    window.location.reload();
+  } else {
+    const e = await resp.json();
+    alert('Error: ' + (e.detail || 'Unknown error'));
+  }
+}
+</script>
+{% endblock %}

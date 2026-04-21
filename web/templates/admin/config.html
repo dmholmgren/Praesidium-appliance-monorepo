@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title_suffix %} — Config Generator{% endblock %}
+{% block page_title %}Config Generator{% endblock %}
+
+{% block content %}
+<div class="space-y-5">
+
+  <!-- Generate form -->
+  <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+    <h2 class="text-gray-300 font-medium text-sm mb-3">Generate Provision Script</h2>
+    <form action="/admin/api/config/generate" method="post"
+          class="flex gap-3 items-end flex-wrap">
+      <div>
+        <label class="block text-gray-500 text-xs mb-1">VM Role</label>
+        <select name="target_role"
+                class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+          {% for role in roles %}
+          <option value="{{ role }}">{{ role }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="flex-1 min-w-40">
+        <label class="block text-gray-500 text-xs mb-1">Hostname (optional)</label>
+        <input type="text" name="target_hostname" placeholder="MAIN-PRD-WEB-01"
+               class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+      </div>
+      <div class="flex-1 min-w-32">
+        <label class="block text-gray-500 text-xs mb-1">Target IP (optional)</label>
+        <input type="text" name="target_ip" placeholder="10.10.60.10"
+               class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+      </div>
+      <button type="submit"
+              class="px-4 py-2 bg-blue-700 hover:bg-blue-600 rounded text-sm text-white font-medium transition-colors flex-shrink-0">
+        Generate
+      </button>
+    </form>
+    <p class="text-gray-600 text-xs mt-2">
+      Calls POST /admin/api/config/generate. Returns JSON with record_id and download links.
+    </p>
+  </div>
+
+  <!-- Recent generated scripts -->
+  <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-800 bg-gray-800/50">
+      <h2 class="text-gray-300 font-medium text-sm">Recent Generated Scripts</h2>
+    </div>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-800">
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Role</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Hostname</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Generated</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Firmware</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Download</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for g in generated %}
+        <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+          <td class="px-4 py-2.5"><span class="badge status-unk">{{ g.target_role }}</span></td>
+          <td class="px-4 py-2.5 font-mono text-xs text-gray-300">{{ g.target_hostname or '—' }}</td>
+          <td class="px-4 py-2.5 text-gray-500 text-xs">{{ g.generated_at }}</td>
+          <td class="px-4 py-2.5 font-mono text-xs text-gray-500">{{ g.firmware_version or '—' }}</td>
+          <td class="px-4 py-2.5">
+            <div class="flex gap-2">
+              <a href="/admin/api/config/generated/{{ g.id }}/download?file=script"
+                 class="text-xs text-blue-400 hover:text-blue-300">.sh</a>
+              <a href="/admin/api/config/generated/{{ g.id }}/download?file=env"
+                 class="text-xs text-blue-400 hover:text-blue-300">.env</a>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="px-4 py-6 text-center text-gray-500">No scripts generated yet</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</div>
+{% endblock %}

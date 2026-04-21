@@ -1,0 +1,586 @@
+"""
+modules/ediscovery/tag_intelligence.py
+
+M5ii — Tag Intelligence (S2-008)
+
+Implements the tag provenance system:
+  - Two-section UI: AI tags (ai | ai_confirmed) / User tags (user | user_trained)
+  - Sections NEVER merged, interleaved, or combined — enforced at query layer
+  - Co-occurrence learning: statistical correlations between confirmed tags
+  - Tag quality monitoring: confirmation and rejection rates per tag
+  - AI tag recommendations: Claude suggests tags based on document content
+  - Suggestion panel: propagate tags to similar documents
+
+Patent Pending — 64/020,027 — Dennis M. Holmgren, Reg. No. 54,168
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import uuid
+from collections import defaultdict
+from typing import Any
+
+from fastapi import APIRouter, Request, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.templating import Jinja2Templates
+from sqlalchemy import text
+
+from core.db.base import AsyncSessionLocal
+from modules.dashboard.services.nav_context import get_nav_context
+
+log = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/ediscovery", tags=["ediscovery-tag-intelligence"])
+templates = Jinja2Templates(directory="templates")
+
+# ------------------------------------------------------------------ #
+# Source values — never mix these groups                              #
+# ------------------------------------------------------------------ #
+AI_SOURCES   = {"ai", "ai_confirmed"}
+USER_SOURCES = {"user", "user_trained"}
+
+# Co-occurrence threshold — suggest tag B when A→B rate exceeds this
+COOCCURRENCE_THRESHOLD = 0.60
+
+
+# ================================================================== #
+# Helpers                                                             #
+# ================================================================== #
+
+def _get_tenant_id(request: Request) -> str:
+    tid = getattr(request.state, 'tenant_id', None)
+    if not tid:
+        raise HTTPException(status_code=401, detail="No tenant context")
+    return tid.strip()
+
+
+def _get_user_id(request: Request) -> int:
+    uid = getattr(request.state, 'user_id', None)
+    if not uid:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return int(uid)
+
+
+def _tags_from_coding(coding: Any) -> list[dict]:
+    """
+    Extract tag list from coding JSONB field.
+    Coding may be None, a dict with 'tags' key, or a list.
+    """
+    if not coding:
+        return []
+    if isinstance(coding, str):
+        try:
+            coding = json.loads(coding)
+        except Exception:
+            return []
+    if isinstance(coding, list):
+        return coding
+    if isinstance(coding, dict):
+        return coding.get("tags", [])
+    return []
+
+
+# ================================================================== #
+# Co-occurrence analysis (S2-008 §194d)                              #
+# ================================================================== #
+
+async def _compute_cooccurrence(
+    matter_id: str,
+    tenant_id: str,
+) -> dict[str, dict[str, float]]:
+    """
+    Analyze confirmed human tag applications (source='user' or 'ai_confirmed')
+    to identify statistical co-occurrence correlations.
+
+    Returns: {tag_a: {tag_b: rate, ...}, ...}
+    where rate = P(B | A) among confirmed-tagged documents.
+    """
+    async with AsyncSessionLocal() as session:
+        rows = await session.execute(
+            text("""
+                SELECT d.coding
+                FROM ediscovery_documents d
+                JOIN ediscovery_collections c ON d.collection_id = c.id
+                WHERE c.matter_id = :mid AND d.tenant_id = :tid
+                  AND d.coding IS NOT NULL
+            """),
+            {"mid": matter_id, "tid": tenant_id}
+        )
+        docs = rows.fetchall()
+
+    # Build per-document confirmed tag sets
+    confirmed_tag_sets: list[set[str]] = []
+    for row in docs:
+        coding = row[0]
+        tags = _tags_from_coding(coding)
+        confirmed = {
+            t.get("name", "")
+            for t in tags
+            if t.get("source") in ("user", "ai_confirmed") and t.get("name")
+        }
+        if len(confirmed) >= 2:
+            confirmed_tag_sets.append(confirmed)
+
+    if not confirmed_tag_sets:
+        return {}
+
+    # Count co-occurrences
+    tag_count: dict[str, int] = defaultdict(int)
+    pair_count: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+    for tag_set in confirmed_tag_sets:
+        for tag in tag_set:
+            tag_count[tag] += 1
+        tag_list = sorted(tag_set)
+        for i, a in enumerate(tag_list):
+            for b in tag_list[i + 1:]:
+                pair_count[a][b] += 1
+                pair_count[b][a] += 1
+
+    # Compute rates
+    result: dict[str, dict[str, float]] = {}
+    for a, partners in pair_count.items():
+        result[a] = {}
+        for b, count in partners.items():
+            rate = count / tag_count[a] if tag_count[a] > 0 else 0.0
+            if rate >= COOCCURRENCE_THRESHOLD:
+                result[a][b] = round(rate, 3)
+
+    return result
+
+
+# ================================================================== #
+# Tag quality metrics (S2-008 §194e)                                  #
+# ================================================================== #
+
+async def _compute_tag_quality(
+    matter_id: str,
+    tenant_id: str,
+) -> list[dict]:
+    """
+    Compute per-tag confirmation and rejection rates.
+    Only meaningful for AI-generated tags (source='ai').
+
+    Returns list of {name, total_applied, confirmed, rejected, confirm_rate, reject_rate}
+    """
+    async with AsyncSessionLocal() as session:
+        rows = await session.execute(
+            text("""
+                SELECT d.coding
+                FROM ediscovery_documents d
+                JOIN ediscovery_collections c ON d.collection_id = c.id
+                WHERE c.matter_id = :mid AND d.tenant_id = :tid
+                  AND d.coding IS NOT NULL
+            """),
+            {"mid": matter_id, "tid": tenant_id}
+        )
+        docs = rows.fetchall()
+
+    tag_stats: dict[str, dict] = {}
+
+    for row in docs:
+        coding = row[0]
+        tags = _tags_from_coding(coding)
+        for t in tags:
+            name   = t.get("name", "")
+            source = t.get("source", "")
+            if not name:
+                continue
+            if name not in tag_stats:
+                tag_stats[name] = {
+                    "name": name,
+                    "total_applied": 0,
+                    "confirmed": 0,
+                    "rejected": 0,
+                }
+            tag_stats[name]["total_applied"] += 1
+            if source == "ai_confirmed":
+                tag_stats[name]["confirmed"] += 1
+            elif source == "ai" and t.get("rejected"):
+                tag_stats[name]["rejected"] += 1
+
+    result = []
+    for stat in tag_stats.values():
+        total = stat["total_applied"]
+        stat["confirm_rate"] = round(stat["confirmed"] / total, 3) if total > 0 else 0.0
+        stat["reject_rate"]  = round(stat["rejected"]  / total, 3) if total > 0 else 0.0
+        result.append(stat)
+
+    return sorted(result, key=lambda x: x["total_applied"], reverse=True)
+
+
+# ================================================================== #
+# AI tag recommendations                                              #
+# ================================================================== #
+
+async def _ai_recommend_tags(
+    doc_id: str,
+    matter_id: str,
+    tenant_id: str,
+) -> list[dict]:
+    """
+    Call Claude to recommend tags for a document based on:
+    - Document metadata
+    - Current issue map (if available)
+    - Existing confirmed tags in the matter (for consistency)
+
+    Returns list of {name, confidence, rationale} dicts.
+    """
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        log.warning("tag_intelligence: ANTHROPIC_API_KEY not set — skipping AI recommendations")
+        return []
+
+    async with AsyncSessionLocal() as session:
+        # Document metadata
+        doc_row = await session.execute(
+            text("""
+                SELECT d.file_name, d.doc_type, d.custodian, d.doc_date,
+                       d.email_subject, d.email_from, d.coding
+                FROM ediscovery_documents d
+                WHERE d.id = :did AND d.tenant_id = :tid
+            """),
+            {"did": doc_id, "tid": tenant_id}
+        )
+        doc = doc_row.mappings().first()
+        if not doc:
+            return []
+
+        # Latest issue map
+        im_row = await session.execute(
+            text("""
+                SELECT issue_map, version_num
+                FROM issue_map_versions
+                WHERE matter_id = :mid AND tenant_id = :tid
+                ORDER BY version_num DESC LIMIT 1
+            """),
+            {"mid": matter_id, "tid": tenant_id}
+        )
+        im = im_row.mappings().first()
+
+        # Existing confirmed tags in matter for consistency
+        tag_rows = await session.execute(
+            text("""
+                SELECT DISTINCT jsonb_array_elements(d.coding->'tags')->>'name' AS tag_name
+                FROM ediscovery_documents d
+                JOIN ediscovery_collections c ON d.collection_id = c.id
+                WHERE c.matter_id = :mid AND d.tenant_id = :tid
+                  AND d.coding IS NOT NULL
+                LIMIT 50
+            """),
+            {"mid": matter_id, "tid": tenant_id}
+        )
+        existing_tags = [r[0] for r in tag_rows.fetchall() if r[0]]
+
+    # Build prompt
+    doc_info = (
+        f"File: {doc.get('file_name','')}\n"
+        f"Type: {doc.get('doc_type','')}\n"
+        f"Custodian: {doc.get('custodian','')}\n"
+        f"Date: {doc.get('doc_date','')}\n"
+        f"Email subject: {doc.get('email_subject','')}\n"
+        f"Email from: {doc.get('email_from','')}\n"
+    )
+
+    issue_map_summary = ""
+    if im and im.get("issue_map"):
+        issue_map_data = im["issue_map"]
+        if isinstance(issue_map_data, str):
+            try:
+                issue_map_data = json.loads(issue_map_data)
+            except Exception:
+                issue_map_data = {}
+        claims = issue_map_data.get("claims", [])
+        issue_map_summary = "Claims: " + ", ".join(
+            c.get("claim_name", "") for c in claims[:5]
+        )
+
+    existing_str = ", ".join(existing_tags[:20]) if existing_tags else "none"
+
+    prompt = f"""You are a document review tagging engine for a litigation matter.
+
+Document metadata:
+{doc_info}
+
+Case theory (issue map):
+{issue_map_summary or "Not yet generated"}
+
+Existing tags used in this matter (for consistency):
+{existing_str}
+
+Recommend up to 5 tags for this document. Use existing tag names where applicable.
+Return ONLY a JSON array — no preamble, no markdown:
+[
+  {{
+    "name": "tag name",
+    "confidence": 0.0-1.0,
+    "rationale": "one sentence explanation"
+  }}
+]
+
+If no tags are appropriate, return []. Only recommend tags with genuine basis."""
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=512,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = response.content[0].text.strip()
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        recommendations = json.loads(raw)
+        if not isinstance(recommendations, list):
+            return []
+        return [
+            {
+                "name": r.get("name", ""),
+                "confidence": min(max(float(r.get("confidence", 0.7)), 0.0), 1.0),
+                "rationale": r.get("rationale", ""),
+                "source": "ai",
+            }
+            for r in recommendations if r.get("name")
+        ]
+    except Exception as exc:
+        log.error("tag_intelligence: AI recommendation failed for doc %s: %s", doc_id, exc)
+        return []
+
+
+# ================================================================== #
+# Tag apply / confirm / reject                                        #
+# ================================================================== #
+
+async def _apply_tag(
+    doc_id: str,
+    tenant_id: str,
+    tag_name: str,
+    source: str,
+    confidence: float,
+) -> bool:
+    """
+    Add a tag to a document's coding JSONB.
+    source must be one of: ai, user, ai_confirmed, user_trained.
+    Never overwrites existing tag with same name — updates source if found.
+    """
+    valid_sources = {"ai", "user", "ai_confirmed", "user_trained"}
+    if source not in valid_sources:
+        return False
+
+    async with AsyncSessionLocal() as session:
+        row = await session.execute(
+            text("SELECT coding FROM ediscovery_documents WHERE id = :did AND tenant_id = :tid"),
+            {"did": doc_id, "tid": tenant_id}
+        )
+        doc = row.mappings().first()
+        if not doc:
+            return False
+
+        tags = _tags_from_coding(doc["coding"])
+
+        # Check if tag already exists
+        found = False
+        for t in tags:
+            if t.get("name") == tag_name:
+                t["source"] = source
+                if confidence:
+                    t["confidence"] = confidence
+                found = True
+                break
+
+        if not found:
+            tags.append({
+                "name": tag_name,
+                "source": source,
+                "confidence": confidence,
+            })
+
+        coding = doc["coding"] if isinstance(doc["coding"], dict) else {}
+        coding["tags"] = tags
+
+        await session.execute(
+            text("""
+                UPDATE ediscovery_documents
+                SET coding = :coding, updated_at = NOW()
+                WHERE id = :did AND tenant_id = :tid
+            """),
+            {"coding": json.dumps(coding), "did": doc_id, "tid": tenant_id}
+        )
+        await session.commit()
+    return True
+
+
+# ================================================================== #
+# Routes                                                              #
+# ================================================================== #
+
+@router.get("/matters/{matter_id}/tag-intelligence", response_class=HTMLResponse)
+async def tag_intelligence_view(request: Request, matter_id: str):
+    """Tag intelligence dashboard for a matter."""
+    tenant_id = _get_tenant_id(request)
+
+    async with AsyncSessionLocal() as session:
+        matter_row = await session.execute(
+            text("SELECT id, name FROM matters WHERE id = :mid AND tenant_id = :tid"),
+            {"mid": matter_id, "tid": tenant_id}
+        )
+        matter = matter_row.mappings().first()
+    if not matter:
+        raise HTTPException(status_code=404, detail="Matter not found")
+
+    # Tag quality metrics
+    quality = await _compute_tag_quality(matter_id, tenant_id)
+
+    # Co-occurrence map
+    cooccurrence = await _compute_cooccurrence(matter_id, tenant_id)
+
+    nav = await get_nav_context(request, page='ediscovery')
+    return templates.TemplateResponse(request, "ediscovery/tag_intelligence.html", {
+        "matter": dict(matter),
+        "matter_id": matter_id,
+        "quality": quality,
+        "cooccurrence": cooccurrence,
+        "nav": nav,
+    })
+
+
+@router.get("/documents/{doc_id}/tags")
+async def get_document_tags(request: Request, doc_id: str):
+    """
+    Return document tags in two sections — never merged.
+    Section 1: AI tags (source: ai | ai_confirmed)
+    Section 2: User tags (source: user | user_trained)
+    """
+    tenant_id = _get_tenant_id(request)
+
+    async with AsyncSessionLocal() as session:
+        row = await session.execute(
+            text("SELECT coding FROM ediscovery_documents WHERE id = :did AND tenant_id = :tid"),
+            {"did": doc_id, "tid": tenant_id}
+        )
+        doc = row.mappings().first()
+
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    all_tags = _tags_from_coding(doc["coding"])
+
+    # Enforce two-section separation at query layer (S2-008)
+    ai_tags   = [t for t in all_tags if t.get("source") in AI_SOURCES]
+    user_tags = [t for t in all_tags if t.get("source") in USER_SOURCES]
+
+    return JSONResponse({
+        "doc_id": doc_id,
+        "ai_tags": ai_tags,
+        "user_tags": user_tags,
+        # NEVER return a merged 'tags' field
+    })
+
+
+@router.post("/documents/{doc_id}/tags/recommend")
+async def recommend_tags(request: Request, doc_id: str):
+    """Get AI tag recommendations for a document."""
+    tenant_id = _get_tenant_id(request)
+
+    body = await request.json()
+    matter_id = body.get("matter_id", "")
+    if not matter_id:
+        raise HTTPException(status_code=422, detail="matter_id required")
+
+    recommendations = await _ai_recommend_tags(doc_id, matter_id, tenant_id)
+    return JSONResponse({"doc_id": doc_id, "recommendations": recommendations})
+
+
+@router.post("/documents/{doc_id}/tags/confirm")
+async def confirm_tag(request: Request, doc_id: str):
+    """Confirm an AI tag — transitions source: ai → ai_confirmed."""
+    tenant_id = _get_tenant_id(request)
+
+    body = await request.json()
+    tag_name = body.get("name", "").strip()
+    if not tag_name:
+        raise HTTPException(status_code=422, detail="name required")
+
+    ok = await _apply_tag(doc_id, tenant_id, tag_name, "ai_confirmed", 1.0)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    return JSONResponse({"doc_id": doc_id, "name": tag_name, "source": "ai_confirmed"})
+
+
+@router.post("/documents/{doc_id}/tags/reject")
+async def reject_tag(request: Request, doc_id: str):
+    """Mark an AI tag as rejected (sets rejected=True, keeps for quality tracking)."""
+    tenant_id = _get_tenant_id(request)
+
+    body = await request.json()
+    tag_name = body.get("name", "").strip()
+    if not tag_name:
+        raise HTTPException(status_code=422, detail="name required")
+
+    async with AsyncSessionLocal() as session:
+        row = await session.execute(
+            text("SELECT coding FROM ediscovery_documents WHERE id = :did AND tenant_id = :tid"),
+            {"did": doc_id, "tid": tenant_id}
+        )
+        doc = row.mappings().first()
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        tags = _tags_from_coding(doc["coding"])
+        for t in tags:
+            if t.get("name") == tag_name and t.get("source") in AI_SOURCES:
+                t["rejected"] = True
+
+        coding = doc["coding"] if isinstance(doc["coding"], dict) else {}
+        coding["tags"] = tags
+        await session.execute(
+            text("""
+                UPDATE ediscovery_documents
+                SET coding = :coding, updated_at = NOW()
+                WHERE id = :did AND tenant_id = :tid
+            """),
+            {"coding": json.dumps(coding), "did": doc_id, "tid": tenant_id}
+        )
+        await session.commit()
+
+    return JSONResponse({"doc_id": doc_id, "name": tag_name, "rejected": True})
+
+
+@router.post("/documents/{doc_id}/tags/apply")
+async def apply_user_tag(request: Request, doc_id: str):
+    """Apply a user tag. source='user'."""
+    tenant_id = _get_tenant_id(request)
+
+    body = await request.json()
+    tag_name = body.get("name", "").strip()
+    if not tag_name:
+        raise HTTPException(status_code=422, detail="name required")
+
+    ok = await _apply_tag(doc_id, tenant_id, tag_name, "user", 1.0)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    return JSONResponse({"doc_id": doc_id, "name": tag_name, "source": "user"})
+
+
+@router.get("/matters/{matter_id}/tag-intelligence/cooccurrence")
+async def get_cooccurrence(request: Request, matter_id: str):
+    """Return co-occurrence map for the matter."""
+    tenant_id = _get_tenant_id(request)
+    cooccurrence = await _compute_cooccurrence(matter_id, tenant_id)
+    return JSONResponse({"matter_id": matter_id, "cooccurrence": cooccurrence})
+
+
+@router.get("/matters/{matter_id}/tag-intelligence/quality")
+async def get_tag_quality(request: Request, matter_id: str):
+    """Return per-tag quality metrics for the matter."""
+    tenant_id = _get_tenant_id(request)
+    quality = await _compute_tag_quality(matter_id, tenant_id)
+    return JSONResponse({"matter_id": matter_id, "quality": quality})

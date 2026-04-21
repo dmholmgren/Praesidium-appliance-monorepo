@@ -1,0 +1,79 @@
+{# widgets/billing_timekeeper_kpi.html
+   Timekeeper KPI widget
+   Context vars (from widget_service.get_billing_timekeeper_kpi):
+     timekeepers — list of {name, wip_value, billed_value, billed_hours,
+                             util_rate, real_rate, util_pct}
+     error       — str|None
+
+   Visualization only. Bar widths from precomputed util_pct. No logic.
+#}
+
+<div style="display:flex; flex-direction:column; height:100%; min-height:0;">
+
+  {% if error %}
+  <div style="padding:10px 12px; font-size:11px; color:#dc2626;">⚠ {{ error }}</div>
+
+  {% elif not timekeepers %}
+  <div style="flex:1; display:flex; align-items:center; justify-content:center;
+              color:var(--muted); font-size:11px; text-align:center; padding:16px;">
+    No timekeeper activity this month.
+  </div>
+
+  {% else %}
+
+  {# Column headers #}
+  <div style="display:grid; grid-template-columns: 1fr 60px 50px 50px;
+              gap:4px; padding:5px 12px 3px; flex-shrink:0;
+              border-bottom:1px solid #f1f5f9;">
+    <span style="font-size:9px; font-weight:700; color:var(--muted);
+                 text-transform:uppercase; letter-spacing:0.05em;">Name</span>
+    <span style="font-size:9px; font-weight:700; color:var(--muted);
+                 text-transform:uppercase; letter-spacing:0.05em; text-align:right;">WIP</span>
+    <span style="font-size:9px; font-weight:700; color:var(--muted);
+                 text-transform:uppercase; letter-spacing:0.05em; text-align:right;">Util</span>
+    <span style="font-size:9px; font-weight:700; color:var(--muted);
+                 text-transform:uppercase; letter-spacing:0.05em; text-align:right;">Real</span>
+  </div>
+
+  {# Timekeeper rows #}
+  <div style="flex:1; min-height:0; overflow-y:auto;">
+    {% for tk in timekeepers %}
+    <div style="padding:6px 12px; border-bottom:1px solid #f8fafc;"
+         onmouseover="this.style.background='#f8fafc'"
+         onmouseout="this.style.background=''">
+
+      <div style="display:grid; grid-template-columns: 1fr 60px 50px 50px;
+                  gap:4px; align-items:center; margin-bottom:3px;">
+        <span style="font-size:11px; font-weight:500; color:var(--text);
+                     white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"
+              title="{{ tk.name }}">
+          {{ tk.name }}
+        </span>
+        <span style="font-size:10px; color:var(--text); text-align:right;
+                     font-variant-numeric:tabular-nums;">
+          ${{ "{:,.0f}".format(tk.wip_value) }}
+        </span>
+        <span style="font-size:10px; text-align:right;
+                     color:{{ '#166534' if tk.util_rate >= 70 else ('#854d0e' if tk.util_rate >= 50 else '#dc2626') }};">
+          {{ tk.util_rate }}%
+        </span>
+        <span style="font-size:10px; text-align:right;
+                     color:{{ '#166534' if tk.real_rate >= 85 else ('#854d0e' if tk.real_rate >= 70 else '#dc2626') }};">
+          {{ tk.real_rate }}%
+        </span>
+      </div>
+
+      {# Utilization bar #}
+      <div style="height:3px; background:#f1f5f9; border-radius:2px; overflow:hidden;">
+        <div style="height:100%; width:{{ tk.util_pct }}%;
+                    background:{{ '#166534' if tk.util_rate >= 70 else ('#f59e0b' if tk.util_rate >= 50 else '#ef4444') }};
+                    border-radius:2px;"></div>
+      </div>
+
+    </div>
+    {% endfor %}
+  </div>
+
+  {% endif %}
+
+</div>

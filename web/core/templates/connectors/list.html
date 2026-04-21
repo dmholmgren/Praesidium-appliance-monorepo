@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Connectors — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Connectors{% endblock %}
+{% block content %}
+<div style="padding:0;">
+
+  {% include "tenant_admin/_topnav.html" %}
+
+
+
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:24px;">
+      <div>
+        <h2 style="font-size:16px; font-weight:600; color:var(--text); margin:0 0 4px 0;">Connectors</h2>
+        <p style="font-size:12px; color:var(--muted); margin:0;">Active data sources and services feeding Praesidium intelligence.</p>
+      </div>
+      <a href="/tenant-admin/connectors/catalog" class="btn-primary" style="font-size:13px;">
+        + Add Connector
+      </a>
+    </div>
+
+    {# ── No connectors configured yet ── #}
+    {% set has_configured = namespace(value=false) %}
+    {% for group in connector_groups %}
+      {% if group.group_key != 'ediscovery' and group.connectors %}
+        {% set has_configured.value = true %}
+      {% endif %}
+    {% endfor %}
+
+    {% if not has_configured.value %}
+    <div style="border:1px dashed var(--border); border-radius:8px; padding:40px; text-align:center; background:var(--surface);">
+      <div style="font-size:14px; font-weight:500; color:var(--text); margin-bottom:8px;">No connectors configured</div>
+      <p style="font-size:12px; color:var(--muted); margin:0 0 16px 0;">Add a connector to start pulling data into Praesidium.</p>
+      <a href="/tenant-admin/connectors/catalog" class="btn-primary">Browse Connectors</a>
+    </div>
+    {% endif %}
+
+    {# ── Configured groups ── #}
+    {% for group in connector_groups %}
+
+      {# eDiscovery — always show coming-soon banner #}
+      {% if group.group_key == 'ediscovery' %}
+      <div style="margin-bottom:32px;">
+        <div style="display:flex; align-items:baseline; gap:10px; margin-bottom:12px; padding-bottom:8px; border-top:1px solid var(--border); padding-top:20px;">
+          <h3 style="font-size:13px; font-weight:600; color:var(--text); margin:0;">{{ group.label }}</h3>
+          <span style="font-size:12px; color:var(--muted);">{{ group.description }}</span>
+        </div>
+        <div style="border:1px dashed var(--border); border-radius:8px; padding:20px 24px; background:var(--surface);">
+          <div style="font-size:13px; font-weight:500; color:var(--text); margin-bottom:6px;">Client Custodian Source Connectors</div>
+          <p style="font-size:12px; color:var(--muted); margin:0 0 8px 0; line-height:1.6;">
+            Connect directly to a client's Gmail, Microsoft 365, Exchange, or cloud drive for eDiscovery ingestion.
+            Client authenticates with their own credentials via OAuth2 — no PST export required.
+            Chain of custody recorded at the source. Scoped per matter and custodian.
+          </p>
+          <span style="display:inline-block; font-size:11px; font-weight:500; color:#92400E; background:#FEF3C7; border:1px solid #FDE68A; border-radius:4px; padding:2px 8px;">Coming Soon</span>
+        </div>
+      </div>
+
+      {# All other groups — only render if they have configured connectors #}
+      {% elif group.connectors %}
+      <div style="margin-bottom:32px;">
+        <div style="display:flex; align-items:baseline; gap:10px; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--border);">
+          <h3 style="font-size:13px; font-weight:600; color:var(--text); margin:0;">{{ group.label }}</h3>
+          <span style="font-size:12px; color:var(--muted);">{{ group.description }}</span>
+        </div>
+        <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px,1fr)); gap:14px;">
+          {% for c in group.connectors %}
+          <div class="card" style="position:relative;">
+            <div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:10px;">
+              <div>
+                <div style="font-size:14px; font-weight:500; color:var(--text);">{{ c.display_name }}</div>
+                <div style="font-size:11px; color:var(--muted); margin-top:2px;">{{ c.sync_type_label }}</div>
+              </div>
+              <div style="flex-shrink:0; margin-left:8px;">
+                {% if c.tenant_enabled %}
+                <span class="badge badge-green">Active</span>
+                {% elif c.last_sync_at %}
+                <span class="badge badge-gray">Configured</span>
+                {% else %}
+                <span class="badge badge-gray">Not configured</span>
+                {% endif %}
+              </div>
+            </div>
+
+            {% if c.description %}
+            <p style="font-size:12px; color:var(--muted); margin:0 0 12px 0; line-height:1.5;">{{ c.description }}</p>
+            {% endif %}
+
+            {% if c.last_sync_at %}
+            <div style="font-size:11px; color:var(--muted); margin-bottom:10px;">Last sync: {{ c.last_sync_at }}</div>
+            {% endif %}
+
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <a href="/tenant-admin/connectors/{{ c.connector_type }}/configure"
+                 class="btn-primary" style="font-size:12px;">Configure</a>
+              {% if c.connector_type in ['exchange', 'office365', 'pbx_cdr', 'manictime'] %}
+              <a href="/tenant-admin/connectors/{{ c.connector_type }}/entities"
+                 class="btn-secondary" style="font-size:12px;">Map Users</a>
+              {% endif %}
+              <button
+                hx-post="/tenant-admin/connectors/{{ c.connector_type }}/toggle"
+                hx-swap="none"
+                hx-on::after-request="location.reload()"
+                class="btn-secondary" style="font-size:12px;">
+                {{ 'Disable' if c.tenant_enabled else 'Enable' }}
+              </button>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+    {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}Billing — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Billing{% endblock %}
+
+{% block header_right %}
+<a href="/billing/timesheet" class="btn-secondary" style="font-size:12px; margin-right:6px;">
+  + Time Entry
+</a>
+<a href="/billing/invoices" class="btn-primary" style="font-size:12px;">
+  Invoices
+</a>
+{% endblock %}
+
+{% block content %}
+<style>
+  .bil-tabs {
+    display: flex;
+    gap: 2px;
+    border-bottom: 2px solid var(--border-color, #e2e8f0);
+    margin-bottom: 16px;
+    flex-shrink: 0;
+  }
+  .bil-tab {
+    padding: 8px 18px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted, #64748b);
+    cursor: pointer;
+    border: none;
+    background: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    border-radius: 4px 4px 0 0;
+    transition: color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+  }
+  .bil-tab:hover {
+    color: var(--text, #1a202c);
+    background: #f8fafc;
+  }
+  .bil-tab.active {
+    color: var(--primary, #1B2A4A);
+    border-bottom-color: var(--primary, #1B2A4A);
+    font-weight: 600;
+  }
+  .bil-body {
+    min-height: 400px;
+  }
+</style>
+
+{# Tab bar — mirrors eDiscovery tab pattern #}
+<div class="bil-tabs">
+  <button class="bil-tab active" id="tab-overview"
+          onclick="switchBilTab('overview')">Overview</button>
+  <button class="bil-tab" id="tab-clients"
+          onclick="switchBilTab('clients')">Clients</button>
+  <button class="bil-tab" id="tab-timesheet"
+          onclick="switchBilTab('timesheet')">Timesheets</button>
+  <button class="bil-tab" id="tab-trust"
+          onclick="switchBilTab('trust')">Trust</button>
+  <button class="bil-tab" id="tab-reports"
+          onclick="switchBilTab('reports')">Reports</button>
+</div>
+
+{# Body — HTMX swap target #}
+<div class="bil-body" id="bil-body">
+  <div style="padding:32px; text-align:center; font-size:12px; color:var(--muted);">
+    Loading…
+  </div>
+</div>
+
+<script>
+const BIL_TABS = {
+  overview:  '/billing/overview',
+  clients:   '/billing/overview',   // same partial — tree IS the client list
+  timesheet: '/billing/timesheet',
+  trust:     '/billing/trust',
+  reports:   '/billing/reports',
+};
+
+// Tabs that are full-page navigations vs HTMX partials
+const BIL_NAVIGATE = new Set(['timesheet', 'trust', 'reports']);
+
+function switchBilTab(tabSlug) {
+  document.querySelectorAll('.bil-tab').forEach(t => t.classList.remove('active'));
+  const activeTab = document.getElementById('tab-' + tabSlug);
+  if (activeTab) activeTab.classList.add('active');
+
+  if (BIL_NAVIGATE.has(tabSlug)) {
+    window.location.href = BIL_TABS[tabSlug];
+    return;
+  }
+
+  htmx.ajax('GET', BIL_TABS[tabSlug], {
+    target: '#bil-body',
+    swap: 'innerHTML'
+  });
+
+  try { sessionStorage.setItem('bil_active_tab', tabSlug); } catch(e) {}
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+  // Load overview partial on initial render
+  htmx.ajax('GET', '/billing/overview', {
+    target: '#bil-body',
+    swap: 'innerHTML'
+  });
+});
+</script>
+{% endblock %}

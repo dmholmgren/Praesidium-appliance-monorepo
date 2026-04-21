@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title_suffix %} — Events{% endblock %}
+{% block page_title %}Firmware Events{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+
+  <div class="flex items-center justify-between">
+    <div class="text-gray-500 text-xs">Showing last 100 events — newest first</div>
+    <div id="events-rows"
+         hx-get="/admin/htmx/events-recent"
+         hx-trigger="every 20s"
+         hx-swap="none"
+    ></div>
+    <button
+      hx-get="/admin/htmx/events-recent"
+      hx-target="#events-body"
+      hx-swap="innerHTML"
+      class="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+      Refresh
+    </button>
+  </div>
+
+  <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-800 bg-gray-800/50">
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Time</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Event</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">VM</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">By</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Detail</th>
+        </tr>
+      </thead>
+      <tbody id="events-body">
+        {% for e in events %}
+        <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+          <td class="px-4 py-2 font-mono text-xs text-gray-500">{{ e.created_at }}</td>
+          <td class="px-4 py-2">
+            {% set ec = e.event_type %}
+            {% if 'commit' in ec or 'save' in ec %}
+            <span class="badge status-ok">{{ ec }}</span>
+            {% elif 'rollback' in ec or 'fail' in ec %}
+            <span class="badge status-err">{{ ec }}</span>
+            {% elif 'pending' in ec or 'set' in ec %}
+            <span class="badge status-warn">{{ ec }}</span>
+            {% else %}
+            <span class="badge status-unk">{{ ec }}</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-2 font-mono text-xs text-gray-400">{{ e.vm_name or '—' }}</td>
+          <td class="px-4 py-2 text-xs text-gray-500">{{ e.triggered_by or '—' }}</td>
+          <td class="px-4 py-2 font-mono text-xs text-gray-600 max-w-xs truncate">
+            {{ e.detail | string | truncate(80) if e.detail else '—' }}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="px-4 py-8 text-center text-gray-500">No events recorded yet</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</div>
+{% endblock %}

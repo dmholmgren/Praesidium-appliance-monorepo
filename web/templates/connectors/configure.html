@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}Configure {{ registry.display_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Configure {{ registry.display_name }}{% endblock %}
+{% block content %}
+<div style="display:flex; margin:-24px; min-height:calc(100vh - 52px);">
+
+  {# ── Sidebar ── #}
+  <nav style="width:190px; flex-shrink:0; border-right:1px solid var(--border); padding:16px 10px; background:var(--surface);">
+    <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.1em; color:var(--muted); margin-bottom:8px; padding:0 6px;">Firm Settings</div>
+    {% for href, label in [
+      ('/tenant-admin/', 'Overview'),
+      ('/tenant-admin/profile', 'Firm Profile'),
+      ('/tenant-admin/users', 'Users'),
+      ('/tenant-admin/connectors', 'Connectors'),
+      ('/tenant-admin/features', 'Features'),
+      ('/tenant-admin/ssl', 'SSL & Domain'),
+      ('/tenant-admin/byok', 'API Keys (BYOK)'),
+    ] %}
+    <a href="{{ href }}" style="display:block; padding:6px 8px; border-radius:5px; font-size:13px; text-decoration:none; margin-bottom:1px;
+      {% if request.url.path == href or (href != '/tenant-admin/' and request.url.path.startswith(href)) %}color:var(--primary); background:#EFF6FF; font-weight:500;
+      {% else %}color:var(--muted);{% endif %}">{{ label }}</a>
+    {% endfor %}
+    <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--border);">
+      <a href="/tenant-admin/break-glass" style="display:block; padding:6px 8px; font-size:13px; text-decoration:none; color:var(--muted);">Emergency Access</a>
+    </div>
+  </nav>
+
+  {# ── Main ── #}
+  <div style="flex:1; padding:24px; overflow-y:auto;">
+
+    <div style="margin-bottom:16px;">
+      <a href="/tenant-admin/connectors" style="font-size:12px; color:var(--muted); text-decoration:none;">← Connectors</a>
+    </div>
+
+    {# ── Saved / error banners ── #}
+    {% if saved %}
+    <div style="background:#D1FAE5; border:1px solid #6EE7B7; border-radius:6px; padding:10px 14px; font-size:13px; color:#065F46; margin-bottom:16px;">
+      ✓ Configuration saved.
+    </div>
+    {% endif %}
+    {% if error %}
+    <div style="background:#FEE2E2; border:1px solid #FCA5A5; border-radius:6px; padding:10px 14px; font-size:13px; color:#991B1B; margin-bottom:16px;">
+      ✗ {{ error }}
+    </div>
+    {% endif %}
+
+    {# ── Header ── #}
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:20px;">
+      <div>
+        <h2 style="font-size:16px; font-weight:600; color:var(--text); margin:0 0 4px 0;">{{ registry.display_name }}</h2>
+        {% if registry.description %}
+        <p style="font-size:12px; color:var(--muted); margin:0; max-width:560px;">{{ registry.description }}</p>
+        {% endif %}
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; flex-shrink:0; margin-left:16px;">
+        {% if is_active %}
+        <span class="badge badge-green">Active</span>
+        {% elif instance %}
+        <span class="badge badge-gray">Configured</span>
+        {% else %}
+        <span class="badge badge-gray">Not configured</span>
+        {% endif %}
+        {% if last_sync_at %}
+        <span style="font-size:11px; color:var(--muted);">Last sync: {{ last_sync_at }}</span>
+        {% endif %}
+      </div>
+    </div>
+
+    {# ── Ingest API key panel (agent-push connectors) ── #}
+    {% if ingest_api_key %}
+    <div class="card" style="margin-bottom:16px; background:#F0FDF4; border-color:#86EFAC;">
+      <h3 style="font-size:13px; font-weight:600; color:#166534; margin:0 0 8px 0;">Agent API Key</h3>
+      <p style="font-size:12px; color:#166534; margin:0 0 10px 0;">Paste this key into the agent installer. It authenticates the agent's ingest calls.</p>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <code style="flex:1; font-size:12px; padding:7px 10px; background:#DCFCE7; border:1px solid #86EFAC; border-radius:6px; font-family:monospace; word-break:break-all;">{{ ingest_api_key }}</code>
+      </div>
+      {% if ingest_url %}
+      <div style="margin-top:8px; font-size:11px; color:#166534;">
+        Ingest endpoint: <code style="font-size:11px;">{{ ingest_url }}</code>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {# ── Configure form ── #}
+    <form method="post" action="/tenant-admin/connectors/{{ registry.connector_type }}/configure">
+
+      {# Config fields — from connector_registry.config_fields JSONB #}
+      {% if registry.config_fields %}
+      <div class="card" style="margin-bottom:16px;">
+        <h3 style="font-size:13px; font-weight:600; color:var(--text); margin:0 0 14px 0;">Configuration</h3>
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          {% for field in registry.config_fields %}
+          <div>
+            <label style="display:block; font-size:12px; font-weight:500; color:var(--text); margin-bottom:4px;">
+              {{ field.label or field.name }}
+              {% if field.required %}<span style="color:#EF4444;"> *</span>{% endif %}
+            </label>
+            {% if field.type == 'textarea' %}
+            <textarea name="{{ field.name }}" rows="4"
+              placeholder="{{ field.placeholder or '' }}"
+              style="width:100%; font-size:12px; padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-family:'DM Sans',sans-serif; resize:vertical; box-sizing:border-box;">{{ existing_config.get(field.name, '') }}</textarea>
+            {% elif field.type == 'select' %}
+            <select name="{{ field.name }}"
+              style="width:100%; font-size:12px; padding:7px 10px; border:1px solid var(--border); border-radius:6px; background:var(--surface); font-family:'DM Sans',sans-serif;">
+              {% for opt in field.options or [] %}
+              <option value="{{ opt.value if opt is mapping else opt }}"
+                {% if existing_config.get(field.name) == (opt.value if opt is mapping else opt) %}selected{% endif %}>
+                {{ opt.label if opt is mapping else opt }}
+              </option>
+              {% endfor %}
+            </select>
+            {% elif field.type == 'checkbox' %}
+            <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:var(--text); cursor:pointer;">
+              <input type="checkbox" name="{{ field.name }}" value="true"
+                {% if existing_config.get(field.name) %}checked{% endif %}
+                style="width:15px; height:15px;">
+              {{ field.checkbox_label or field.label or field.name }}
+            </label>
+            {% else %}
+            <input type="{{ field.type or 'text' }}" name="{{ field.name }}"
+              value="{{ existing_config.get(field.name, '') }}"
+              placeholder="{{ field.placeholder or '' }}"
+              {% if field.required %}required{% endif %}
+              style="width:100%; font-size:12px; padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-family:'DM Sans',sans-serif; box-sizing:border-box;">
+            {% endif %}
+            {% if field.help %}
+            <p style="font-size:11px; color:var(--muted); margin:4px 0 0 0;">{{ field.help }}</p>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {# Credential fields — from connector_registry.credential_fields JSONB #}
+      {% if registry.credential_fields %}
+      <div class="card" style="margin-bottom:16px;">
+        <h3 style="font-size:13px; font-weight:600; color:var(--text); margin:0 0 4px 0;">Credentials</h3>
+        <p style="font-size:11px; color:var(--muted); margin:0 0 14px 0;">Stored encrypted at rest. Leave blank to keep existing value.</p>
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          {% for field in registry.credential_fields %}
+          <div>
+            <label style="display:block; font-size:12px; font-weight:500; color:var(--text); margin-bottom:4px;">
+              {{ field.label or field.name }}
+            </label>
+            <input type="password" name="{{ field.name }}"
+              placeholder="{{ '••••••••' if credential_hints.get(field.name) else (field.placeholder or 'Enter value') }}"
+              autocomplete="off"
+              style="width:100%; font-size:12px; padding:7px 10px; border:1px solid var(--border); border-radius:6px; font-family:'DM Sans',sans-serif; box-sizing:border-box;">
+            {% if field.help %}
+            <p style="font-size:11px; color:var(--muted); margin:4px 0 0 0;">{{ field.help }}</p>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {# Enable toggle #}
+      <div class="card" style="margin-bottom:16px;">
+        <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+          <input type="checkbox" name="is_active" value="on"
+            {% if is_active %}checked{% endif %}
+            style="width:16px; height:16px;">
+          <div>
+            <div style="font-size:13px; font-weight:500; color:var(--text);">Enable this connector</div>
+            <div style="font-size:12px; color:var(--muted);">Activate after saving configuration.</div>
+          </div>
+        </label>
+      </div>
+
+      <div style="display:flex; gap:10px;">
+        <button type="submit" class="btn-primary">Save Configuration</button>
+        <a href="/tenant-admin/connectors" class="btn-secondary">Cancel</a>
+      </div>
+
+    </form>
+
+  </div>
+</div>
+{% endblock %}

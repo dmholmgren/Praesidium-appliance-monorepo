@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title_suffix %} — {{ 'Edit User' if user else 'New User' }}{% endblock %}
+{% block page_title %}{{ 'Edit User' if user else 'New User' }}{% endblock %}
+
+{% block content %}
+<div class="max-w-xl">
+
+  <!-- Back link -->
+  <a href="/admin/users?tenant_id={{ tenant_id }}"
+     class="text-sm text-gray-400 hover:text-gray-200 flex items-center gap-1 mb-5">
+    ← Back to Users
+  </a>
+
+  <!-- Error banner -->
+  {% if error %}
+  <div class="mb-4 px-4 py-3 bg-red-900/50 border border-red-700 rounded text-red-200 text-sm">
+    {{ error }}
+  </div>
+  {% endif %}
+
+  <form method="post"
+        action="/admin/users/{{ user.id if user else 'new' }}"
+        class="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-5">
+
+    <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+
+    <!-- Username (create only; read-only on edit) -->
+    <div>
+      <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+        Username
+      </label>
+      {% if user %}
+      <div class="px-3 py-2 bg-gray-800 border border-gray-700 rounded text-gray-300 text-sm">
+        {{ user.username }}
+        {% if user.is_ldap %}
+        <span class="ml-2 badge bg-indigo-900 text-indigo-200 text-xs">LDAP</span>
+        {% endif %}
+      </div>
+      {% else %}
+      <input type="text" name="username"
+             value="{{ form.username if form else '' }}"
+             required autocomplete="off"
+             class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-gray-100 text-sm focus:outline-none focus:border-blue-500">
+      {% endif %}
+    </div>
+
+    <!-- Full Name -->
+    <div>
+      <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+        Full Name
+      </label>
+      <input type="text" name="full_name"
+             value="{{ user.full_name if user else (form.full_name if form else '') }}"
+             class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-gray-100 text-sm focus:outline-none focus:border-blue-500">
+    </div>
+
+    <!-- Email -->
+    <div>
+      <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+        Email <span class="text-red-400">*</span>
+      </label>
+      <input type="email" name="email"
+             value="{{ user.email if user else (form.email if form else '') }}"
+             required
+             class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-gray-100 text-sm focus:outline-none focus:border-blue-500">
+    </div>
+
+    <!-- Role -->
+    <div>
+      <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+        Role
+      </label>
+      <select name="role"
+              class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-gray-100 text-sm focus:outline-none focus:border-blue-500">
+        {% for r in roles %}
+        <option value="{{ r }}"
+          {% if user and user.role == r %}selected
+          {% elif form and form.role == r %}selected{% endif %}>
+          {{ r | replace('_', ' ') | title }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!-- Theme Preference -->
+    <div>
+      <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+        Theme Preference
+      </label>
+      <div class="flex gap-6">
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="radio" name="theme_preference" value="dark"
+                 {% if not user or user.theme_preference == 'dark' %}checked{% endif %}
+                 class="accent-blue-500">
+          <span class="text-sm text-gray-300">🌙 Dark</span>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="radio" name="theme_preference" value="light"
+                 {% if user and user.theme_preference == 'light' %}checked{% endif %}
+                 class="accent-blue-500">
+          <span class="text-sm text-gray-300">☀️ Light</span>
+        </label>
+      </div>
+      <p class="text-xs text-gray-600 mt-1.5">
+        Applied at next login. Quick-toggle also available from user list.
+      </p>
+    </div>
+
+    <!-- Password -->
+    <div class="border-t border-gray-800 pt-5">
+      <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+        {% if user %}
+          Reset Password
+          <span class="font-normal normal-case text-gray-500">(leave blank to keep current)</span>
+        {% else %}
+          Password <span class="text-red-400">*</span>
+        {% endif %}
+      </label>
+      <input type="password"
+             name="{{ 'new_password' if user else 'password' }}"
+             {% if not user %}required{% endif %}
+             autocomplete="new-password"
+             minlength="8"
+             placeholder="Minimum 8 characters"
+             class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-gray-100 text-sm focus:outline-none focus:border-blue-500">
+    </div>
+
+    <div>
+      <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+        Confirm Password {% if not user %}<span class="text-red-400">*</span>{% endif %}
+      </label>
+      <input type="password"
+             name="{{ 'new_password_confirm' if user else 'password_confirm' }}"
+             {% if not user %}required{% endif %}
+             autocomplete="new-password"
+             class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-gray-100 text-sm focus:outline-none focus:border-blue-500">
+    </div>
+
+    <!-- LDAP notice -->
+    {% if user and user.is_ldap %}
+    <div class="px-4 py-3 bg-indigo-900/30 border border-indigo-800 rounded text-xs text-indigo-300">
+      This user authenticates via LDAP (<code class="text-indigo-200">{{ user.ldap_dn }}</code>).
+      Password reset has no effect on LDAP authentication.
+    </div>
+    {% endif %}
+
+    <!-- Actions -->
+    <div class="flex items-center justify-between pt-2">
+      <a href="/admin/users?tenant_id={{ tenant_id }}"
+         class="text-sm text-gray-400 hover:text-gray-200">Cancel</a>
+      <button type="submit"
+              class="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded font-medium">
+        {{ 'Save Changes' if user else 'Create User' }}
+      </button>
+    </div>
+
+  </form>
+</div>
+{% endblock %}

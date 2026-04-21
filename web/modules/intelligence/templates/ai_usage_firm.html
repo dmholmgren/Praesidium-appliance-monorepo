@@ -1,0 +1,141 @@
+{# widgets/ai_usage_firm.html
+   Firm AI Usage — summary view. Today + MTD side-by-side.
+   No unallocated block here; reconciliation lives on drill-down.
+   Auto-refresh every 60s.
+#}
+<div style="display:flex; flex-direction:column; height:100%; min-height:0;"
+     id="widget-ai-usage-firm-body"
+     hx-get="/widgets/ai_usage_firm{% if scoped_to_client and (top_matters and top_matters[0].client_id) %}?client_id={{ top_matters[0].client_id }}{% endif %}"
+     hx-trigger="every 60s"
+     hx-swap="outerHTML">
+
+  <div style="padding:6px 12px; border-bottom:1px solid #f1f5f9;
+              background:#f8fafc; flex-shrink:0;
+              display:flex; align-items:center; justify-content:space-between;">
+    <span style="font-size:11px; font-weight:600; color:var(--muted);">
+      {% if scoped_to_client %}Client AI Usage{% else %}Firm AI Usage{% endif %}
+    </span>
+  </div>
+
+  {% if empty_state %}
+  <div style="flex:1; display:flex; align-items:center; justify-content:center;
+              padding:16px; text-align:center;">
+    <div style="font-size:10px; color:var(--muted);">
+      {{ reason or 'No AI usage yet.' }}
+    </div>
+  </div>
+
+  {% else %}
+
+  {# Today + MTD side-by-side. Today first (more volatile / actionable). #}
+  <div style="padding:8px 12px; flex-shrink:0;
+              display:flex; gap:16px;">
+
+    {# Today #}
+    <div style="flex:1; min-width:0;">
+      <div style="font-size:9px; font-weight:700; color:var(--muted);
+                  text-transform:uppercase; letter-spacing:0.05em;
+                  margin-bottom:2px;
+                  display:flex; align-items:center; justify-content:space-between;">
+        <span>Today</span>
+        <span>
+          {% if today.fallbacks > 0 %}
+          <span style="font-size:10px; color:#1d4ed8; font-weight:600;"
+                title="Fallbacks today">↓{{ today.fallbacks }}</span>
+          {% endif %}
+          {% if today.overrides > 0 %}
+          <span style="font-size:10px; color:#dc2626; font-weight:600; margin-left:6px;"
+                title="Overrides today">!{{ today.overrides }}</span>
+          {% endif %}
+        </span>
+      </div>
+      <div style="font-size:16px; font-weight:700; color:var(--text);
+                  font-variant-numeric:tabular-nums; line-height:1;
+                  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+        ${{ "{:,.4f}".format(today.total) }}
+      </div>
+      <div style="font-size:10px; color:var(--muted); margin-top:2px;">
+        {{ today.calls }} call{{ 's' if today.calls != 1 else '' }}
+      </div>
+    </div>
+
+    {# Month to date #}
+    <div style="flex:1; min-width:0;">
+      <div style="font-size:9px; font-weight:700; color:var(--muted);
+                  text-transform:uppercase; letter-spacing:0.05em;
+                  margin-bottom:2px;">
+        Month to date
+      </div>
+      <div style="font-size:16px; font-weight:700; color:var(--text);
+                  font-variant-numeric:tabular-nums; line-height:1;
+                  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+        ${{ "{:,.2f}".format(month.total) }}
+      </div>
+      <div style="font-size:10px; color:var(--muted); margin-top:2px;">
+        {{ month.calls }} call{{ 's' if month.calls != 1 else '' }}
+      </div>
+    </div>
+
+  </div>
+
+  {# Top matters — hidden when client-scoped (redundant on client page) #}
+  {% if top_matters and not scoped_to_client %}
+  <div style="flex:1; min-height:0; overflow-y:auto; border-top:1px solid #f1f5f9;">
+    <div style="padding:5px 12px 3px; font-size:9px; font-weight:700;
+                color:var(--muted); text-transform:uppercase;
+                letter-spacing:0.05em;">
+      Top Matters
+    </div>
+    {% for m in top_matters[:5] %}
+    <a href="/billing/ai-usage/client/{{ m.client_id }}"
+       style="display:flex; align-items:center; justify-content:space-between;
+              padding:4px 12px; text-decoration:none; border-bottom:1px solid #f8fafc;"
+       onmouseover="this.style.background='#f8fafc'"
+       onmouseout="this.style.background=''">
+      <div style="flex:1; min-width:0; padding-right:8px;">
+        <div style="font-size:11px; color:var(--text);
+                    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          {{ m.matter_name }}
+        </div>
+      </div>
+      <div style="font-size:11px; font-weight:600; color:var(--text);
+                  font-variant-numeric:tabular-nums; flex-shrink:0;">
+        ${{ "{:,.2f}".format(m.spend_month) }}
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# Top workflows #}
+  {% if top_workflows %}
+  <div style="{% if not top_matters or scoped_to_client %}flex:1; min-height:0; overflow-y:auto;{% else %}flex-shrink:0;{% endif %}
+              border-top:1px solid #f1f5f9;">
+    <div style="padding:5px 12px 3px; font-size:9px; font-weight:700;
+                color:var(--muted); text-transform:uppercase;
+                letter-spacing:0.05em;">
+      Top Workflows
+    </div>
+    {% for w in top_workflows[:5] %}
+    <div style="display:flex; align-items:center; justify-content:space-between;
+                padding:4px 12px; border-bottom:1px solid #f8fafc;">
+      <div style="flex:1; min-width:0; padding-right:8px;">
+        <div style="font-size:11px; color:var(--text);
+                    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          {{ w.module }}.{{ w.purpose }}
+        </div>
+      </div>
+      <div style="font-size:11px; font-weight:600; color:var(--text);
+                  font-variant-numeric:tabular-nums; flex-shrink:0;">
+        ${{ "{:,.2f}".format(w.total) }}
+        <span style="color:var(--muted); font-weight:400; font-size:9px;">
+          ({{ w.calls }})
+        </span>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% endif %}
+</div>

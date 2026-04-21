@@ -1,0 +1,209 @@
+{# Unallocated AI Charges Report — Partner Review
+   Rendered by GET /billing/ai-usage/unallocated
+#}
+{% extends "base.html" %}
+{% block title %}Unallocated AI Charges — Partner Review{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-6">
+
+  <nav class="text-sm text-gray-500 mb-2">
+    <a href="/billing" class="hover:text-indigo-600">Billing</a>
+    <span class="mx-1">/</span>
+    <span class="text-gray-700">AI Usage / Unallocated</span>
+  </nav>
+
+  <div class="flex items-start justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-semibold text-gray-900">
+        Unallocated AI Charges
+      </h1>
+      <p class="text-sm text-gray-500">
+        Partner review — allocate, absorb as firm overhead, or reallocate
+      </p>
+    </div>
+    <div class="text-right">
+      <p class="text-xs text-gray-400 uppercase tracking-wide">Pending total</p>
+      <p class="text-3xl font-semibold text-gray-800">
+        ${{ '%.2f' | format(total_usd) }}
+      </p>
+      <p class="text-sm text-gray-500">{{ count }} call(s)</p>
+    </div>
+  </div>
+
+  <div class="flex items-center gap-2 mb-4 text-sm">
+    <span class="text-gray-500">Filter:</span>
+    <a href="/billing/ai-usage/unallocated?days={{ days }}"
+       class="px-3 py-1 rounded
+              {% if not active_reason %}
+                bg-indigo-600 text-white
+              {% else %}
+                bg-gray-100 text-gray-700 hover:bg-gray-200
+              {% endif %}">
+      All
+    </a>
+    <a href="/billing/ai-usage/unallocated?reason=no_matter_context&days={{ days }}"
+       class="px-3 py-1 rounded
+              {% if active_reason == 'no_matter_context' %}
+                bg-indigo-600 text-white
+              {% else %}
+                bg-gray-100 text-gray-700 hover:bg-gray-200
+              {% endif %}">
+      No matter context
+    </a>
+    <a href="/billing/ai-usage/unallocated?reason=policy_firm_overhead&days={{ days }}"
+       class="px-3 py-1 rounded
+              {% if active_reason == 'policy_firm_overhead' %}
+                bg-indigo-600 text-white
+              {% else %}
+                bg-gray-100 text-gray-700 hover:bg-gray-200
+              {% endif %}">
+      Policy firm overhead
+    </a>
+    <a href="/billing/ai-usage/unallocated?reason=matter_unavailable&days={{ days }}"
+       class="px-3 py-1 rounded
+              {% if active_reason == 'matter_unavailable' %}
+                bg-indigo-600 text-white
+              {% else %}
+                bg-gray-100 text-gray-700 hover:bg-gray-200
+              {% endif %}">
+      Matter unavailable
+    </a>
+  </div>
+
+  <div class="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50">
+        <tr class="text-xs text-gray-500 uppercase tracking-wide">
+          <th class="text-left font-medium px-4 py-3">When</th>
+          <th class="text-left font-medium px-4 py-3">Workflow</th>
+          <th class="text-left font-medium px-4 py-3">User</th>
+          <th class="text-left font-medium px-4 py-3">Reason</th>
+          <th class="text-right font-medium px-4 py-3">Cost</th>
+          <th class="text-right font-medium px-4 py-3">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100" id="unallocated-rows">
+        {% for c in calls %}
+        <tr id="call-row-{{ c.call_id }}" class="hover:bg-gray-50">
+          <td class="px-4 py-3 text-gray-600 text-xs whitespace-nowrap">
+            {{ c.created_at_str }}
+          </td>
+          <td class="px-4 py-3">
+            <div class="text-gray-800">{{ c.module }}.{{ c.purpose }}</div>
+            <div class="text-xs text-gray-400">{{ c.model }}</div>
+          </td>
+          <td class="px-4 py-3 text-gray-700">
+            {{ c.user_name or '—' }}
+          </td>
+          <td class="px-4 py-3">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full
+                         text-xs font-medium
+                         {% if c.unallocated_reason == 'no_matter_context' %}
+                           bg-gray-100 text-gray-700
+                         {% elif c.unallocated_reason == 'policy_firm_overhead' %}
+                           bg-blue-100 text-blue-700
+                         {% else %}
+                           bg-amber-100 text-amber-700
+                         {% endif %}">
+              {{ c.unallocated_reason or 'unknown' }}
+            </span>
+          </td>
+          <td class="px-4 py-3 text-right text-gray-800 font-medium">
+            ${{ '%.4f' | format(c.cost_usd) }}
+          </td>
+          <td class="px-4 py-3 text-right">
+            <div class="flex items-center justify-end gap-2">
+              <select id="matter-select-{{ c.call_id }}"
+                      class="text-xs border border-gray-300 rounded px-2 py-1
+                             focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
+                <option value="">Select matter…</option>
+                {% for m in matters %}
+                <option value="{{ m.id }}">
+                  {{ m.matter_name }} ({{ m.matter_number }})
+                </option>
+                {% endfor %}
+              </select>
+              <button type="button"
+                      class="text-xs px-2 py-1 rounded bg-indigo-600 text-white
+                             hover:bg-indigo-700 transition"
+                      onclick="praesidiumAllocate({{ c.call_id }})">
+                Allocate
+              </button>
+              <button type="button"
+                      class="text-xs px-2 py-1 rounded bg-gray-100 text-gray-700
+                             hover:bg-gray-200 transition"
+                      onclick="praesidiumAbsorb({{ c.call_id }})">
+                Absorb
+              </button>
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="px-4 py-8 text-center text-sm text-gray-400">
+            Nothing pending review
+            {% if active_reason %}for this reason{% endif %}.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<script>
+async function praesidiumAllocate(callId) {
+  const sel = document.getElementById('matter-select-' + callId);
+  const matterId = sel.value;
+  if (!matterId) {
+    alert('Select a matter first.');
+    return;
+  }
+  const reason = prompt('Allocation reason (optional):', 'partner allocation');
+  if (reason === null) return;
+
+  const resp = await fetch('/billing/ai-usage/allocate', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({call_id: callId, matter_id: matterId, reason: reason})
+  });
+  const data = await resp.json();
+  if (!resp.ok) {
+    alert('Failed: ' + (data.detail || resp.statusText));
+    return;
+  }
+  const row = document.getElementById('call-row-' + callId);
+  if (row) row.style.opacity = '0.3';
+  let msg = 'Allocated.';
+  if (data.would_have_breached_cap) {
+    msg += ' Note: this would have triggered a cap warning at the time of call.';
+  }
+  setTimeout(() => {
+    if (row) row.remove();
+  }, 500);
+}
+
+async function praesidiumAbsorb(callId) {
+  const reason = prompt('Absorb reason (optional):', 'accepted as firm overhead');
+  if (reason === null) return;
+
+  const resp = await fetch('/billing/ai-usage/absorb', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({call_id: callId, reason: reason})
+  });
+  const data = await resp.json();
+  if (!resp.ok) {
+    alert('Failed: ' + (data.detail || resp.statusText));
+    return;
+  }
+  const row = document.getElementById('call-row-' + callId);
+  if (row) row.style.opacity = '0.3';
+  setTimeout(() => {
+    if (row) row.remove();
+  }, 500);
+}
+</script>
+{% endblock %}

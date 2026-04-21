@@ -1,0 +1,26 @@
+-- widget_routes.py  AND  layout_loader.py
+-- Both files have _TEMPLATE_DIRS lists that need one line added.
+--
+-- In _TEMPLATE_DIRS, after the billing line, add:
+--     "/app/modules/dashboard/templates",
+--
+-- Current list (both files):
+-- _TEMPLATE_DIRS = [
+--     "/app/modules/widgets/templates",
+--     "/app/modules/dms/templates",
+--     "/app/modules/billing/templates",
+--     "/app/modules/ediscovery/templates",
+--     "/app/modules/intelligence/templates",
+--     "/app/core/templates",
+-- ]
+--
+-- Updated list:
+-- _TEMPLATE_DIRS = [
+--     "/app/modules/widgets/templates",
+--     "/app/modules/dms/templates",
+--     "/app/modules/billing/templates",
+--     "/app/modules/dashboard/templates",        <-- ADD THIS LINE
+--     "/app/modules/ediscovery/templates",
+--     "/app/modules/intelligence/templates",
+--     "/app/core/templates",
+-- ]

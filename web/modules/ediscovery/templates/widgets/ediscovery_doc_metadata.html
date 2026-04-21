@@ -1,0 +1,90 @@
+{#
+  widgets/ediscovery_doc_metadata.html
+  eDiscovery Review — right rail collapsible card: Metadata
+  Context: doc, is_email, file_info, bates_info, hash_info, email_info,
+           dup_info, file_hash_full, error
+
+  Default collapsed (data-edr-default-open="false") — it's dense and less
+  frequently needed during review flow. User expands when they need to
+  check custodian/hash/message-id.
+#}
+<div class="edr-card" data-edr-card="metadata" data-edr-default-open="false"
+     style="border:1px solid var(--border-color,#e2e8f0);
+            border-radius:6px; background:var(--surface,#fff);
+            margin-bottom:10px; overflow:hidden;">
+
+  <div class="edr-card-header"
+       onclick="edrToggleCard(this)"
+       style="display:flex; align-items:center; justify-content:space-between;
+              padding:8px 12px; cursor:pointer; user-select:none;
+              border-bottom:1px solid var(--border-color,#f1f5f9);
+              background:#FAFBFC;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span class="edr-card-caret"
+            style="display:inline-block; width:10px; font-size:10px;
+                   color:var(--muted,#64748b); transition:transform 0.15s;">▾</span>
+      <span style="font-size:10px; font-weight:700; color:var(--muted,#64748b);
+                   text-transform:uppercase; letter-spacing:0.06em;">
+        Metadata
+      </span>
+    </div>
+  </div>
+
+  <div class="edr-card-body" style="padding:10px 12px;">
+    {% if error %}
+      <div style="font-size:11px; color:#991b1b; padding:6px 8px;
+                  background:#fef2f2; border-radius:4px;">
+        ⚠ {{ error }}
+      </div>
+    {% elif not doc %}
+      <div style="font-size:11px; color:var(--muted,#64748b);">
+        No document selected.
+      </div>
+    {% else %}
+
+      {% macro kv_block(title, pairs) %}
+        {% if pairs %}
+        <div style="margin-bottom:10px;">
+          <div style="font-size:10px; font-weight:600; color:var(--muted,#64748b);
+                      text-transform:uppercase; letter-spacing:0.04em;
+                      margin-bottom:4px;">
+            {{ title }}
+          </div>
+          <dl style="display:grid; grid-template-columns:110px 1fr; gap:2px 8px;
+                     margin:0; font-size:11px;">
+            {% for label, val in pairs %}
+            <dt style="color:var(--muted,#64748b); white-space:nowrap;">{{ label }}</dt>
+            <dd style="margin:0; color:var(--text,#1a202c); word-break:break-word;
+                       overflow-wrap:anywhere;">{{ val }}</dd>
+            {% endfor %}
+          </dl>
+        </div>
+        {% endif %}
+      {% endmacro %}
+
+      {{ kv_block('File', file_info) }}
+      {{ kv_block('Production', bates_info) }}
+      {{ kv_block('Hashes', hash_info) }}
+      {% if is_email %}
+        {{ kv_block('Email headers', email_info) }}
+      {% endif %}
+      {{ kv_block('Duplicates', dup_info) }}
+
+      {% if file_hash_full %}
+      <div style="margin-top:6px; padding-top:8px;
+                  border-top:1px solid var(--border-color,#f1f5f9);">
+        <div style="font-size:10px; color:var(--muted,#64748b); margin-bottom:2px;">
+          Full SHA-256
+        </div>
+        <div style="font-family:'SF Mono', ui-monospace, monospace;
+                    font-size:10px; color:var(--text,#1a202c);
+                    background:#F9FAFB; padding:4px 6px; border-radius:3px;
+                    word-break:break-all;">
+          {{ file_hash_full }}
+        </div>
+      </div>
+      {% endif %}
+
+    {% endif %}
+  </div>
+</div>

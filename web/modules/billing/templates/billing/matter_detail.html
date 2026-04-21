@@ -1,0 +1,639 @@
+{% extends "base.html" %}
+{% block title %}{{ matter.matter_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}{{ matter.matter_name }}{% endblock %}
+{% block head_extra %}
+<script>
+// bilScopeClient and bilScopeMatter must be defined before any widget loads.
+// At Level 3 (matter detail):
+//   bilScopeClient → navigate up to client detail
+//   bilScopeMatter → no-op (already on this matter)
+window.bilScopeClient = function(clientId) {
+  var cid = clientId || '{{ matter.client_id }}';
+  window.location.href = '/billing/clients/' + cid;
+};
+window.bilScopeMatter = function(event, matterId, clientId) {
+  event && event.preventDefault && event.preventDefault();
+  var mid = matterId || '{{ matter.id }}';
+  var cid = clientId || '{{ matter.client_id }}';
+  if (mid !== '{{ matter.id }}') {
+    window.location.href = '/billing/clients/' + cid + '/matters/' + mid;
+  }
+  // same matter — no-op
+};
+</script>
+
+{# ── Matter Edit Modal ──────────────────────────────────────────────────────── #}
+<div id="matter-edit-overlay"
+     style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4);
+            z-index:200; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:10px; width:600px; max-height:90vh;
+              overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.2);">
+
+    <div style="padding:18px 24px; border-bottom:1px solid var(--border);
+                display:flex; justify-content:space-between; align-items:center;">
+      <div style="font-family:'Lora',serif; font-size:16px; font-weight:600;">Edit Matter</div>
+      <button onclick="closeMatterEditModal()"
+              style="border:none; background:none; font-size:20px; color:var(--muted);
+                     cursor:pointer; padding:4px 8px; line-height:1;">✕</button>
+    </div>
+
+    <div style="padding:24px;">
+      <div id="matter-modal-error"
+           style="display:none; background:#FEF2F2; border:1px solid #FECACA;
+                  color:#7F1D1D; border-radius:6px; padding:10px 14px;
+                  margin-bottom:16px; font-size:13px;"></div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+
+        <div style="grid-column:1/-1;">
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Matter Name *</label>
+          <input type="text" id="me-matter_name"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Matter Number</label>
+          <input type="text" id="me-matter_number"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Practice Area</label>
+          <input type="text" id="me-practice_area"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Billing Type</label>
+          <select id="me-billing_type"
+                  style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                         padding:8px 12px; font-size:13px; background:#fff;
+                         box-sizing:border-box;">
+            <option value="">— Select —</option>
+            <option value="hourly">Hourly</option>
+            <option value="flat_fee">Flat Fee</option>
+            <option value="contingency">Contingency</option>
+            <option value="retainer">Retainer</option>
+          </select>
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Hourly Rate</label>
+          <input type="number" id="me-hourly_rate" step="0.01" min="0"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Status</label>
+          <select id="me-status"
+                  style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                         padding:8px 12px; font-size:13px; background:#fff;
+                         box-sizing:border-box;">
+            <option value="active">Active</option>
+            <option value="closed">Closed</option>
+            <option value="pending">Pending</option>
+          </select>
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Cause Number</label>
+          <input type="text" id="me-cause_number"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Court</label>
+          <input type="text" id="me-court"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Judge</label>
+          <input type="text" id="me-judge"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">SOL Date</label>
+          <input type="date" id="me-sol_date"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Open Date</label>
+          <input type="date" id="me-open_date"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div style="grid-column:1/-1;">
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Notes</label>
+          <textarea id="me-notes" rows="3"
+                    style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                           padding:8px 12px; font-size:13px; resize:vertical;
+                           font-family:inherit; box-sizing:border-box;"></textarea>
+        </div>
+
+      </div>
+    </div>
+
+    <div style="padding:16px 24px; border-top:1px solid var(--border);
+                display:flex; gap:10px; justify-content:flex-end;">
+      <button onclick="closeMatterEditModal()"
+              style="padding:8px 20px; border:1px solid #D1D5DB; background:#fff;
+                     border-radius:6px; font-size:13px; cursor:pointer;">Cancel</button>
+      <button onclick="saveMatterEdit()" id="me-save-btn"
+              style="padding:8px 20px; background:var(--primary); color:#fff;
+                     border:none; border-radius:6px; font-size:13px;
+                     font-weight:500; cursor:pointer;">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<script>
+var MATTER_DATA = {{ matter | tojson }};
+var _activeSlipRow = null;
+
+function openMatterEditModal() {
+  var m = MATTER_DATA;
+  document.getElementById('me-matter_name').value    = m.matter_name    || '';
+  document.getElementById('me-matter_number').value  = m.matter_number  || '';
+  document.getElementById('me-practice_area').value  = m.practice_area  || '';
+  document.getElementById('me-billing_type').value   = m.billing_type   || '';
+  document.getElementById('me-hourly_rate').value    = m.hourly_rate    || '';
+  document.getElementById('me-status').value         = m.status         || 'active';
+  document.getElementById('me-cause_number').value   = m.cause_number   || '';
+  document.getElementById('me-court').value          = m.court          || '';
+  document.getElementById('me-judge').value          = m.judge          || '';
+  document.getElementById('me-sol_date').value       = m.sol_date       || '';
+  document.getElementById('me-open_date').value      = m.open_date      || '';
+  document.getElementById('me-notes').value          = m.notes          || '';
+  document.getElementById('matter-modal-error').style.display = 'none';
+  document.getElementById('matter-edit-overlay').style.display = 'flex';
+}
+
+function closeMatterEditModal() {
+  document.getElementById('matter-edit-overlay').style.display = 'none';
+}
+
+async function saveMatterEdit() {
+  var btn = document.getElementById('me-save-btn');
+  btn.textContent = 'Saving…'; btn.disabled = true;
+
+  var payload = {
+    matter_name:   document.getElementById('me-matter_name').value.trim(),
+    matter_number: document.getElementById('me-matter_number').value.trim(),
+    practice_area: document.getElementById('me-practice_area').value.trim(),
+    billing_type:  document.getElementById('me-billing_type').value,
+    hourly_rate:   parseFloat(document.getElementById('me-hourly_rate').value) || null,
+    status:        document.getElementById('me-status').value,
+    cause_number:  document.getElementById('me-cause_number').value.trim(),
+    court:         document.getElementById('me-court').value.trim(),
+    judge:         document.getElementById('me-judge').value.trim(),
+    sol_date:      document.getElementById('me-sol_date').value || null,
+    open_date:     document.getElementById('me-open_date').value || null,
+    notes:         document.getElementById('me-notes').value.trim(),
+  };
+
+  if (!payload.matter_name) {
+    var e = document.getElementById('matter-modal-error');
+    e.textContent = 'Matter name is required.';
+    e.style.display = 'block';
+    btn.textContent = 'Save Changes'; btn.disabled = false;
+    return;
+  }
+
+  var errEl = document.getElementById('matter-modal-error');
+  try {
+    var res = await fetch('/api/billing/matters/{{ matter.id }}', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      closeMatterEditModal();
+      document.querySelector('h2').textContent = payload.matter_name;
+      Object.assign(MATTER_DATA, payload);
+    } else {
+      var err = await res.json();
+      errEl.textContent = err.detail || 'Error saving matter.';
+      errEl.style.display = 'block';
+    }
+  } catch(e) {
+    errEl.textContent = 'Network error. Please try again.';
+    errEl.style.display = 'block';
+  } finally {
+    btn.textContent = 'Save Changes'; btn.disabled = false;
+  }
+}
+
+document.getElementById('matter-edit-overlay')
+  .addEventListener('click', function(e) {
+    if (e.target === this) closeMatterEditModal();
+  });
+
+// ── Inline Slip Editing ───────────────────────────────────────────────────────
+function toggleInlineSlipEdit(row) {
+  if (_activeSlipRow === row) { closeInlineSlipEdit(); return; }
+  closeInlineSlipEdit();
+
+  var slip = JSON.parse(row.dataset.slip);
+  _activeSlipRow = row;
+  row.style.background = '#EFF6FF';
+
+  var colCount = row.cells.length;
+  var editRow = document.createElement('tr');
+  editRow.id = 'inline-slip-edit-row';
+  editRow.innerHTML = `
+    <td colspan="${colCount}" style="padding:12px 16px; background:#F8FAFF;
+        border-bottom:2px solid var(--primary);">
+      <div style="display:grid; grid-template-columns:140px 180px 80px 90px 1fr auto;
+                  gap:10px; align-items:end;">
+
+        <div>
+          <div style="font-size:10px; font-weight:600; color:var(--muted); margin-bottom:3px;">DATE</div>
+          <input type="date" id="is-date" value="${slip.slip_date || ''}"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:4px;
+                        padding:5px 8px; font-size:12px;">
+        </div>
+
+        <div>
+          <div style="font-size:10px; font-weight:600; color:var(--muted); margin-bottom:3px;">TIMEKEEPER</div>
+          <select id="is-tk"
+                  style="width:100%; border:1px solid #D1D5DB; border-radius:4px;
+                         padding:5px 8px; font-size:12px; background:#fff;">
+            <option value="${slip.source_tk_id}">${slip.tk_name}</option>
+          </select>
+        </div>
+
+        <div>
+          <div style="font-size:10px; font-weight:600; color:var(--muted); margin-bottom:3px;">HOURS</div>
+          <input type="number" id="is-hours" value="${parseFloat(slip.hours||0).toFixed(2)}"
+                 step="0.1" min="0" max="24"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:4px;
+                        padding:5px 8px; font-size:12px;"
+                 oninput="updateInlineValue()">
+        </div>
+
+        <div>
+          <div style="font-size:10px; font-weight:600; color:var(--muted); margin-bottom:3px;">RATE</div>
+          <input type="number" id="is-rate" value="${parseFloat(slip.rate||0).toFixed(2)}"
+                 step="0.01" min="0"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:4px;
+                        padding:5px 8px; font-size:12px;"
+                 oninput="updateInlineValue()">
+        </div>
+
+        <div>
+          <div style="font-size:10px; font-weight:600; color:var(--muted); margin-bottom:3px;">NARRATIVE</div>
+          <input type="text" id="is-narrative"
+                 value="${(slip.narrative||'').replace(/paid by dmh[^;.]*/gi,'').trim()}"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:4px;
+                        padding:5px 8px; font-size:12px;">
+        </div>
+
+        <div style="display:flex; gap:6px; align-items:flex-end; padding-bottom:1px;">
+          <div style="font-size:11px; font-weight:600; color:var(--primary);
+                      white-space:nowrap; padding:5px 0;" id="is-value">
+            $${(parseFloat(slip.hours||0)*parseFloat(slip.rate||0)).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
+          </div>
+          <select id="is-billed"
+                  style="border:1px solid #D1D5DB; border-radius:4px;
+                         padding:5px 6px; font-size:11px; background:#fff;">
+            <option value="false" ${!slip.billed?'selected':''}>WIP</option>
+            <option value="true"  ${slip.billed?'selected':''}>Billed</option>
+          </select>
+          <button onclick="saveInlineSlip('${slip.source_slip_id}')"
+                  style="padding:5px 12px; background:var(--primary); color:#fff;
+                         border:none; border-radius:4px; font-size:12px;
+                         font-weight:500; cursor:pointer; white-space:nowrap;"
+                  id="is-save-btn">Save</button>
+          <button onclick="closeInlineSlipEdit()"
+                  style="padding:5px 8px; border:1px solid #D1D5DB; background:#fff;
+                         border-radius:4px; font-size:12px; cursor:pointer;">✕</button>
+        </div>
+
+      </div>
+      <div id="is-error"
+           style="display:none; margin-top:8px; font-size:11px; color:#dc2626;"></div>
+    </td>`;
+
+  row.parentNode.insertBefore(editRow, row.nextSibling);
+
+  fetch('/api/billing/timekeepers')
+    .then(r => r.json())
+    .then(data => {
+      var sel = document.getElementById('is-tk');
+      if (!sel) return;
+      sel.innerHTML = '';
+      (data.timekeepers || []).forEach(tk => {
+        var opt = document.createElement('option');
+        opt.value = tk.ts_tk_id;
+        opt.textContent = `${tk.ts_name} (${tk.ts_initials || tk.ts_tk_id})`;
+        if (tk.ts_tk_id === slip.source_tk_id) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    })
+    .catch(() => {});
+}
+
+function closeInlineSlipEdit() {
+  var existing = document.getElementById('inline-slip-edit-row');
+  if (existing) existing.remove();
+  if (_activeSlipRow) { _activeSlipRow.style.background = ''; _activeSlipRow = null; }
+}
+
+function updateInlineValue() {
+  var h = parseFloat(document.getElementById('is-hours').value || 0);
+  var r = parseFloat(document.getElementById('is-rate').value  || 0);
+  var el = document.getElementById('is-value');
+  if (el) el.textContent = '$' + (h*r).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+
+async function saveInlineSlip(slipId) {
+  var btn = document.getElementById('is-save-btn');
+  btn.textContent = '…'; btn.disabled = true;
+
+  var billed = document.getElementById('is-billed').value === 'true';
+  var hours  = parseFloat(document.getElementById('is-hours').value || 0);
+  var rate   = parseFloat(document.getElementById('is-rate').value  || 0);
+
+  var payload = {
+    slip_date:    document.getElementById('is-date').value,
+    source_tk_id: document.getElementById('is-tk').value,
+    hours, rate,
+    narrative:    document.getElementById('is-narrative').value.trim(),
+    billed,
+    wip_value:    billed ? 0 : round2(hours * rate),
+    billed_value: billed ? round2(hours * rate) : 0,
+  };
+
+  var errEl = document.getElementById('is-error');
+  try {
+    var res = await fetch(`/api/billing/ts-slips/${slipId}`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      closeInlineSlipEdit();
+      htmx.trigger(document.getElementById('widget-matter-kpi'),    'load');
+      htmx.trigger(document.getElementById('widget-recent-slips'),  'load');
+      htmx.trigger(document.getElementById('widget-wip-by-tk'),     'load');
+    } else {
+      var err = await res.json();
+      errEl.textContent = err.detail || 'Error saving.';
+      errEl.style.display = 'block';
+      btn.textContent = 'Save'; btn.disabled = false;
+    }
+  } catch(e) {
+    errEl.textContent = 'Network error.';
+    errEl.style.display = 'block';
+    btn.textContent = 'Save'; btn.disabled = false;
+  }
+}
+
+function round2(n) { return Math.round(n * 100) / 100; }
+
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.target.id === 'widget-recent-slips') {
+    document.querySelectorAll('.slip-row').forEach(function(row) {
+      row.onclick = function() { toggleInlineSlipEdit(this); };
+    });
+  }
+});
+</script>
+{% endblock %}
+
+{% block content %}
+
+{# ── Breadcrumb + Header ──────────────────────────────────────────────────────── #}
+<div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:20px;">
+  <div>
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px; flex-wrap:wrap;">
+      <a href="/billing/clients" style="font-size:12px; color:var(--muted); text-decoration:none;">← Clients</a>
+      <span style="font-size:11px; color:#D1D5DB;">›</span>
+      <a href="/billing/clients/{{ matter.client_id }}"
+         style="font-size:12px; color:var(--muted); text-decoration:none;">{{ client_name }}</a>
+      <span style="font-size:11px; color:#D1D5DB;">›</span>
+      <span style="font-size:12px; color:var(--text);">{{ matter.matter_name }}</span>
+    </div>
+    <h2 style="font-family:'Lora',serif; font-size:20px; font-weight:600; color:var(--text); margin:0 0 4px 0;">
+      {{ matter.matter_name }}
+    </h2>
+    <p style="font-size:12px; color:var(--muted); margin:0;">
+      {% if matter.matter_number %}<span style="font-weight:500;">{{ matter.matter_number }}</span>{% endif %}
+      {% if matter.practice_area %} · {{ matter.practice_area }}{% endif %}
+      {% if matter.billing_type %} · {{ matter.billing_type | replace('_',' ') | title }}{% endif %}
+      {% if matter.court %} · {{ matter.court }}{% endif %}
+      {% if matter.cause_number %} · Cause No. {{ matter.cause_number }}{% endif %}
+      {% if matter.status %}
+      · <span style="color:{% if matter.status == 'active' %}#166534{% else %}#6B7280{% endif %};">
+          {{ matter.status | title }}</span>
+      {% endif %}
+      {% if matter.sol_date %}
+      · <span style="color:#7f1d1d; font-weight:500;">SOL {{ matter.sol_date }}</span>
+      {% endif %}
+    </p>
+  </div>
+  <div style="display:flex; gap:8px; align-items:center; flex-shrink:0;">
+    <button onclick="openMatterEditModal()"
+            style="font-size:12px; padding:6px 14px; background:#fff; color:var(--primary);
+                   border:1px solid var(--primary); border-radius:6px; cursor:pointer;">
+      Edit Matter
+    </button>
+    <a href="/billing/timesheet?matter_id={{ matter.id }}"
+       style="font-size:12px; padding:6px 14px; background:var(--primary); color:#fff;
+              border-radius:6px; text-decoration:none;">
+      + Time Entry
+    </a>
+    <button onclick="generatePrebill()"
+            style="font-size:12px; padding:6px 14px; background:#b45309; color:#fff;
+                   border:none; border-radius:6px; cursor:pointer;">
+      Prebill
+    </button>
+    {% if matter.folder_path %}
+    <button onclick="triggerLegacySync()" id="sync-btn"
+            style="font-size:12px; padding:6px 14px; background:#065f46; color:#fff;
+                   border:none; border-radius:6px; cursor:pointer;">
+      ↓ Pull from Legacy
+    </button>
+    {% endif %}
+  </div>
+</div>
+
+{# ── KPI Row — billing_matter_kpi widget ─────────────────────────────────────── #}
+<div id="widget-matter-kpi" style="margin-bottom:20px;"
+     hx-get="/widgets/billing_matter_kpi?matter_id={{ matter_id }}"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+  <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px;">
+    {% for _ in range(4) %}
+    <div class="card" style="padding:14px; min-height:72px; background:#F9FAFB;">
+      <div style="height:10px; width:60%; background:#E5E7EB; border-radius:3px; margin-bottom:8px;"></div>
+      <div style="height:22px; width:50%; background:#E5E7EB; border-radius:3px;"></div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+{# ── Row 2: Timekeeper Allocation + Open Invoices ──────────────────────────────── #}
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
+
+  {# Timekeeper Allocation — billing_matter_timekeeper_allocation widget #}
+  <div class="card" style="padding:0; overflow:hidden;">
+    <div style="padding:12px 16px; border-bottom:1px solid var(--border);">
+      <div style="font-size:13px; font-weight:600;">Timekeeper Allocation</div>
+      <div style="font-size:11px; color:var(--muted); margin-top:2px;">All time on this matter</div>
+    </div>
+    <div id="widget-tk-allocation"
+         hx-get="/widgets/billing_matter_timekeeper_allocation?matter_id={{ matter_id }}"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div style="padding:30px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+    </div>
+  </div>
+
+  {# Open Invoices — billing_matter_open_invoices widget #}
+  <div class="card" style="padding:0; overflow:hidden;">
+    <div style="padding:12px 16px; border-bottom:1px solid var(--border);
+                display:flex; justify-content:space-between; align-items:center;">
+      <div>
+        <div style="font-size:13px; font-weight:600;">Open Invoices</div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px;">AR aging for this matter</div>
+      </div>
+    </div>
+    <div id="widget-open-invoices"
+         hx-get="/widgets/billing_matter_open_invoices?matter_id={{ matter_id }}"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div style="padding:30px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+    </div>
+  </div>
+</div>
+
+{# ── Row 3: WIP by Timekeeper ──────────────────────────────────────────────────── #}
+<div class="card" style="padding:0; overflow:hidden; margin-bottom:16px;">
+  <div style="padding:12px 16px; border-bottom:1px solid var(--border);">
+    <div style="font-size:13px; font-weight:600;">WIP by Timekeeper</div>
+    <div style="font-size:11px; color:var(--muted); margin-top:2px;">Unbilled time grouped by attorney</div>
+  </div>
+  <div id="widget-wip-by-tk"
+       hx-get="/widgets/billing_matter_wip_by_timekeeper?matter_id={{ matter_id }}"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    <div style="padding:30px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+  </div>
+</div>
+
+{# ── Row 4: Recent Time Entries — billing_matter_recent_slips widget ──────────── #}
+<div class="card" style="padding:0; overflow:hidden; margin-bottom:16px;">
+  <div style="padding:12px 16px; border-bottom:1px solid var(--border);
+              display:flex; justify-content:space-between; align-items:center;">
+    <div style="font-size:13px; font-weight:600;">
+      Time Entries <span style="font-weight:400; color:var(--muted);">(last 100)</span>
+    </div>
+    <div style="display:flex; gap:6px;">
+      <button onclick="setSF('all')" id="sf-all"
+              style="font-size:11px; padding:2px 10px; border-radius:4px;
+                     border:1px solid var(--primary); background:var(--primary);
+                     color:#fff; cursor:pointer;">All</button>
+      <button onclick="setSF('wip')" id="sf-wip"
+              style="font-size:11px; padding:2px 10px; border-radius:4px;
+                     border:1px solid var(--border); background:#fff;
+                     color:var(--muted); cursor:pointer;">WIP</button>
+      <button onclick="setSF('billed')" id="sf-billed"
+              style="font-size:11px; padding:2px 10px; border-radius:4px;
+                     border:1px solid var(--border); background:#fff;
+                     color:var(--muted); cursor:pointer;">Billed</button>
+    </div>
+  </div>
+  <div id="widget-recent-slips"
+       hx-get="/widgets/billing_matter_recent_slips?matter_id={{ matter_id }}"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    <div style="padding:30px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+  </div>
+</div>
+
+{# ── Page-level JS ────────────────────────────────────────────────────────────── #}
+<script>
+var MATTER_ID = "{{ matter_id }}";
+var CLIENT_ID = "{{ matter.client_id }}";
+
+// Slip filter toggle
+var slipFilter = 'all';
+function setSF(f) {
+  slipFilter = f;
+  document.querySelectorAll('.slip-row').forEach(function(r) {
+    var billed = r.dataset.billed === 'true';
+    if (f === 'wip')    r.style.display = billed ? 'none' : '';
+    else if (f === 'billed') r.style.display = billed ? '' : 'none';
+    else r.style.display = '';
+  });
+  ['all', 'wip', 'billed'].forEach(function(k) {
+    var b = document.getElementById('sf-' + k);
+    if (!b) return;
+    if (k === f) {
+      b.style.background = 'var(--primary)'; b.style.color = '#fff';
+      b.style.borderColor = 'var(--primary)';
+    } else {
+      b.style.background = '#fff'; b.style.color = 'var(--muted)';
+      b.style.borderColor = 'var(--border)';
+    }
+  });
+}
+
+function generatePrebill() {
+  alert('Prebill generation — full implementation coming in next build.');
+}
+
+{% if matter.folder_path %}
+async function triggerLegacySync() {
+  var btn = document.getElementById('sync-btn');
+  if (!confirm('Queue a file extraction for:\n\n{{ matter.matter_name }}\nFolder: {{ matter.folder_path }}\n\nThe file agent will process this matter folder.')) return;
+  btn.textContent = '⟳ Queuing…'; btn.disabled = true;
+  try {
+    var res = await fetch('/api/v1/billing/matters/{{ matter.id }}/trigger-sync', {method:'POST'});
+    var d   = await res.json();
+    if (res.ok) {
+      btn.textContent = '✓ Queued';
+      btn.style.background = '#166534';
+      setTimeout(function() {
+        btn.textContent = '↓ Pull from Legacy';
+        btn.style.background = '#065f46';
+        btn.disabled = false;
+      }, 3000);
+    } else {
+      alert('Error: ' + (d.detail || 'Unknown error'));
+      btn.textContent = '↓ Pull from Legacy'; btn.disabled = false;
+    }
+  } catch(e) {
+    alert('Network error. Please try again.');
+    btn.textContent = '↓ Pull from Legacy'; btn.disabled = false;
+  }
+}
+{% endif %}
+</script>
+
+{% endblock %}

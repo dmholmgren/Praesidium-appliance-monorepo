@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Practice Intelligence — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Practice Intelligence{% endblock %}
+
+{% block header_right %}
+<a href="/dashboard/intake" class="btn-primary" style="font-size:12px;">
+  <svg style="width:13px;height:13px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+  </svg>
+  New Matter
+</a>
+{% endblock %}
+
+{% block content %}
+<style>
+  .pi-tabs {
+    display: flex;
+    gap: 2px;
+    border-bottom: 2px solid var(--border-color, #e2e8f0);
+    margin-bottom: 16px;
+    flex-shrink: 0;
+  }
+  .pi-tab {
+    padding: 8px 18px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted, #64748b);
+    cursor: pointer;
+    border: none;
+    background: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    border-radius: 4px 4px 0 0;
+    transition: color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+    text-decoration: none;
+    display: inline-block;
+  }
+  .pi-tab:hover {
+    color: var(--text, #1a202c);
+    background: #f8fafc;
+  }
+  .pi-tab.active {
+    color: var(--primary, #1B2A4A);
+    border-bottom-color: var(--primary, #1B2A4A);
+    font-weight: 600;
+  }
+  .pi-body {
+    min-height: 400px;
+  }
+  .attorney-selector {
+    display: none;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0 14px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .attorney-selector.visible { display: flex; }
+</style>
+
+{# Tab bar — driven by layout_tabs DB table #}
+<div class="pi-tabs" id="pi-tabs">
+  {% for tab in tabs %}
+  <button class="pi-tab {% if loop.first %}active{% endif %}"
+          id="tab-{{ tab.tab_slug }}"
+          onclick="switchTab('{{ tab.tab_slug }}')">
+    {{ tab.display_name }}
+  </button>
+  {% endfor %}
+</div>
+
+{# Attorney picker — shown when attorney_view tab active (partner/admin only) #}
+{% if is_partner_or_admin %}
+<div class="attorney-selector" id="attorney-selector">
+  <span>Viewing:</span>
+  <select id="attorney-select"
+          onchange="switchTab('attorney_view')"
+          style="font-size:12px; padding:4px 8px; border:1px solid var(--border-color,#e2e8f0);
+                 border-radius:5px; background:var(--surface,#fff); color:var(--text);">
+    {% for a in attorneys %}
+    <option value="{{ a.id }}">{{ a.full_name }}</option>
+    {% endfor %}
+  </select>
+</div>
+{% endif %}
+
+{# Widget grid body — HTMX swap target #}
+<div class="pi-body" id="pi-body"
+     hx-get="/layouts/practice_intelligence?tab_slug={{ default_tab }}"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+  <div style="padding:32px; text-align:center; font-size:12px; color:var(--muted);">
+    Loading…
+  </div>
+</div>
+
+<script>
+// Tab slugs that show the attorney picker
+const ATTORNEY_TABS = ['attorney_view'];
+
+function switchTab(tabSlug) {
+  // Update tab styles
+  document.querySelectorAll('.pi-tab').forEach(t => t.classList.remove('active'));
+  const activeTab = document.getElementById('tab-' + tabSlug);
+  if (activeTab) activeTab.classList.add('active');
+
+  // Show/hide attorney selector
+  const sel = document.getElementById('attorney-selector');
+  if (sel) {
+    if (ATTORNEY_TABS.includes(tabSlug)) {
+      sel.classList.add('visible');
+    } else {
+      sel.classList.remove('visible');
+    }
+  }
+
+  // Build scope query string
+  let qs = '?tab_slug=' + tabSlug;
+  if (tabSlug === 'attorney_view') {
+    const attySelect = document.getElementById('attorney-select');
+    const attyId = attySelect ? attySelect.value : '';
+    if (attyId) qs += '&attorney_id=' + attyId;
+  }
+
+  // HTMX swap the body
+  htmx.ajax('GET', '/layouts/practice_intelligence' + qs, {
+    target: '#pi-body',
+    swap: 'innerHTML'
+  });
+
+  // Persist active tab in sessionStorage
+  try { sessionStorage.setItem('pi_active_tab', tabSlug); } catch(e) {}
+}
+
+// Restore last active tab on page load
+document.addEventListener('DOMContentLoaded', function() {
+  try {
+    const last = sessionStorage.getItem('pi_active_tab');
+    if (last) {
+      const tabEl = document.getElementById('tab-' + last);
+      if (tabEl) switchTab(last);
+    }
+  } catch(e) {}
+});
+</script>
+{% endblock %}

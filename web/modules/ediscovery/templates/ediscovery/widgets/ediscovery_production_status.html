@@ -1,0 +1,105 @@
+{# widgets/ediscovery_production_status.html
+   Production run status widget.
+   Loaded by: /widgets/ediscovery_production_status
+   Auto-refreshes every 15s via HTMX in overview.
+   Shows: active productions, recent completions with Bates ranges.
+#}
+
+{% if active_productions or recent_productions %}
+
+  {# Active productions #}
+  {% if active_productions %}
+  <div style="padding:8px 12px; border-bottom:1px solid #f1f5f9;">
+    <div style="font-size:10px; font-weight:600; color:#1E40AF; text-transform:uppercase;
+                letter-spacing:0.05em; margin-bottom:6px;">Running</div>
+    {% for prod in active_productions %}
+    <div style="margin-bottom:8px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:2px;">
+        <span style="font-size:12px; font-weight:500; color:var(--text);">
+          {{ prod.production_name or 'Production' }}
+        </span>
+        <span style="font-size:10px; color:#1E40AF; font-weight:600;">
+          {{ prod.status | upper }}
+        </span>
+      </div>
+      {% if prod.matter_name %}
+      <div style="font-size:11px; color:var(--muted);">{{ prod.matter_name }}</div>
+      {% endif %}
+      {% if prod.doc_count %}
+      <div style="font-size:10px; color:var(--muted); margin-top:2px;">
+        {{ prod.doc_count }} documents
+      </div>
+      {% endif %}
+      {# Progress bar #}
+      <div style="height:3px; background:#DBEAFE; border-radius:3px; margin-top:5px; overflow:hidden;">
+        <div style="height:100%; background:#3B82F6; border-radius:3px;
+                    width:{{ prod.progress_pct or 50 }}%;
+                    transition:width 0.5s;"></div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# Recent productions #}
+  {% if recent_productions %}
+  <div style="padding:8px 12px;">
+    <div style="font-size:10px; font-weight:600; color:var(--muted); text-transform:uppercase;
+                letter-spacing:0.05em; margin-bottom:6px;">Recent</div>
+    {% for prod in recent_productions %}
+    <div style="margin-bottom:7px; padding-bottom:7px; border-bottom:1px solid #f8fafc;">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between;">
+        <div style="min-width:0; flex:1;">
+          <div style="font-size:12px; color:var(--text); font-weight:500;
+                      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+            {{ prod.production_name or 'Production' }}
+          </div>
+          {% if prod.bates_prefix %}
+          <div style="font-size:10px; color:var(--muted); font-family:monospace;">
+            {{ prod.bates_prefix }}{{ '%06d' | format(prod.bates_start or 1) }}
+            – {{ prod.bates_prefix }}{{ '%06d' | format(prod.bates_end or 1) }}
+          </div>
+          {% endif %}
+          <div style="font-size:10px; color:var(--muted);">
+            {{ prod.doc_count or 0 }} docs
+            {% if prod.completed_at_relative %} · {{ prod.completed_at_relative }}{% endif %}
+          </div>
+        </div>
+        <div style="flex-shrink:0; margin-left:8px; margin-top:1px;">
+          {% if prod.status == 'complete' or prod.status == 'produced' %}
+          <span style="font-size:10px; color:#166534; font-weight:600;">✓ Done</span>
+          {% elif prod.status == 'error' %}
+          <span style="font-size:10px; color:#DC2626; font-weight:600;">✗ Error</span>
+          {% else %}
+          <span style="font-size:10px; color:var(--muted);">{{ prod.status | title }}</span>
+          {% endif %}
+        </div>
+      </div>
+      {% if prod.status == 'complete' or prod.status == 'produced' %}
+      <a href="/ediscovery/productions/{{ prod.id }}"
+         style="font-size:10px; color:var(--primary); text-decoration:none;">
+        Download →
+      </a>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+{% else %}
+
+  {# Empty state #}
+  <div style="display:flex; flex-direction:column; align-items:center; justify-content:center;
+              height:100%; padding:20px; text-align:center;">
+    <svg width="28" height="28" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+         style="color:#D1D5DB; margin-bottom:8px;">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+    </svg>
+    <div style="font-size:12px; color:var(--muted);">No productions yet</div>
+    <div style="font-size:11px; color:var(--muted); margin-top:3px;">
+      Complete review to create a production set
+    </div>
+  </div>
+
+{% endif %}

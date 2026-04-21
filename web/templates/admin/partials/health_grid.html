@@ -1,0 +1,23 @@
+<!-- partials/health_grid.html — HTMX fragment for VM health grid -->
+<div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+  <div class="px-4 py-2 border-b border-gray-800 bg-gray-800/50 flex items-center justify-between">
+    <span class="text-gray-500 text-xs">TCP health check — {{ checked_at }}</span>
+  </div>
+  <div class="divide-y divide-gray-800/50">
+    {% for s in servers %}
+    <div class="px-4 py-2.5 flex items-center gap-4">
+      <div class="w-4 h-4 rounded-full flex-shrink-0 {% if s.reachable %}bg-green-500{% else %}bg-red-500{% endif %}"></div>
+      <div class="w-44 font-mono text-xs text-gray-300">{{ s.name }}</div>
+      <div class="w-32 font-mono text-xs text-gray-500">{{ s.ip }}:{{ s.port }}</div>
+      <div class="w-16">
+        <span class="badge status-unk text-xs">{{ s.role }}</span>
+      </div>
+      <div class="text-xs {% if s.reachable %}text-green-400{% else %}text-red-400{% endif %}">
+        {% if s.reachable %}reachable{% else %}unreachable{% endif %}
+      </div>
+    </div>
+    {% else %}
+    <div class="px-4 py-4 text-gray-500 text-sm text-center">No servers registered</div>
+    {% endfor %}
+  </div>
+</div>

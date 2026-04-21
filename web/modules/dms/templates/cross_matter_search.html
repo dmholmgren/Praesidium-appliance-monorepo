@@ -1,0 +1,14 @@
+{% if results %}
+<div class="space-y-2 mt-2">
+  {% for r in results %}
+  <div class="text-xs border-b pb-1">
+    <a href="{{ brand.docs_url }}/dms/research/{{ r.matter_id }}?q={{ r.query }}" class="text-blue-600 hover:underline">
+      {{ r.query[:30] }}
+    </a>
+    <div class="text-gray-400">{{ r.matter_name }} · {{ r.provider }} · {{ r.created_at[:10] }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% elif query %}
+<p class="text-xs text-gray-400 mt-2">No prior research found.</p>
+{% endif %}

@@ -1,0 +1,13 @@
+.git
+.env
+*.tar.gz
+__pycache__
+*.pyc
+.pytest_cache
+.coverage
+htmlcov
+*.egg-info
+node_modules
+.mypy_cache
+.ruff_cache
+docs/

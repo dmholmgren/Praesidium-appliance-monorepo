@@ -1,0 +1,57 @@
+{% extends "base_tenant.html" %}
+{% block title %}Prebills — {{ brand.platform_name }}{% endblock %}
+{% block content %}
+<div class="px-6 py-4">
+  <h1 class="text-xl font-semibold text-gray-900 mb-4">Prebills</h1>
+  <p class="text-sm text-gray-500 mb-4">Select a matter to generate a prebill from unbilled time.</p>
+
+  <div class="mb-3">
+    <input id="q" type="text" placeholder="Search matters…"
+           class="border rounded px-3 py-1.5 text-sm w-64" oninput="loadMatters()">
+  </div>
+
+  <div class="bg-white border rounded overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 border-b">
+        <tr>
+          <th class="px-4 py-2 text-left font-medium text-gray-600">Matter</th>
+          <th class="px-4 py-2 text-right font-medium text-gray-600">Unbilled Hours</th>
+          <th class="px-4 py-2 text-right font-medium text-gray-600">WIP Value</th>
+          <th class="px-4 py-2"></th>
+        </tr>
+      </thead>
+      <tbody id="matters-body">
+        <tr><td colspan="4" class="px-4 py-8 text-center text-gray-400">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+<script>
+async function loadMatters() {
+  const q = document.getElementById('q').value;
+  const params = new URLSearchParams({status:'active'});
+  if (q) params.set('q', q);
+  const res  = await fetch('/api/billing/matters?' + params);
+  const data = await res.json();
+  const tbody = document.getElementById('matters-body');
+  const withWip = data.matters.filter(m => parseFloat(m.wip_value||0) > 0);
+  if (!withWip.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="px-4 py-8 text-center text-gray-400">No matters with unbilled time</td></tr>';
+    return;
+  }
+  tbody.innerHTML = withWip.map(m => `
+    <tr class="border-b hover:bg-gray-50">
+      <td class="px-4 py-2.5 font-medium text-gray-900">${m.display_name}</td>
+      <td class="px-4 py-2.5 text-right">${parseFloat(m.total_hours||0).toFixed(1)}h</td>
+      <td class="px-4 py-2.5 text-right font-medium text-amber-700">
+        $${parseFloat(m.wip_value||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
+      </td>
+      <td class="px-4 py-2.5 text-right">
+        <a href="/billing/prebills/${m.id}" class="text-blue-600 hover:underline text-sm">View Prebill →</a>
+      </td>
+    </tr>
+  `).join('');
+}
+loadMatters();
+</script>
+{% endblock %}

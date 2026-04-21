@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% block title %}Drift Map — {{ matter.matter_name if matter else 'Matter' }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block head_extra %}
+<style>
+  .event-row {
+    border-left: 3px solid var(--border);
+    padding: 12px 16px;
+    margin-bottom: 6px;
+    background: var(--surface);
+    border-radius: 0 6px 6px 0;
+    border: 1px solid var(--border);
+    border-left-width: 3px;
+  }
+  .event-row.high   { border-left-color: #EF4444; }
+  .event-row.mod    { border-left-color: #F59E0B; }
+  .event-row.low    { border-left-color: #10B981; }
+  .stat-tile { text-align:center; }
+</style>
+{% endblock %}
+
+{% block page_title %}Case Drift Map{% endblock %}
+
+{% block header_right %}
+<span style="font-size:11px; color:var(--muted);">{{ event_count }} event{{ 's' if event_count != 1 else '' }}</span>
+{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<div style="font-size:12px; color:var(--muted); margin-bottom:16px;">
+  <a href="/ediscovery/matters/{{ matter_id }}" style="color:var(--muted); text-decoration:none;">← {{ matter.matter_name if matter else 'Matter' }}</a>
+  <span style="margin:0 6px;">›</span>
+  <span style="color:var(--text);">Drift Map</span>
+</div>
+
+<!-- Stat bar -->
+<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:20px;">
+  <div class="card stat-tile">
+    <div style="font-size:24px; font-weight:600; color:var(--text);">{{ event_count }}</div>
+    <div style="font-size:11px; color:var(--muted); margin-top:2px;">Total Events</div>
+  </div>
+  <div class="card stat-tile">
+    <div style="font-size:24px; font-weight:600; color:#EF4444;">{{ high_count }}</div>
+    <div style="font-size:11px; color:var(--muted); margin-top:2px;">High Magnitude (&gt;0.6)</div>
+  </div>
+  <div class="card stat-tile">
+    <div style="font-size:24px; font-weight:600; color:#F59E0B;">{{ moderate_count }}</div>
+    <div style="font-size:11px; color:var(--muted); margin-top:2px;">Moderate (0.3–0.6)</div>
+  </div>
+  <div class="card stat-tile">
+    <div style="font-size:24px; font-weight:600; color:var(--accent);">{{ wiam_count }}</div>
+    <div style="font-size:11px; color:var(--muted); margin-top:2px;">WIAM Surfaced</div>
+  </div>
+</div>
+
+{% if not events %}
+<div class="card" style="max-width:480px; text-align:center; padding:40px 24px; margin:0 auto;">
+  <div style="font-size:40px; margin-bottom:12px;">📊</div>
+  <h2 style="font-family:'Lora',serif; font-size:16px; font-weight:600; color:var(--text); margin-bottom:8px;">No Drift Events Yet</h2>
+  <p style="font-size:12px; color:var(--muted);">Drift events are recorded automatically when issue map versions change. Add pleadings, motions, orders, or transcripts to trigger analysis.</p>
+</div>
+
+{% else %}
+<div style="display:grid; grid-template-columns:2fr 1fr; gap:16px;">
+
+  <!-- Left: event timeline -->
+  <div>
+    <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--accent); margin-bottom:12px;">Drift Timeline — Newest First</div>
+    {% for ev in events %}
+      {% set mag = ev.magnitude | float %}
+      {% if mag > 0.6 %}{% set severity = "high" %}
+      {% elif mag > 0.3 %}{% set severity = "mod" %}
+      {% else %}{% set severity = "low" %}{% endif %}
+
+      <div class="event-row {{ severity }}">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px;">
+          <div style="flex:1; min-width:0;">
+            <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap; margin-bottom:4px;">
+              <span class="badge badge-blue" style="font-size:10px;">{{ ev.dimension }}</span>
+              <span class="badge badge-gray" style="font-size:10px;">{{ ev.drift_type | replace('-', '‑') }}</span>
+              {% if ev.wiam_surfaced %}<span class="badge" style="background:#EDE9FE;color:#5B21B6;font-size:10px;">WIAM ↑</span>{% endif %}
+              <span style="font-size:10px; color:var(--muted);">v{{ ev.version_before }} → v{{ ev.version_after }}</span>
+            </div>
+            <div style="font-size:13px; color:var(--text);">{{ ev.description }}</div>
+            <div style="font-size:11px; color:var(--muted); margin-top:3px;">
+              {{ ev.detection_source | title }} · {{ ev.created_at.strftime('%b %d, %Y %H:%M') if ev.created_at else '' }}
+            </div>
+          </div>
+          <div style="flex-shrink:0; text-align:right;">
+            {% if mag > 0.6 %}
+              <span class="badge badge-red" style="font-size:11px; font-weight:700;">{{ "%.0f"|format(mag*100) }}%</span>
+            {% elif mag > 0.3 %}
+              <span class="badge badge-yellow" style="font-size:11px; font-weight:700;">{{ "%.0f"|format(mag*100) }}%</span>
+            {% else %}
+              <span class="badge badge-green" style="font-size:11px; font-weight:700;">{{ "%.0f"|format(mag*100) }}%</span>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+  <!-- Right: dimension breakdown -->
+  <div>
+    <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--accent); margin-bottom:12px;">By Dimension</div>
+    {% set dims = ['theory', 'factual', 'custodian', 'damages'] %}
+    {% for dim in dims %}
+      {% set count = events | selectattr('dimension', 'equalto', dim) | list | length %}
+      {% if count > 0 %}
+        <div class="card" style="padding:12px; margin-bottom:8px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+            <span style="font-size:13px; font-weight:500; color:var(--text); text-transform:capitalize;">{{ dim }}</span>
+            <span class="badge badge-blue" style="font-size:10px;">{{ count }}</span>
+          </div>
+          {% set dim_events = events | selectattr('dimension', 'equalto', dim) | list %}
+          {% set max_mag = dim_events | map(attribute='magnitude') | map('float') | max %}
+          <div style="height:4px; background:#E5E7EB; border-radius:4px; overflow:hidden;">
+            <div style="height:100%; border-radius:4px; width:{{ (max_mag * 100) | int }}%;
+              background:{% if max_mag > 0.6 %}#EF4444{% elif max_mag > 0.3 %}#F59E0B{% else %}#10B981{% endif %};"></div>
+          </div>
+          <div style="font-size:10px; color:var(--muted); margin-top:3px;">Peak {{ "%.0f"|format(max_mag*100) }}%</div>
+        </div>
+      {% endif %}
+    {% endfor %}
+
+    <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--accent); margin-top:16px; margin-bottom:10px;">By Type</div>
+    {% set types = ['addition','removal','modification','escalation','de-escalation','reversal'] %}
+    {% for t in types %}
+      {% set count = events | selectattr('drift_type', 'equalto', t) | list | length %}
+      {% if count > 0 %}
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;">
+          <span style="font-size:12px; color:var(--muted); text-transform:capitalize;">{{ t }}</span>
+          <span style="font-size:12px; font-weight:500; color:var(--text);">{{ count }}</span>
+        </div>
+      {% endif %}
+    {% endfor %}
+  </div>
+
+</div>
+{% endif %}
+{% endblock %}

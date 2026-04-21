@@ -1,0 +1,171 @@
+{#
+  widgets/matter_tasks.html
+  Open tasks for this matter.
+
+  Context:
+    tasks     list[{id, title, priority, status, due_date_str, source, assignee_name}]
+    total     int
+    matter_id str
+    scope     dict
+#}
+
+<div style="display: flex; flex-direction: column; height: 100%;">
+
+  <div style="padding: 10px 14px;
+              border-bottom: 1px solid var(--border-color, #f1f5f9);
+              display: flex; align-items: center; justify-content: space-between;
+              flex-shrink: 0;">
+    <span style="font-size: 11px; font-weight: 700; color: var(--muted);
+                 text-transform: uppercase; letter-spacing: .05em;">Tasks</span>
+    <div style="display: flex; align-items: center; gap: 8px;">
+      {% if total %}
+        <span style="font-size: 10px; color: var(--muted);">{{ total }} open</span>
+      {% endif %}
+      <button onclick="toggleNewTaskForm('{{ matter_id }}')"
+              style="font-size: 11px; padding: 3px 10px;
+                     background: var(--primary, #1B2A4A); color: #fff;
+                     border: none; border-radius: 4px; cursor: pointer;">
+        + Task
+      </button>
+    </div>
+  </div>
+
+  {# New task form — hidden by default #}
+  <div id="new-task-form-{{ matter_id }}"
+       style="display: none; padding: 10px 14px;
+              border-bottom: 1px solid var(--border-color, #f1f5f9);
+              background: #f8fafc; flex-shrink: 0;">
+    <input type="text" id="new-task-title-{{ matter_id }}"
+           placeholder="Task title…"
+           style="width: 100%; padding: 6px 8px; font-size: 12px;
+                  border: 1px solid var(--border-color, #e2e8f0);
+                  border-radius: 4px; box-sizing: border-box;
+                  background: var(--surface, #fff); color: var(--text);
+                  margin-bottom: 6px;">
+    <div style="display: flex; gap: 6px;">
+      <select id="new-task-priority-{{ matter_id }}"
+              style="flex: 1; padding: 5px 8px; font-size: 12px;
+                     border: 1px solid var(--border-color, #e2e8f0);
+                     border-radius: 4px; background: var(--surface, #fff);">
+        <option value="low">Low</option>
+        <option value="medium" selected>Medium</option>
+        <option value="high">High</option>
+        <option value="critical">Critical</option>
+      </select>
+      <input type="date" id="new-task-due-{{ matter_id }}"
+             style="flex: 1; padding: 5px 8px; font-size: 12px;
+                    border: 1px solid var(--border-color, #e2e8f0);
+                    border-radius: 4px; background: var(--surface, #fff);">
+      <button onclick="submitNewTask('{{ matter_id }}')"
+              style="padding: 5px 12px; font-size: 12px;
+                     background: var(--primary, #1B2A4A); color: #fff;
+                     border: none; border-radius: 4px; cursor: pointer;">
+        Add
+      </button>
+      <button onclick="toggleNewTaskForm('{{ matter_id }}')"
+              style="padding: 5px 10px; font-size: 12px;
+                     border: 1px solid var(--border-color, #e2e8f0);
+                     border-radius: 4px; background: var(--surface, #fff);
+                     cursor: pointer; color: var(--muted);">
+        ✕
+      </button>
+    </div>
+  </div>
+
+  {# Task list #}
+  <div style="flex: 1; overflow-y: auto;" id="task-list-{{ matter_id }}">
+    {% if tasks %}
+      {% for task in tasks %}
+        <div style="padding: 8px 14px;
+                    border-bottom: 1px solid #f8fafc;
+                    display: flex; align-items: flex-start; gap: 8px;"
+             id="task-row-{{ task.id }}">
+
+          {# Checkbox #}
+          <button onclick="toggleTask('{{ task.id }}', '{{ matter_id }}')"
+                  style="flex-shrink: 0; margin-top: 1px;
+                         width: 16px; height: 16px;
+                         border-radius: 3px; cursor: pointer;
+                         border: 2px solid {% if task.status == 'complete' %}#16a34a{% else %}var(--border-color, #cbd5e1){% endif %};
+                         background: {% if task.status == 'complete' %}#16a34a{% else %}transparent{% endif %};
+                         display: flex; align-items: center; justify-content: center;">
+            {% if task.status == 'complete' %}
+              <span style="color: #fff; font-size: 9px;">✓</span>
+            {% endif %}
+          </button>
+
+          <div style="flex: 1; min-width: 0;">
+            <div style="font-size: 12px; color: var(--text);
+                        {% if task.status == 'complete' %}text-decoration: line-through; color: var(--muted);{% endif %}
+                        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+              {{ task.title }}
+            </div>
+            <div style="display: flex; gap: 6px; margin-top: 2px; flex-wrap: wrap;">
+              {% if task.due_date_str %}
+                <span style="font-size: 10px; color: var(--muted);">{{ task.due_date_str }}</span>
+              {% endif %}
+              {% if task.source and task.source != 'manual' %}
+                <span style="font-size: 9px; background: #f3e8ff; color: #7c3aed;
+                             padding: 0 4px; border-radius: 3px;">{{ task.source | replace('_', ' ') }}</span>
+              {% endif %}
+            </div>
+          </div>
+
+          {# Priority badge #}
+          <span style="flex-shrink: 0; font-size: 9px; padding: 2px 5px; border-radius: 3px; font-weight: 600;
+                       {% if task.priority == 'critical' %}background:#fee2e2;color:#991b1b;
+                       {% elif task.priority == 'high' %}background:#ffedd5;color:#9a3412;
+                       {% elif task.priority == 'medium' %}background:#dbeafe;color:#1e40af;
+                       {% else %}background:#f1f5f9;color:#64748b;{% endif %}">
+            {{ task.priority | upper }}
+          </span>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div style="padding: 24px 16px; text-align: center;
+                  font-size: 12px; color: var(--muted);">
+        <div style="font-size: 24px; margin-bottom: 6px;">✓</div>
+        No open tasks.
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+function toggleNewTaskForm(matterId) {
+  const form = document.getElementById('new-task-form-' + matterId);
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
+  if (form.style.display !== 'none') {
+    document.getElementById('new-task-title-' + matterId).focus();
+  }
+}
+
+function submitNewTask(matterId) {
+  const title    = document.getElementById('new-task-title-' + matterId).value.trim();
+  const priority = document.getElementById('new-task-priority-' + matterId).value;
+  const due_date = document.getElementById('new-task-due-' + matterId).value;
+  if (!title) return;
+
+  fetch('/dashboard/matter/' + matterId + '/task', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({title, priority, due_date})
+  })
+  .then(() => {
+    htmx.ajax('GET',
+      '/widgets/matter_tasks?matter_id=' + matterId,
+      { target: '#widget-slot-matter_tasks', swap: 'innerHTML' }
+    );
+  });
+}
+
+function toggleTask(taskId, matterId) {
+  fetch('/dashboard/task/' + taskId + '/toggle', { method: 'POST' })
+  .then(() => {
+    htmx.ajax('GET',
+      '/widgets/matter_tasks?matter_id=' + matterId,
+      { target: '#widget-slot-matter_tasks', swap: 'innerHTML' }
+    );
+  });
+}
+</script>

@@ -1,0 +1,64 @@
+{# DMS Folder Browser — HTMX partial loaded into collection_create.html #}
+{# Allows selecting a matter subfolder as the source for eDiscovery ingestion #}
+
+<div class="border border-gray-200 rounded-md bg-white">
+  <div class="px-3 py-2 bg-gray-50 border-b border-gray-200">
+    <p class="text-sm font-medium text-gray-700">
+      Select folder to import ({{ files_count }} files in current directory)
+    </p>
+    <p class="text-xs text-gray-500 mt-1">{{ current_path }}</p>
+  </div>
+
+  <div class="max-h-64 overflow-y-auto">
+    {% if folders %}
+    <ul class="divide-y divide-gray-100">
+      {# Select current directory option #}
+      <li class="dms-folder-item px-3 py-2 flex items-center justify-between
+                 cursor-pointer hover:bg-blue-50 border-l-4 bg-white border-gray-200
+                 transition-colors duration-150"
+          onclick="selectDmsFolder('{{ current_path }}')">
+        <div class="flex items-center space-x-2">
+          <svg class="h-5 w-5 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/>
+          </svg>
+          <span class="text-sm font-medium text-gray-800">
+            [Select this folder — {{ files_count }} files]
+          </span>
+        </div>
+        <span class="text-xs text-gray-400">current</span>
+      </li>
+
+      {# Subfolders #}
+      {% for folder in folders %}
+      <li class="dms-folder-item px-3 py-2 flex items-center justify-between
+                 cursor-pointer hover:bg-blue-50 border-l-4 bg-white border-gray-200
+                 transition-colors duration-150"
+          onclick="selectDmsFolder('{{ folder.full_path }}')"
+          hx-get="/api/v1/ediscovery/dms-folders/{{ matter_id }}?path={{ folder.path }}"
+          hx-trigger="dblclick"
+          hx-target="#dms-folder-browser"
+          hx-swap="innerHTML">
+        <div class="flex items-center space-x-2">
+          <svg class="h-5 w-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/>
+          </svg>
+          <span class="text-sm text-gray-700">{{ folder.name }}</span>
+        </div>
+        <span class="text-xs text-gray-400">double-click to open</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <div class="px-3 py-4 text-sm text-gray-500 text-center">
+      No subfolders found. Select this directory to import its files.
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="px-3 py-2 bg-gray-50 border-t border-gray-200">
+    <p class="text-xs text-gray-500">
+      <strong>Single click:</strong> select folder &nbsp;|&nbsp;
+      <strong>Double click:</strong> browse into subfolder
+    </p>
+  </div>
+</div>

@@ -1,0 +1,31 @@
+{# COMP 9: Communication Log partial #}
+<div class="bg-white rounded-lg border border-gray-200 p-6">
+  <h2 class="text-lg font-semibold text-gray-900 mb-4">Communication Log</h2>
+  <div class="space-y-3">
+    {% if communications %}
+      {% for c in communications %}
+      <div class="flex items-start gap-3 py-2 border-b border-gray-50 last:border-0">
+        <div class="flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium
+          {% if c.channel == 'email' %}bg-blue-100 text-blue-600
+          {% elif c.channel == 'phone' %}bg-green-100 text-green-600
+          {% elif c.channel == 'sms' %}bg-purple-100 text-purple-600
+          {% else %}bg-gray-100 text-gray-600{% endif %}">
+          {% if c.channel == 'email' %}✉{% elif c.channel == 'phone' %}📞{% elif c.channel == 'sms' %}💬{% else %}📝{% endif %}
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-medium text-gray-900">{{ c.subject or c.channel|title }}</span>
+            <span class="text-xs px-1.5 py-0.5 rounded {% if c.direction == 'inbound' %}bg-green-50 text-green-600{% else %}bg-blue-50 text-blue-600{% endif %}">
+              {{ c.direction|title }}
+            </span>
+          </div>
+          {% if c.summary %}<p class="text-xs text-gray-500 mt-0.5 truncate">{{ c.summary }}</p>{% endif %}
+          <p class="text-xs text-gray-400 mt-1">{{ c.occurred_at }} · {{ c.logged_by_name or 'System' }}</p>
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <p class="py-6 text-center text-gray-400 text-sm">No communications logged</p>
+    {% endif %}
+  </div>
+</div>

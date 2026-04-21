@@ -1,0 +1,15 @@
+{% extends "billing/layout.html" %}
+{% block billing_content %}
+<h1 class="text-2xl font-bold mb-6">Billing Reports</h1>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+  <div class="bg-white rounded-lg shadow-sm border p-4">
+    <h2 class="text-lg font-medium mb-3">Categories</h2>
+    <nav class="space-y-1">
+      {% for cat in ["slip","wip","invoice","collections","distribution"] %}
+      <button hx-get="{{ brand.billing_url }}/api/v1/billing/reports?category={{ cat }}" hx-target="#report-list" class="w-full text-left px-3 py-2 text-sm rounded-md hover:bg-gray-100">{{ cat|title }}</button>
+      {% endfor %}
+    </nav>
+  </div>
+  <div class="md:col-span-2"><div id="report-list" class="bg-white rounded-lg shadow-sm border p-4"><p class="text-sm text-gray-500">Select a category.</p></div></div>
+</div>
+{% endblock %}

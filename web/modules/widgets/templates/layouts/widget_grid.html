@@ -1,0 +1,78 @@
+{# layouts/widget_grid.html
+   Rendered by GET /layouts/{layout_slug}
+   Produces the CSS grid shell. Each slot fires hx-get on load to pull its widget.
+
+   Context:
+     layout       — layout_registry row dict
+     layout_slug  — str
+     tab_slug     — str
+     positions    — enriched list [{widget_slug, row, col, col_span, min_height, size, ...}]
+     scope_qs     — str, e.g. "&matter_id=abc&..."
+     matter_id    — str|None
+     attorney_id  — str|None
+#}
+<div class="widget-grid"
+     data-layout="{{ layout_slug }}"
+     data-tab="{{ tab_slug }}"
+     style="display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            width: 100%;
+            padding: 12px 0;">
+
+  {% for pos in positions %}
+    <div class="widget-slot"
+         id="widget-slot-{{ pos.widget_slug }}"
+         data-widget="{{ pos.widget_slug }}"
+         data-row="{{ pos.row }}"
+         data-col="{{ pos.col }}"
+         data-size="{{ pos.size }}"
+         style="grid-column: span {{ pos.col_span }};
+                height: {{ pos.min_height }};
+                max-height: {{ pos.min_height }};
+                background: var(--surface, #fff);
+                border: 1px solid var(--border-color, #e2e8f0);
+                border-radius: 8px;
+                overflow: hidden;
+                position: relative;"
+         hx-get="/widgets/{{ pos.widget_slug }}?{% if scope_qs %}{{ scope_qs[1:] }}&{% endif %}{% if pos.config_override %}{% for k, v in pos.config_override.items() %}{{ k }}={{ v }}&{% endfor %}{% endif %}"
+         hx-trigger="load"
+         hx-swap="innerHTML"
+         hx-indicator="#slot-spinner-{{ pos.widget_slug }}">
+
+      {# Loading skeleton shown until HTMX swap completes #}
+      <div id="slot-spinner-{{ pos.widget_slug }}"
+           class="htmx-indicator"
+           style="display: flex;
+                  align-items: center;
+                  justify-content: center;
+                  height: {{ pos.min_height }};
+                  color: var(--muted, #94a3b8);">
+        <div style="text-align: center;">
+          <div style="width: 28px; height: 28px; border: 2px solid #e2e8f0;
+                      border-top-color: var(--primary, #1B2A4A);
+                      border-radius: 50%; animation: spin 0.8s linear infinite;
+                      margin: 0 auto 6px;"></div>
+          <div style="font-size: 10px;">Loading…</div>
+        </div>
+      </div>
+
+    </div>
+  {% else %}
+    <div style="grid-column: span 3; padding: 20px; text-align: center;
+                font-size: 12px; color: var(--muted, #94a3b8);">
+      No widgets configured for this layout.
+    </div>
+  {% endfor %}
+
+</div>
+
+<style>
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  /* HTMX indicator: hidden by default, shown during request */
+  .htmx-indicator { display: none !important; }
+  .htmx-request .htmx-indicator { display: flex !important; }
+  .htmx-request.htmx-indicator { display: flex !important; }
+</style>

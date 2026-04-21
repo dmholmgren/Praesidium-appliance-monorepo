@@ -1,0 +1,285 @@
+{% extends "base.html" %}
+{% block title %}Collection Status — {{ collection.collection_name or 'Collection' }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Collection Status{% endblock %}
+
+{% block content %}
+<style>
+  .csp-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto;
+    gap: 12px;
+    height: calc(100vh - 220px);
+    min-height: 500px;
+  }
+  .csp-card {
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 8px;
+    background: var(--surface, #fff);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .csp-card-header {
+    padding: 8px 14px;
+    border-bottom: 1px solid #f1f5f9;
+    background: #f8fafc;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .csp-card-title {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--muted, #64748b);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .csp-card-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 14px;
+  }
+  .csp-log-entry {
+    display: flex;
+    gap: 8px;
+    padding: 4px 0;
+    border-bottom: 1px solid #f8fafc;
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .csp-log-time {
+    color: var(--muted, #64748b);
+    font-family: monospace;
+    flex-shrink: 0;
+    font-size: 10px;
+    margin-top: 1px;
+  }
+  .csp-log-msg { color: var(--text, #111); }
+  .csp-log-entry.error .csp-log-msg { color: #DC2626; }
+  .csp-log-entry.warn  .csp-log-msg { color: #92400E; }
+  .csp-log-entry.ok    .csp-log-msg { color: #166534; }
+  .csp-stat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid #f8fafc;
+    font-size: 12px;
+  }
+  .csp-stat-label { color: var(--muted, #64748b); }
+  .csp-stat-value { font-weight: 600; color: var(--text, #111); }
+  .csp-bar-wrap {
+    height: 6px;
+    background: #E2E8F0;
+    border-radius: 3px;
+    overflow: hidden;
+    margin-top: 4px;
+  }
+  .csp-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 1s ease;
+  }
+  .csp-doctype-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 0;
+    font-size: 11px;
+  }
+  .csp-doctype-label { color: var(--text, #111); min-width: 80px; }
+  .csp-doctype-bar { flex: 1; height: 10px; background: #E2E8F0; border-radius: 3px; overflow: hidden; }
+  .csp-doctype-count { color: var(--muted, #64748b); min-width: 40px; text-align: right; font-family: monospace; }
+</style>
+
+{# ── Breadcrumb + header ───────────────────────────────────────────────────── #}
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+  <div>
+    <div style="font-size:11px; color:var(--muted); margin-bottom:4px;">
+      <a href="/ediscovery" style="color:var(--muted); text-decoration:none;">eDiscovery</a>
+      <span style="margin:0 5px;">›</span>
+      <a href="/ediscovery/collections" style="color:var(--muted); text-decoration:none;">Collections</a>
+      <span style="margin:0 5px;">›</span>
+      {{ collection.collection_name or 'Collection' }}
+    </div>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <h2 style="font-size:16px; font-weight:600; color:var(--text); margin:0;">
+        {{ collection.collection_name or 'Unnamed Collection' }}
+      </h2>
+      {% set s = collection.status %}
+      {% if s in ('collecting', 'processing', 'ingesting') %}
+      <span style="font-size:11px; color:#92400E; background:#FEF3C7; border:1px solid #FDE68A; border-radius:4px; padding:2px 8px; font-weight:500;">
+        ↻ {{ s | title }}
+      </span>
+      {% elif s == 'review_ready' %}
+      <span style="font-size:11px; color:#166534; background:#D1FAE5; border:1px solid #6EE7B7; border-radius:4px; padding:2px 8px; font-weight:500;">
+        ✓ Review Ready
+      </span>
+      {% elif s == 'error' %}
+      <span style="font-size:11px; color:#DC2626; background:#FEE2E2; border:1px solid #FCA5A5; border-radius:4px; padding:2px 8px; font-weight:500;">
+        ✗ Error
+      </span>
+      {% else %}
+      <span style="font-size:11px; color:var(--muted); background:#F3F4F6; border-radius:4px; padding:2px 8px;">
+        {{ s | title if s else '—' }}
+      </span>
+      {% endif %}
+    </div>
+    {% if collection.matter_name %}
+    <div style="font-size:11px; color:var(--muted); margin-top:3px;">
+      {{ collection.matter_name }}
+      {% if collection.source_party %} · {{ collection.source_party }}{% endif %}
+    </div>
+    {% endif %}
+  </div>
+  <div style="display:flex; gap:8px; align-items:center;">
+    {% if collection.status == 'review_ready' %}
+    <a href="/ediscovery/collections/{{ collection.id }}/review"
+       class="btn-primary" style="font-size:12px;">Open Review →</a>
+    {% endif %}
+    <a href="/ediscovery/collections" class="btn-secondary" style="font-size:12px;">← Back</a>
+  </div>
+</div>
+
+{# ── Main grid ─────────────────────────────────────────────────────────────── #}
+<div class="csp-grid">
+
+  {# ── TOP LEFT: Processing stats + progress ──────────────────────────────── #}
+  <div class="csp-card">
+    <div class="csp-card-header">
+      <span class="csp-card-title">Processing Stats</span>
+      {% if collection.status in ('collecting', 'processing', 'ingesting') %}
+      <span style="font-size:9px; color:#92400E;"
+            hx-get="/ediscovery/collections/{{ collection.id }}/status-partial"
+            hx-trigger="every 5s"
+            hx-target="#csp-stats-body"
+            hx-swap="innerHTML">● live</span>
+      {% endif %}
+    </div>
+    <div class="csp-card-body" id="csp-stats-body">
+      {% set total    = collection.total_docs or 0 %}
+      {% set processed = collection.processed_docs or 0 %}
+      {% set reviewed  = collection.reviewed_docs or 0 %}
+      {% set pct = ((processed / total * 100) | int) if total > 0 else 0 %}
+
+      <div class="csp-stat-row">
+        <span class="csp-stat-label">Total documents</span>
+        <span class="csp-stat-value">{{ total | default(0) }}</span>
+      </div>
+      <div class="csp-stat-row">
+        <span class="csp-stat-label">Processed</span>
+        <span class="csp-stat-value" style="color:#166534;">{{ processed }}</span>
+      </div>
+      <div class="csp-stat-row">
+        <span class="csp-stat-label">Reviewed</span>
+        <span class="csp-stat-value">{{ reviewed }}</span>
+      </div>
+      <div class="csp-stat-row">
+        <span class="csp-stat-label">Duplicates</span>
+        <span class="csp-stat-value" style="color:var(--muted);">{{ collection.duplicate_count or 0 }}</span>
+      </div>
+      <div class="csp-stat-row">
+        <span class="csp-stat-label">Errors</span>
+        <span class="csp-stat-value" style="color:{% if collection.error_count %}#DC2626{% else %}var(--muted){% endif %};">
+          {{ collection.error_count or 0 }}
+        </span>
+      </div>
+      {% if collection.received_date %}
+      <div class="csp-stat-row">
+        <span class="csp-stat-label">Received</span>
+        <span class="csp-stat-value">{{ collection.received_date }}</span>
+      </div>
+      {% endif %}
+      {% if collection.stated_bates_range %}
+      <div class="csp-stat-row">
+        <span class="csp-stat-label">Stated Bates range</span>
+        <span class="csp-stat-value" style="font-family:monospace; font-size:11px;">{{ collection.stated_bates_range }}</span>
+      </div>
+      {% endif %}
+
+      {# Overall progress bar #}
+      <div style="margin-top:14px;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:4px;">
+          <span style="font-size:11px; color:var(--muted);">Ingestion progress</span>
+          <span style="font-size:11px; font-weight:600; color:var(--text);">{{ pct }}%</span>
+        </div>
+        <div class="csp-bar-wrap" style="height:8px;">
+          <div class="csp-bar-fill"
+               style="width:{{ pct }}%; background:{% if pct == 100 %}#22C55E{% elif collection.status == 'error' %}#EF4444{% else %}#3B82F6{% endif %};"></div>
+        </div>
+      </div>
+
+      {# Document type breakdown #}
+      {% if doc_types %}
+      <div style="margin-top:16px;">
+        <div style="font-size:10px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px;">By Document Type</div>
+        {% for dt in doc_types %}
+        <div class="csp-doctype-row">
+          <span class="csp-doctype-label">{{ dt.doc_type | title }}</span>
+          <div class="csp-doctype-bar">
+            <div style="height:100%; background:#3B82F6; border-radius:3px; width:{{ dt.pct }}%;"></div>
+          </div>
+          <span class="csp-doctype-count">{{ dt.count }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ── TOP RIGHT: Activity log ────────────────────────────────────────────── #}
+  <div class="csp-card">
+    <div class="csp-card-header">
+      <span class="csp-card-title">Activity Log</span>
+      <span style="font-size:9px; color:var(--muted);"
+            hx-get="/ediscovery/collections/{{ collection.id }}/log-partial"
+            hx-trigger="every 8s"
+            hx-target="#csp-log-body"
+            hx-swap="innerHTML">↻ auto-refresh</span>
+    </div>
+    <div class="csp-card-body" id="csp-log-body" style="padding:8px 14px;">
+      {% if audit_log %}
+        {% for entry in audit_log %}
+        <div class="csp-log-entry {{ entry.level or '' }}">
+          <span class="csp-log-time">{{ entry.time_str }}</span>
+          <span class="csp-log-msg">{{ entry.message }}</span>
+        </div>
+        {% endfor %}
+      {% else %}
+      <div style="text-align:center; padding:20px; font-size:12px; color:var(--muted);">
+        No activity logged yet.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ── BOTTOM: Legal Intelligence Chat scoped to this collection ──────────── #}
+  <div class="csp-card" style="grid-column: 1 / -1;">
+    <div class="csp-card-header">
+      <span class="csp-card-title">Legal Intelligence</span>
+      <span style="font-size:9px; color:var(--muted);">Ask about this collection</span>
+    </div>
+    <div style="flex:1; min-height:0; overflow:hidden;"
+         hx-get="/widgets/legal_intelligence_chat?context=collection&matter_id={{ collection.matter_id or '' }}&collection_id={{ collection.id }}"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+    </div>
+  </div>
+
+</div>
+
+{# Auto-refresh when actively ingesting #}
+{% if collection.status in ('collecting', 'processing', 'ingesting') %}
+<script>
+// Reload stats every 5s while ingesting
+setInterval(function() {
+  htmx.trigger('#csp-stats-body', 'refresh');
+}, 5000);
+</script>
+{% endif %}
+
+{% endblock %}

@@ -1,0 +1,91 @@
+{# ediscovery/partials/collection_stats_partial.html
+   HTMX partial — refreshed every 5s while collection is ingesting.
+   Context: collection (dict), doc_types (list of {doc_type, cnt})
+#}
+<div style="display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:16px;">
+
+  <div style="background:var(--surface,#fff); border:1px solid var(--border-color,#e2e8f0);
+              border-radius:6px; padding:12px 14px;">
+    <div style="font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase;
+                letter-spacing:0.05em; margin-bottom:4px;">Total Documents</div>
+    <div style="font-size:22px; font-weight:600; color:var(--text);">
+      {{ collection.total_docs or 0 }}
+    </div>
+  </div>
+
+  <div style="background:var(--surface,#fff); border:1px solid var(--border-color,#e2e8f0);
+              border-radius:6px; padding:12px 14px;">
+    <div style="font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase;
+                letter-spacing:0.05em; margin-bottom:4px;">Processed</div>
+    <div style="font-size:22px; font-weight:600; color:var(--text);">
+      {{ collection.processed_docs or 0 }}
+    </div>
+  </div>
+
+  <div style="background:var(--surface,#fff); border:1px solid var(--border-color,#e2e8f0);
+              border-radius:6px; padding:12px 14px;">
+    <div style="font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase;
+                letter-spacing:0.05em; margin-bottom:4px;">Reviewed</div>
+    <div style="font-size:22px; font-weight:600; color:#166534;">
+      {{ collection.reviewed_docs or 0 }}
+    </div>
+  </div>
+
+  <div style="background:var(--surface,#fff); border:1px solid var(--border-color,#e2e8f0);
+              border-radius:6px; padding:12px 14px;">
+    <div style="font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase;
+                letter-spacing:0.05em; margin-bottom:4px;">Duplicates</div>
+    <div style="font-size:22px; font-weight:600; color:var(--muted);">
+      {{ collection.duplicate_count or 0 }}
+    </div>
+  </div>
+
+  <div style="background:var(--surface,#fff); border:1px solid var(--border-color,#e2e8f0);
+              border-radius:6px; padding:12px 14px;">
+    <div style="font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase;
+                letter-spacing:0.05em; margin-bottom:4px;">Errors</div>
+    <div style="font-size:22px; font-weight:600;
+                color:{% if collection.error_count and collection.error_count > 0 %}#dc2626{% else %}var(--muted){% endif %};">
+      {{ collection.error_count or 0 }}
+    </div>
+  </div>
+
+</div>
+
+{# Progress bar #}
+{% set total = collection.total_docs or 0 %}
+{% set processed = collection.processed_docs or 0 %}
+{% set pct = ((processed / total * 100) | int) if total > 0 else 0 %}
+<div style="margin-bottom:16px;">
+  <div style="display:flex; justify-content:space-between; font-size:11px;
+              color:var(--muted); margin-bottom:4px;">
+    <span>Ingestion progress</span>
+    <span>{{ pct }}%</span>
+  </div>
+  <div style="height:6px; background:#E5E7EB; border-radius:4px; overflow:hidden;">
+    <div style="height:100%; background:var(--primary,#1B2A4A); border-radius:4px;
+                width:{{ pct }}%; transition:width 0.3s;"></div>
+  </div>
+</div>
+
+{# Document type breakdown #}
+{% if doc_types %}
+<div>
+  <div style="font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase;
+              letter-spacing:0.05em; margin-bottom:8px;">By Document Type</div>
+  {% for dt in doc_types %}
+  {% set bar_pct = ((dt.cnt / total * 100) | int) if total > 0 else 0 %}
+  <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+    <div style="width:60px; font-size:11px; color:var(--text); font-weight:500; flex-shrink:0;">
+      {{ dt.doc_type | title if dt.doc_type else 'Other' }}
+    </div>
+    <div style="flex:1; height:4px; background:#E5E7EB; border-radius:4px; overflow:hidden;">
+      <div style="height:100%; background:#3b82f6; border-radius:4px; width:{{ bar_pct }}%;"></div>
+    </div>
+    <div style="width:30px; font-size:11px; color:var(--muted); text-align:right; flex-shrink:0;">
+      {{ dt.cnt }}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

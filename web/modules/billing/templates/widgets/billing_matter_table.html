@@ -1,0 +1,64 @@
+{# widgets/billing_matter_table.html
+   Per-matter WIP and AR table for a client.
+   Context vars (from widget_service.get_billing_matter_table):
+     matters — list of {id, matter_name, matter_number, status,
+                        wip_hours, wip_value, ar_balance}
+     error   — str|None
+
+   Visualization only. Active/all toggle handled via JS in page shell
+   (client_detail.html) — this template just renders the rows with data attrs.
+#}
+
+{% if error %}
+<div style="padding:12px; font-size:11px; color:#dc2626;">⚠ {{ error }}</div>
+
+{% elif not matters %}
+<div style="padding:30px; text-align:center; color:var(--muted); font-size:12px;">
+  No matters found for this client.
+</div>
+
+{% else %}
+<table class="data-table" style="margin:0;">
+  <thead>
+    <tr>
+      <th>Matter</th>
+      <th>Number</th>
+      <th style="text-align:right;">WIP Hours</th>
+      <th style="text-align:right;">WIP Value</th>
+      <th style="text-align:right;">AR</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for m in matters %}
+    <tr class="matter-row {% if m.status != 'active' %}matter-inactive{% endif %}"
+        data-status="{{ m.status }}"
+        style="cursor:pointer; {% if m.status != 'active' %}display:none;{% endif %}"
+        onclick="location.href='/billing/clients/{{ client_id }}/matters/{{ m.id }}'">
+      <td style="font-weight:500;">{{ m.matter_name }}</td>
+      <td style="font-size:11px; color:var(--muted);">{{ m.matter_number }}</td>
+      <td style="text-align:right; font-size:12px;">
+        {% if m.wip_hours > 0 %}{{ "{:.1f}".format(m.wip_hours) }}h{% else %}—{% endif %}
+      </td>
+      <td style="text-align:right; font-size:12px; color:#b45309;
+                 font-variant-numeric:tabular-nums;">
+        {% if m.wip_value > 0 %}${{ "{:,.0f}".format(m.wip_value) }}{% else %}—{% endif %}
+      </td>
+      <td style="text-align:right; font-size:12px; color:#7f1d1d;
+                 font-variant-numeric:tabular-nums;">
+        {% if m.ar_balance > 0 %}${{ "{:,.0f}".format(m.ar_balance) }}{% else %}—{% endif %}
+      </td>
+      <td>
+        {% if m.status == 'active' %}
+          <span class="badge badge-green">Active</span>
+        {% elif m.status == 'closed' %}
+          <span class="badge badge-gray">Closed</span>
+        {% else %}
+          <span class="badge badge-yellow">{{ m.status | title }}</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}

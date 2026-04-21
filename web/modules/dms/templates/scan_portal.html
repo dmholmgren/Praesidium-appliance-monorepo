@@ -1,0 +1,335 @@
+{% extends "base.html" %}
+{% block title %}Scan & Capture — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Scan & Capture{% endblock %}
+
+{% block header_right %}
+<span style="font-size:11px; color:var(--muted);">WSS-01 · Whisper STT</span>
+{% endblock %}
+
+{% block content %}
+
+{# ── Upload Zone ─────────────────────────────────────────── #}
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:24px;">
+
+  {# Scan Upload #}
+  <div class="card">
+    <h3 style="font-size:13px; font-weight:600; color:var(--text); margin:0 0 14px 0;">
+      Upload Scanned Document
+    </h3>
+    <div
+      id="scan-drop-zone"
+      ondragover="event.preventDefault(); this.style.borderColor='var(--primary)'; this.style.background='#EFF6FF';"
+      ondragleave="this.style.borderColor='var(--border)'; this.style.background='';"
+      ondrop="handleScanDrop(event)"
+      onclick="document.getElementById('scan-file-input').click()"
+      style="border:2px dashed var(--border); border-radius:6px; padding:28px 16px;
+             text-align:center; cursor:pointer; transition:all 150ms;"
+    >
+      <svg style="width:28px;height:28px;color:#9CA3AF;margin:0 auto 8px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+      </svg>
+      <div style="font-size:13px; font-weight:500; color:var(--text);">Drop document here</div>
+      <div style="font-size:11px; color:var(--muted); margin-top:3px;">PDF, image, or Word · or click to browse</div>
+    </div>
+    <input id="scan-file-input" type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.tiff,.tif" style="display:none;" onchange="submitScanForm(this)">
+
+    <div style="margin-top:12px; display:flex; gap:8px;">
+      <select id="scan-matter" style="flex:1; font-size:12px; padding:6px 10px; border:1px solid var(--border); border-radius:6px; background:var(--surface); font-family:'DM Sans',sans-serif;">
+        <option value="">— Assign to matter (optional) —</option>
+        {% for m in matters %}
+        <option value="{{ m.id }}">{% if m.client_name %}{{ m.client_name }} · {% endif %}{{ m.matter_number or '' }} {{ m.matter_name }}</option>
+        {% endfor %}
+      </select>
+      <select id="scan-source" style="font-size:12px; padding:6px 10px; border:1px solid var(--border); border-radius:6px; background:var(--surface); font-family:'DM Sans',sans-serif;">
+        <option value="scanner">Scanner</option>
+        <option value="email">Email</option>
+        <option value="fax">Fax</option>
+        <option value="mobile">Mobile</option>
+        <option value="upload">Upload</option>
+      </select>
+    </div>
+    <input id="scan-doc-type" type="text" placeholder="Document type (optional)"
+      style="width:100%; margin-top:8px; font-size:12px; padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-family:'DM Sans',sans-serif; box-sizing:border-box;">
+    <div id="scan-upload-result" style="margin-top:8px;"></div>
+  </div>
+
+  {# Dictation Upload #}
+  <div class="card">
+    <h3 style="font-size:13px; font-weight:600; color:var(--text); margin:0 0 14px 0;">
+      Upload Dictation
+    </h3>
+    <div
+      id="dict-drop-zone"
+      ondragover="event.preventDefault(); this.style.borderColor='var(--primary)'; this.style.background='#EFF6FF';"
+      ondragleave="this.style.borderColor='var(--border)'; this.style.background='';"
+      ondrop="handleDictDrop(event)"
+      onclick="document.getElementById('dict-file-input').click()"
+      style="border:2px dashed var(--border); border-radius:6px; padding:28px 16px;
+             text-align:center; cursor:pointer; transition:all 150ms;"
+    >
+      <svg style="width:28px;height:28px;color:#9CA3AF;margin:0 auto 8px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+      </svg>
+      <div style="font-size:13px; font-weight:500; color:var(--text);">Drop audio file here</div>
+      <div style="font-size:11px; color:var(--muted); margin-top:3px;">MP3, M4A, WAV · Transcribed via Whisper</div>
+    </div>
+    <input id="dict-file-input" type="file" accept=".mp3,.m4a,.wav,.ogg,.webm" style="display:none;" onchange="submitDictForm(this)">
+
+    <div style="margin-top:12px;">
+      <select id="dict-matter" style="width:100%; font-size:12px; padding:6px 10px; border:1px solid var(--border); border-radius:6px; background:var(--surface); font-family:'DM Sans',sans-serif;">
+        <option value="">— Assign to matter (optional) —</option>
+        {% for m in matters %}
+        <option value="{{ m.id }}">{% if m.client_name %}{{ m.client_name }} · {% endif %}{{ m.matter_number or '' }} {{ m.matter_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <input id="dict-notes" type="text" placeholder="Notes (optional)"
+      style="width:100%; margin-top:8px; font-size:12px; padding:6px 10px; border:1px solid var(--border); border-radius:6px; font-family:'DM Sans',sans-serif; box-sizing:border-box;">
+    <div id="dict-upload-result" style="margin-top:8px;"></div>
+  </div>
+
+</div>
+
+{# ── Queues ──────────────────────────────────────────────── #}
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+
+  {# Scan Queue #}
+  <div>
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+      <h3 style="font-size:13px; font-weight:600; color:var(--text); margin:0;">Scan Queue</h3>
+      <span style="font-size:11px; color:var(--muted);">{{ scan_queue | length }} item{{ 's' if scan_queue | length != 1 else '' }}</span>
+    </div>
+
+    {% if scan_queue %}
+    <div class="card" style="padding:0; overflow:hidden;" id="scan-queue-list">
+      {% for item in scan_queue %}
+      <div id="scan-item-{{ item.id }}" style="padding:12px 14px; border-bottom:1px solid var(--border);">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:13px; font-weight:500; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+              {{ item.filename }}
+            </div>
+            <div style="font-size:11px; color:var(--muted); margin-top:2px;">
+              {{ item.source | title }}
+              {% if item.matter_name %} · {{ item.matter_name }}{% endif %}
+              {% if item.doc_type %} · {{ item.doc_type }}{% endif %}
+              · {{ item.created_at.strftime('%b %d %I:%M %p') if item.created_at and item.created_at.strftime is defined else item.created_at }}
+            </div>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+            {% if item.status == 'pending' %}
+            <span class="badge badge-yellow">Pending</span>
+            {% elif item.status == 'ocr_complete' %}
+            <span class="badge badge-blue">OCR Done</span>
+            {% elif item.status == 'filed' %}
+            <span class="badge badge-green">Filed</span>
+            {% elif item.status == 'ocr_failed' %}
+            <span class="badge badge-red">OCR Failed</span>
+            {% else %}
+            <span class="badge badge-gray">{{ item.status | title }}</span>
+            {% endif %}
+          </div>
+        </div>
+
+        {# Assignment form — shown for unassigned items #}
+        {% if item.status in ('pending', 'ocr_complete') and not item.matter_id %}
+        <div style="margin-top:8px; display:flex; gap:6px;">
+          <select id="assign-matter-{{ item.id }}"
+            style="flex:1; font-size:11px; padding:4px 8px; border:1px solid var(--border); border-radius:4px; background:var(--surface); font-family:'DM Sans',sans-serif;">
+            <option value="">Assign to matter…</option>
+            {% for m in matters %}
+            <option value="{{ m.id }}">{% if m.client_name %}{{ m.client_name }} · {% endif %}{{ m.matter_number or '' }} {{ m.matter_name }}</option>
+            {% endfor %}
+          </select>
+          <button
+            onclick="assignScan('{{ item.id }}')"
+            class="btn-primary" style="font-size:11px; padding:4px 10px;">
+            File
+          </button>
+          <button
+            hx-delete="/scan/{{ item.id }}"
+            hx-target="#scan-item-{{ item.id }}"
+            hx-swap="outerHTML"
+            class="btn-secondary" style="font-size:11px; padding:4px 8px; color:#EF4444; border-color:#FECACA;">
+            ×
+          </button>
+        </div>
+        {% endif %}
+
+        {# OCR text preview #}
+        {% if item.ocr_text %}
+        <details style="margin-top:8px;">
+          <summary style="font-size:11px; color:var(--muted); cursor:pointer;">OCR preview</summary>
+          <p style="font-size:11px; color:var(--muted); margin:6px 0 0 0; line-height:1.5; max-height:80px; overflow:hidden;">
+            {{ item.ocr_text[:300] }}{% if item.ocr_text | length > 300 %}…{% endif %}
+          </p>
+        </details>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="card">
+      <div class="empty-state">
+        <svg style="width:28px;height:28px;color:#D1D5DB;margin:0 auto 10px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        Scan queue is empty.
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  {# Dictation Queue #}
+  <div>
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+      <h3 style="font-size:13px; font-weight:600; color:var(--text); margin:0;">Dictation Queue</h3>
+      <span style="font-size:11px; color:var(--muted);">{{ dictation_queue | length }} item{{ 's' if dictation_queue | length != 1 else '' }}</span>
+    </div>
+
+    {% if dictation_queue %}
+    <div class="card" style="padding:0; overflow:hidden;">
+      {% for item in dictation_queue %}
+      <div style="padding:12px 14px; border-bottom:1px solid var(--border);">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:13px; font-weight:500; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+              {{ item.filename }}
+            </div>
+            <div style="font-size:11px; color:var(--muted); margin-top:2px;">
+              {{ item.audio_format | upper if item.audio_format else 'Audio' }}
+              {% if item.matter_name %} · {{ item.matter_name }}{% endif %}
+              {% if item.user_name %} · {{ item.user_name }}{% endif %}
+              · {{ item.created_at.strftime('%b %d %I:%M %p') if item.created_at and item.created_at.strftime is defined else item.created_at }}
+            </div>
+          </div>
+          <div style="flex-shrink:0;">
+            {% if item.status == 'pending' %}
+            <span class="badge badge-yellow">Pending</span>
+            {% elif item.status == 'completed' %}
+            <span class="badge badge-green">Transcribed</span>
+            {% elif item.status == 'failed' %}
+            <span class="badge badge-red">Failed</span>
+            {% else %}
+            <span class="badge badge-gray">{{ item.status | title }}</span>
+            {% endif %}
+          </div>
+        </div>
+        {% if item.transcript %}
+        <details style="margin-top:8px;">
+          <summary style="font-size:11px; color:var(--muted); cursor:pointer;">Transcript preview</summary>
+          <p style="font-size:11px; color:var(--muted); margin:6px 0 0 0; line-height:1.5; max-height:80px; overflow:hidden;">
+            {{ item.transcript[:300] }}{% if item.transcript | length > 300 %}…{% endif %}
+          </p>
+        </details>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="card">
+      <div class="empty-state">
+        <svg style="width:28px;height:28px;color:#D1D5DB;margin:0 auto 10px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+        </svg>
+        Dictation queue is empty.
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+function handleScanDrop(e) {
+  e.preventDefault();
+  const zone = document.getElementById('scan-drop-zone');
+  zone.style.borderColor = 'var(--border)';
+  zone.style.background = '';
+  const file = e.dataTransfer.files[0];
+  if (file) submitScanWithFile(file);
+}
+
+function handleDictDrop(e) {
+  e.preventDefault();
+  const zone = document.getElementById('dict-drop-zone');
+  zone.style.borderColor = 'var(--border)';
+  zone.style.background = '';
+  const file = e.dataTransfer.files[0];
+  if (file) submitDictWithFile(file);
+}
+
+function submitScanForm(input) {
+  if (input.files[0]) submitScanWithFile(input.files[0]);
+}
+
+function submitDictForm(input) {
+  if (input.files[0]) submitDictWithFile(input.files[0]);
+}
+
+async function submitScanWithFile(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('matter_id', document.getElementById('scan-matter').value);
+  fd.append('source', document.getElementById('scan-source').value);
+  fd.append('doc_type', document.getElementById('scan-doc-type').value);
+
+  const result = document.getElementById('scan-upload-result');
+  result.innerHTML = '<div style="font-size:12px;color:var(--muted);">Uploading…</div>';
+
+  try {
+    const resp = await fetch('/scan/upload', {method: 'POST', body: fd});
+    result.innerHTML = await resp.text();
+    if (resp.ok) {
+      setTimeout(() => location.reload(), 1500);
+    }
+  } catch (err) {
+    result.innerHTML = '<div style="color:#EF4444;font-size:12px;">Upload failed</div>';
+  }
+}
+
+async function submitDictWithFile(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('matter_id', document.getElementById('dict-matter').value);
+  fd.append('notes', document.getElementById('dict-notes').value);
+
+  const result = document.getElementById('dict-upload-result');
+  result.innerHTML = '<div style="font-size:12px;color:var(--muted);">Uploading…</div>';
+
+  try {
+    const resp = await fetch('/scan/dictation/upload', {method: 'POST', body: fd});
+    result.innerHTML = await resp.text();
+    if (resp.ok) {
+      setTimeout(() => location.reload(), 1500);
+    }
+  } catch (err) {
+    result.innerHTML = '<div style="color:#EF4444;font-size:12px;">Upload failed</div>';
+  }
+}
+
+async function assignScan(scanId) {
+  const matterId = document.getElementById('assign-matter-' + scanId).value;
+  if (!matterId) {
+    alert('Please select a matter first.');
+    return;
+  }
+
+  const fd = new FormData();
+  fd.append('matter_id', matterId);
+
+  try {
+    const resp = await fetch('/scan/' + scanId + '/assign', {method: 'POST', body: fd});
+    const html = await resp.text();
+    const item = document.getElementById('scan-item-' + scanId);
+    if (item) item.innerHTML += html;
+    setTimeout(() => location.reload(), 1500);
+  } catch (err) {
+    console.error('Assign failed:', err);
+  }
+}
+</script>
+{% endblock %}

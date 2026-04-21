@@ -1,0 +1,352 @@
+{# HTMX partial — COA element list for matter dashboard expandable panel #}
+{# Loaded via: hx-get="/dashboard/matter/{matter_id}/coa/{coa_id}/elements" #}
+
+<div class="coa-elements-panel" id="coa-elements-{{ coa.id }}">
+
+  {# COA header summary bar #}
+  <div class="coa-elements-header">
+    <div class="coa-meta">
+      {% if coa.count_number %}
+        <span class="coa-count-badge">Count {{ coa.count_number }}</span>
+      {% endif %}
+      <span class="coa-status-badge coa-status-{{ coa.status | lower | replace(' ', '-') }}">
+        {{ coa.status | title if coa.status else 'Unknown' }}
+      </span>
+    </div>
+    {% if coa.ai_summary %}
+      <p class="coa-ai-summary">{{ coa.ai_summary }}</p>
+    {% endif %}
+  </div>
+
+  {# Element list #}
+  {% if elements %}
+    <div class="coa-element-list">
+      {% for el in elements %}
+        <div class="coa-element-row" id="coa-element-{{ el.id }}">
+
+          {# Element header #}
+          <div class="element-header">
+            <span class="element-name">{{ el.element_name }}</span>
+            <div class="element-status-group">
+              {# Show attorney override if present, otherwise system status #}
+              {% if el.attorney_override_status %}
+                <span class="element-status-badge status-override status-{{ el.attorney_override_status | lower | replace(' ', '-') }}"
+                      title="Attorney override{% if el.overridden_by_name %} by {{ el.overridden_by_name }}{% endif %}{% if el.overridden_at %} on {{ el.overridden_at | string | truncate(10, true, '') }}{% endif %}">
+                  {{ el.attorney_override_status | title }}
+                  <svg class="override-icon" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </span>
+              {% elif el.status %}
+                <span class="element-status-badge status-{{ el.status | lower | replace(' ', '-') }}">
+                  {{ el.status | title }}
+                </span>
+              {% else %}
+                <span class="element-status-badge status-not-developed">Not Developed</span>
+              {% endif %}
+
+              {# Override toggle button #}
+              <button class="override-toggle-btn"
+                      onclick="toggleOverrideForm({{ el.id }})"
+                      title="Override element status">
+                Override
+              </button>
+            </div>
+          </div>
+
+          {# Override note if present #}
+          {% if el.attorney_override_note %}
+            <div class="element-override-note">
+              <span class="override-note-label">Note:</span> {{ el.attorney_override_note }}
+            </div>
+          {% endif %}
+
+          {# Evidence sections — only render if populated #}
+          {% set has_detail = el.supporting_evidence or el.undermining_evidence or el.discovery_gaps or el.pending_motions %}
+          {% if has_detail %}
+            <div class="element-detail-grid">
+              {% if el.supporting_evidence %}
+                <div class="evidence-section evidence-supporting">
+                  <div class="evidence-label">Supporting Evidence</div>
+                  <ul class="evidence-list">
+                    {% for item in el.supporting_evidence %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              {% endif %}
+
+              {% if el.undermining_evidence %}
+                <div class="evidence-section evidence-undermining">
+                  <div class="evidence-label">Undermining Evidence</div>
+                  <ul class="evidence-list">
+                    {% for item in el.undermining_evidence %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              {% endif %}
+
+              {% if el.discovery_gaps %}
+                <div class="evidence-section evidence-gaps">
+                  <div class="evidence-label">Discovery Gaps</div>
+                  <ul class="evidence-list">
+                    {% for item in el.discovery_gaps %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              {% endif %}
+
+              {% if el.pending_motions %}
+                <div class="evidence-section evidence-motions">
+                  <div class="evidence-label">Pending Motions</div>
+                  <ul class="evidence-list">
+                    {% for item in el.pending_motions %}
+                      <li>{{ item }}</li>
+                    {% endfor %}
+                  </ul>
+                </div>
+              {% endif %}
+            </div>
+          {% endif %}
+
+          {# Inline override form — hidden until toggled #}
+          <div class="override-form-container" id="override-form-{{ el.id }}" style="display:none;">
+            <div class="override-form">
+              <div class="override-form-row">
+                <label class="override-label" for="override-status-{{ el.id }}">New Status</label>
+                <select class="override-select" id="override-status-{{ el.id }}">
+                  <option value="established"    {% if el.attorney_override_status == 'established'    %}selected{% endif %}>Established</option>
+                  <option value="contested"      {% if el.attorney_override_status == 'contested'      %}selected{% endif %}>Contested</option>
+                  <option value="challenged"     {% if el.attorney_override_status == 'challenged'     %}selected{% endif %}>Challenged</option>
+                  <option value="not_developed"  {% if el.attorney_override_status == 'not_developed'  %}selected{% endif %}>Not Developed</option>
+                </select>
+              </div>
+              <div class="override-form-row">
+                <label class="override-label" for="override-note-{{ el.id }}">Note (optional)</label>
+                <textarea class="override-textarea"
+                          id="override-note-{{ el.id }}"
+                          rows="2"
+                          placeholder="Reason for override...">{{ el.attorney_override_note or '' }}</textarea>
+              </div>
+              <div class="override-form-actions">
+                <button class="btn-override-save"
+                        onclick="submitOverride({{ el.id }}, '{{ matter_id }}')">
+                  Save Override
+                </button>
+                <button class="btn-override-cancel"
+                        onclick="toggleOverrideForm({{ el.id }})">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </div>{# /.coa-element-row #}
+      {% endfor %}
+    </div>{# /.coa-element-list #}
+
+  {% else %}
+    <div class="coa-no-elements">
+      <p>No elements recorded for this cause of action.</p>
+    </div>
+  {% endif %}
+
+</div>{# /.coa-elements-panel #}
+
+<style>
+.coa-elements-panel {
+  padding: 0.75rem 1rem 1rem;
+  border-top: 1px solid var(--border-color, #e2e8f0);
+  background: var(--surface-secondary, #f8fafc);
+}
+.coa-elements-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+}
+.coa-meta {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+.coa-count-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.15rem 0.5rem;
+  border-radius: 9999px;
+  background: var(--color-navy, #1e3a5f);
+  color: #fff;
+}
+.coa-ai-summary {
+  font-size: 0.82rem;
+  color: var(--text-secondary, #64748b);
+  margin: 0.25rem 0 0;
+  font-style: italic;
+  flex: 1 1 100%;
+}
+/* Status badges */
+.coa-status-badge, .element-status-badge {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 0.15rem 0.55rem;
+  border-radius: 9999px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.status-established    { background: #dcfce7; color: #166534; }
+.status-contested      { background: #fef9c3; color: #854d0e; }
+.status-challenged     { background: #fee2e2; color: #991b1b; }
+.status-not-developed,
+.status-not_developed  { background: #f1f5f9; color: #64748b; }
+.status-override       { outline: 1.5px solid currentColor; }
+.override-icon         { vertical-align: middle; margin-left: 3px; }
+
+/* Element rows */
+.coa-element-list      { display: flex; flex-direction: column; gap: 0.6rem; }
+.coa-element-row {
+  background: var(--surface, #fff);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 6px;
+  padding: 0.65rem 0.85rem 0.65rem;
+}
+.element-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.element-name {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-primary, #1e293b);
+}
+.element-status-group  { display: flex; gap: 0.4rem; align-items: center; }
+.element-override-note {
+  font-size: 0.78rem;
+  color: var(--text-secondary, #64748b);
+  margin-top: 0.3rem;
+  padding-left: 0.25rem;
+  border-left: 2px solid var(--color-gold, #b8860b);
+}
+.override-note-label   { font-weight: 600; }
+
+/* Override toggle button */
+.override-toggle-btn {
+  font-size: 0.72rem;
+  font-weight: 500;
+  padding: 0.15rem 0.55rem;
+  border-radius: 4px;
+  border: 1px solid var(--color-navy, #1e3a5f);
+  color: var(--color-navy, #1e3a5f);
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.override-toggle-btn:hover {
+  background: var(--color-navy, #1e3a5f);
+  color: #fff;
+}
+
+/* Evidence grid */
+.element-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+.evidence-section      { font-size: 0.78rem; }
+.evidence-label        { font-weight: 600; color: var(--text-secondary, #64748b); margin-bottom: 0.2rem; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.evidence-list         { margin: 0; padding-left: 1.1rem; color: var(--text-primary, #1e293b); }
+.evidence-list li      { margin-bottom: 0.15rem; }
+.evidence-supporting .evidence-label { color: #166534; }
+.evidence-undermining .evidence-label { color: #991b1b; }
+.evidence-gaps .evidence-label        { color: #854d0e; }
+.evidence-motions .evidence-label     { color: var(--color-navy, #1e3a5f); }
+
+/* Override form */
+.override-form-container { margin-top: 0.6rem; }
+.override-form {
+  background: var(--surface-secondary, #f8fafc);
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 6px;
+  padding: 0.65rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.override-form-row     { display: flex; flex-direction: column; gap: 0.2rem; }
+.override-label        { font-size: 0.75rem; font-weight: 600; color: var(--text-secondary, #64748b); }
+.override-select, .override-textarea {
+  font-size: 0.82rem;
+  border: 1px solid var(--border-color, #e2e8f0);
+  border-radius: 4px;
+  padding: 0.35rem 0.5rem;
+  background: var(--surface, #fff);
+  color: var(--text-primary, #1e293b);
+  width: 100%;
+}
+.override-textarea     { resize: vertical; }
+.override-form-actions { display: flex; gap: 0.4rem; margin-top: 0.2rem; }
+.btn-override-save {
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.3rem 0.75rem;
+  border-radius: 4px;
+  border: none;
+  background: var(--color-navy, #1e3a5f);
+  color: #fff;
+  cursor: pointer;
+}
+.btn-override-save:hover  { background: var(--color-navy-dark, #152b47); }
+.btn-override-cancel {
+  font-size: 0.78rem;
+  padding: 0.3rem 0.65rem;
+  border-radius: 4px;
+  border: 1px solid var(--border-color, #e2e8f0);
+  background: transparent;
+  color: var(--text-secondary, #64748b);
+  cursor: pointer;
+}
+.coa-no-elements {
+  font-size: 0.82rem;
+  color: var(--text-secondary, #64748b);
+  font-style: italic;
+  padding: 0.25rem 0;
+}
+</style>
+
+<script>
+function toggleOverrideForm(elementId) {
+  const form = document.getElementById('override-form-' + elementId);
+  if (!form) return;
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+function submitOverride(elementId, matterId) {
+  const status = document.getElementById('override-status-' + elementId).value;
+  const note   = document.getElementById('override-note-'   + elementId).value;
+
+  fetch('/dashboard/matter/' + matterId + '/coa/' + elementId + '/override', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({status: status, note: note}),
+  })
+  .then(r => r.json())
+  .then(data => {
+    // Re-fetch the entire element panel to reflect updated status
+    const coaPanel = document.getElementById('override-form-' + elementId)
+      ?.closest('[id^="coa-elements-"]');
+    if (coaPanel) {
+      const coaId  = coaPanel.id.replace('coa-elements-', '');
+      htmx.ajax('GET',
+        '/dashboard/matter/' + matterId + '/coa/' + coaId + '/elements',
+        {target: '#' + coaPanel.id, swap: 'outerHTML'}
+      );
+    }
+  })
+  .catch(err => console.error('Override failed:', err));
+}
+</script>

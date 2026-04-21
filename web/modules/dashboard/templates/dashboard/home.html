@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Matters — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Active Matters{% endblock %}
+
+{% block header_right %}
+<a href="/dashboard/intake" class="btn-primary" style="font-size:12px;">
+  <svg style="width:13px;height:13px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+  </svg>
+  New Matter
+</a>
+{% endblock %}
+
+{% block content %}
+
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+  <span style="font-size:12px; color:var(--muted);">{{ matters | length }} matter{{ 's' if matters | length != 1 else '' }}</span>
+  <div style="display:flex; gap:8px;">
+    <input
+      type="search"
+      placeholder="Filter matters…"
+      oninput="filterMatters(this.value)"
+      style="font-size:12px; padding:6px 12px; border:1px solid var(--border); border-radius:6px; background:var(--surface); color:var(--text); outline:none; width:200px; font-family:'DM Sans',sans-serif;"
+    >
+  </div>
+</div>
+
+{% if matters %}
+<div class="card" style="padding:0; overflow:hidden;" id="matter-list">
+  {% for m in matters %}
+  <a href="/dashboard/matter/{{ m.id }}" class="matter-row" data-name="{{ m.matter_name|lower }}">
+    <div style="flex:1; min-width:0;">
+      <div class="matter-name">{{ m.matter_name }}</div>
+      <div class="matter-meta">
+        {{ m.matter_number or '—' }}
+        {% if m.client_name %}&nbsp;·&nbsp;{{ m.client_name }}{% endif %}
+        {% if m.practice_area %}&nbsp;·&nbsp;<span style="text-transform:capitalize;">{{ m.practice_area.replace('_', ' ') }}</span>{% endif %}
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:12px; flex-shrink:0; margin-left:16px;">
+      {% if m.status == 'active' %}
+      <span class="badge badge-green">Active</span>
+      {% elif m.status == 'closed' %}
+      <span class="badge badge-gray">Closed</span>
+      {% else %}
+      <span class="badge badge-yellow">{{ m.status|title }}</span>
+      {% endif %}
+      <svg style="width:14px;height:14px;color:#D1D5DB;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+      </svg>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card">
+  <div class="empty-state">
+    <svg style="width:32px;height:32px;color:#D1D5DB;margin:0 auto 12px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+    </svg>
+    No active matters found.
+    <div style="margin-top:12px;">
+      <a href="/dashboard/intake" class="btn-primary" style="font-size:12px;">Create your first matter</a>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<script>
+function filterMatters(q) {
+  q = q.toLowerCase();
+  document.querySelectorAll('#matter-list .matter-row').forEach(row => {
+    const name = row.dataset.name || '';
+    row.style.display = name.includes(q) ? '' : 'none';
+  });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,206 @@
+{% extends "base.html" %}
+{% block title %}{{ collection.name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block head_extra %}
+<style>
+  .drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: 8px;
+    padding: 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 150ms, background 150ms;
+  }
+  .drop-zone:hover, .drop-zone.dragover {
+    border-color: var(--primary);
+    background: #EFF6FF;
+  }
+  .doc-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+  }
+  .doc-row:last-child { border-bottom: none; }
+  .doc-row:hover { background: var(--bg); }
+</style>
+{% endblock %}
+
+{% block page_title %}{{ collection.name }}{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<div style="font-size:12px; color:var(--muted); margin-bottom:16px;">
+  <a href="/matters" style="color:var(--muted); text-decoration:none;">Matters</a>
+  <span style="margin:0 6px;">›</span>
+  <a href="/matters/{{ collection.matter_id }}" style="color:var(--muted); text-decoration:none;">{{ collection.matter_name }}</a>
+  <span style="margin:0 6px;">›</span>
+  <a href="/ediscovery/matters/{{ collection.matter_id }}/collections" style="color:var(--muted); text-decoration:none;">Collections</a>
+  <span style="margin:0 6px;">›</span>
+  <span style="color:var(--text);">{{ collection.name }}</span>
+</div>
+
+<!-- Status bar -->
+<div style="display:flex; align-items:center; gap:10px; margin-bottom:20px;">
+  {% if collection.status == 'active' %}
+    <span class="badge badge-green">Active</span>
+  {% else %}
+    <span class="badge badge-gray">{{ collection.status }}</span>
+  {% endif %}
+</div>
+
+<!-- Three-panel layout -->
+<div style="display:flex; gap:16px; min-height:0;">
+
+  <!-- LEFT: Collection metadata -->
+  <div style="width:220px; flex-shrink:0;">
+    <div class="card" style="margin-bottom:12px;">
+      <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:12px;">Collection Info</div>
+      {% if collection.description %}
+      <p style="font-size:12px; color:var(--muted); margin-bottom:12px;">{{ collection.description }}</p>
+      {% endif %}
+      <div style="font-size:12px; display:flex; flex-direction:column; gap:6px;">
+        <div><span style="color:var(--muted);">Matter:</span> <span style="font-weight:500; color:var(--text);">{{ collection.matter_name }}</span></div>
+        <div><span style="color:var(--muted);">Status:</span> <span style="color:var(--text);">{{ collection.status }}</span></div>
+        <div><span style="color:var(--muted);">Created:</span> <span style="color:var(--text);">{{ collection.created_at.strftime('%b %d, %Y') if collection.created_at else '—' }}</span></div>
+      </div>
+    </div>
+
+    <!-- Status summary -->
+    <div class="card">
+      <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:10px;">Ingestion Status</div>
+      <div id="status-summary" style="font-size:12px;">
+        <div style="color:var(--muted);">Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- CENTER: Drop zone + document list -->
+  <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:12px;">
+
+    {% if collection.status == 'active' %}
+    <div id="drop-zone" class="drop-zone card"
+         ondragover="event.preventDefault(); this.classList.add('dragover')"
+         ondragleave="this.classList.remove('dragover')"
+         ondrop="handleDrop(event)"
+         onclick="document.getElementById('file-input').click()">
+      <input id="file-input" type="file" multiple style="display:none;" onchange="handleFileSelect(event)">
+      <svg width="32" height="32" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin:0 auto 8px; display:block; color:#9CA3AF;">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+      </svg>
+      <p style="font-weight:500; font-size:13px; color:var(--text);">Drop files here or click to browse</p>
+      <p style="font-size:11px; color:var(--muted); margin-top:4px;">PDF, DOCX, EML, MSG, XLSX, TIFF — up to 500 MB per file</p>
+    </div>
+    <div id="upload-progress" style="display:flex; flex-direction:column; gap:4px;"></div>
+    {% endif %}
+
+    <!-- Document list -->
+    <div class="card" style="padding:0; overflow:hidden; flex:1;"
+         hx-get="/ediscovery/collections/{{ collection.id }}/documents"
+         hx-trigger="load, every 5s"
+         hx-swap="innerHTML"
+         id="doc-list">
+      <div style="padding:24px; text-align:center; color:var(--muted); font-size:13px;">Loading documents…</div>
+    </div>
+  </div>
+
+  <!-- RIGHT: DMS override queue -->
+  <div style="width:260px; flex-shrink:0;">
+    <div class="card" style="margin-bottom:12px;">
+      <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:8px;">DMS Flagged</div>
+      <p style="font-size:11px; color:var(--muted); margin-bottom:12px;">Files that already exist in the Document Management System. Review and confirm or discard each one.</p>
+      <div id="dms-queue"
+           hx-get="/ediscovery/collections/{{ collection.id }}/documents?filter=dms_duplicate"
+           hx-trigger="load, every 8s"
+           hx-swap="innerHTML">
+        <div style="font-size:12px; color:var(--muted);">Loading…</div>
+      </div>
+    </div>
+    <div style="padding:12px 14px; background:#FFFBEB; border:1px solid #FDE68A; border-radius:8px; font-size:11px; color:#92400E;">
+      <strong>DMS Separation Rule:</strong> Discovery documents are never written to the DMS. Cross-reference is read-only.
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+const COLLECTION_ID = "{{ collection.id }}";
+
+async function uploadFile(file) {
+  const progressArea = document.getElementById('upload-progress');
+  const item = document.createElement('div');
+  item.style.cssText = 'display:flex;align-items:center;gap:8px;padding:8px 12px;background:#F9FAFB;border:1px solid #E5E7EB;border-radius:6px;font-size:12px;';
+  item.innerHTML = `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${file.name}</span><span style="color:#3B82F6;flex-shrink:0;">Uploading…</span>`;
+  progressArea.appendChild(item);
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const resp = await fetch(`/ediscovery/collections/${COLLECTION_ID}/upload`, { method: 'POST', body: formData });
+    const data = await resp.json();
+    const status = item.querySelector('span:last-child');
+    if (resp.ok) {
+      if (data.dms_match) {
+        status.textContent = '⚠ DMS match'; status.style.color = '#D97706';
+      } else {
+        status.textContent = '✓ Queued'; status.style.color = '#059669';
+      }
+    } else {
+      status.textContent = data.detail || 'Error'; status.style.color = '#DC2626';
+    }
+  } catch (e) {
+    item.querySelector('span:last-child').textContent = 'Network error';
+    item.querySelector('span:last-child').style.color = '#DC2626';
+  }
+  htmx.trigger('#doc-list', 'load');
+  setTimeout(() => item.remove(), 8000);
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('drop-zone').classList.remove('dragover');
+  [...e.dataTransfer.files].forEach(uploadFile);
+}
+
+function handleFileSelect(e) {
+  [...e.target.files].forEach(uploadFile);
+  e.target.value = '';
+}
+
+async function confirmOverride(collectionId, docId) {
+  const resp = await fetch(`/ediscovery/collections/${collectionId}/documents/${docId}/confirm-dms-override`, { method: 'POST' });
+  if (resp.ok) { htmx.trigger('#doc-list', 'load'); htmx.trigger('#dms-queue', 'load'); }
+  else { alert('Error confirming override'); }
+}
+
+async function discardDocument(collectionId, docId) {
+  const resp = await fetch(`/ediscovery/collections/${collectionId}/documents/${docId}/discard`, { method: 'POST' });
+  if (resp.ok) { htmx.trigger('#doc-list', 'load'); htmx.trigger('#dms-queue', 'load'); }
+  else { alert('Error discarding document'); }
+}
+
+async function refreshStatus() {
+  try {
+    const resp = await fetch(`/ediscovery/collections/${COLLECTION_ID}/status`);
+    const data = await resp.json();
+    const el = document.getElementById('status-summary');
+    const counts = data.counts || {};
+    el.innerHTML = `
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px;"><span style="color:var(--muted);">Total</span><span style="font-weight:500;">${data.total}</span></div>
+      ${counts.ingested ? `<div style="display:flex;justify-content:space-between;margin-bottom:4px;"><span style="color:#059669;">Ingested</span><span style="font-weight:500;color:#059669;">${counts.ingested}</span></div>` : ''}
+      ${counts.processing ? `<div style="display:flex;justify-content:space-between;margin-bottom:4px;"><span style="color:#2563EB;">Processing</span><span style="font-weight:500;color:#2563EB;">${counts.processing}</span></div>` : ''}
+      ${counts.pending ? `<div style="display:flex;justify-content:space-between;margin-bottom:4px;"><span style="color:var(--muted);">Pending</span><span style="font-weight:500;">${counts.pending}</span></div>` : ''}
+      ${counts.dms_duplicate ? `<div style="display:flex;justify-content:space-between;margin-bottom:4px;"><span style="color:#D97706;">DMS Flagged</span><span style="font-weight:500;color:#D97706;">${counts.dms_duplicate}</span></div>` : ''}
+      ${counts.rejected ? `<div style="display:flex;justify-content:space-between;"><span style="color:#DC2626;">Rejected</span><span style="font-weight:500;color:#DC2626;">${counts.rejected}</span></div>` : ''}
+    `;
+  } catch(e) {}
+}
+refreshStatus();
+setInterval(refreshStatus, 6000);
+</script>
+{% endblock %}

@@ -1,0 +1,82 @@
+{# widgets/ediscovery_ingest_status.html
+   Ingest Queue widget — clickable horizontal bar graph.
+   Each bar = one collection. Click → collection status page.
+   Auto-refreshes every 10s from overview.
+#}
+
+{% if active_jobs or recent_jobs %}
+
+  {% set all_jobs = (active_jobs + recent_jobs) %}
+
+  {% for job in all_jobs[:6] %}
+  {% set total = (job.total_docs or 0) | int %}
+  {% set processed = (job.processed_docs or 0) | int %}
+  {% set pct = ((processed / total * 100) | int) if total > 0 else (100 if job.status in ('review_ready', 'complete', 'review_complete') else 5) %}
+
+  <a href="/ediscovery/collections/{{ job.id }}/status-page"
+     style="display:block; text-decoration:none; padding:8px 12px;
+            border-bottom:1px solid #f8fafc; transition:background 0.1s;"
+     onmouseover="this.style.background='#F8FAFC'"
+     onmouseout="this.style.background=''">
+
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:4px;">
+      <span style="font-size:11px; font-weight:500; color:var(--text);
+                   white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:160px;">
+        {{ job.collection_name or 'Collection' }}
+      </span>
+      <span style="font-size:10px; font-family:monospace; color:var(--muted); flex-shrink:0; margin-left:4px;">
+        {{ processed }}/{{ total }}
+      </span>
+    </div>
+
+    {% if job.matter_name %}
+    <div style="font-size:10px; color:var(--muted); margin-bottom:4px;
+                white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+      {{ job.matter_name }}
+    </div>
+    {% endif %}
+
+    <div style="height:6px; background:#E2E8F0; border-radius:3px; overflow:hidden;">
+      <div style="height:100%; border-radius:3px; transition:width 0.5s;
+                  width:{{ pct }}%;
+                  background:{% if job.status in ('review_ready', 'complete', 'review_complete') %}#22C55E
+                             {% elif job.status in ('error', 'failed') %}#EF4444
+                             {% elif job.status in ('collecting', 'processing', 'ingesting') %}#F59E0B
+                             {% else %}#94A3B8{% endif %};">
+      </div>
+    </div>
+
+    <div style="display:flex; justify-content:space-between; margin-top:3px;">
+      <span style="font-size:9px; color:
+        {% if job.status in ('review_ready', 'complete', 'review_complete') %}#166534
+        {% elif job.status in ('error', 'failed') %}#DC2626
+        {% elif job.status in ('collecting', 'processing', 'ingesting') %}#92400E
+        {% else %}var(--muted){% endif %};">
+        {% if job.status in ('collecting', 'processing', 'ingesting') %}↻ {{ job.status | title }}
+        {% elif job.status in ('review_ready', 'complete') %}✓ Ready
+        {% elif job.status in ('error', 'failed') %}✗ Error
+        {% else %}{{ job.status | title }}{% endif %}
+      </span>
+      <span style="font-size:9px; color:var(--muted);">{{ job.completed_at_relative or job.started_at_relative or '' }}</span>
+    </div>
+  </a>
+  {% endfor %}
+
+  {% if all_jobs | length > 6 %}
+  <div style="padding:6px 12px; font-size:10px; color:var(--muted); text-align:center;">
+    +{{ (all_jobs | length) - 6 }} more ·
+    <a href="/ediscovery/collections" style="color:var(--primary); text-decoration:none;">view all</a>
+  </div>
+  {% endif %}
+
+{% else %}
+  <div style="display:flex; flex-direction:column; align-items:center; justify-content:center;
+              height:100%; padding:20px; text-align:center;">
+    <svg width="28" height="28" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="color:#D1D5DB; margin-bottom:8px;">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+    </svg>
+    <div style="font-size:12px; color:var(--muted);">No active ingests</div>
+    <div style="font-size:10px; color:var(--muted); margin-top:3px;">Drop files or create a collection</div>
+  </div>
+{% endif %}

@@ -1,0 +1,26 @@
+{% extends "base_tenant.html" %}
+{% block title %}Payments — {{ brand.platform_name }}{% endblock %}
+{% block content %}
+<div class="px-6 py-4">
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="text-xl font-semibold text-gray-900">Payments</h1>
+    <a href="/billing/payments/new"
+       class="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
+      + New Payment
+    </a>
+  </div>
+  <p class="text-sm text-gray-500 mb-4">Payments are entered at the client level and allocated across matters.</p>
+  <div id="payments-list" class="text-gray-400 text-sm">Loading…</div>
+</div>
+<script>
+// Simple placeholder — full payment list would query a /api/billing/payments endpoint
+// (add to routes.py as next step)
+document.getElementById('payments-list').innerHTML = `
+  <div class="bg-white border rounded p-8 text-center text-gray-400">
+    <div class="text-4xl mb-2">💳</div>
+    <div class="font-medium text-gray-600 mb-1">Payment history coming soon</div>
+    <div class="text-sm">Use the + New Payment button to record a payment and allocate it across invoices.</div>
+  </div>
+`;
+</script>
+{% endblock %}

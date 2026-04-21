@@ -1,0 +1,470 @@
+{# widgets/billing_matter_intake.html
+   Matter Intake widget — default center panel state (no client scoped)
+   
+   Three states managed by JS, no page navigation:
+     'idle'       — drop zone + manual entry shortcuts
+     'analyzing'  — spinner while AI processes document
+     'review'     — pre-populated form, attorney edits and confirms
+   
+   API calls (routing only, no business logic in template):
+     POST /dashboard/intake/start              → {intake_id}
+     POST /dashboard/intake/{id}/upload        → {extracted_fields, ...}
+     POST /dashboard/intake/{id}/confirm       → {matter_id, status}
+     GET  /api/v1/billing/timekeepers          → {timekeepers}
+   
+   On confirm → reloads billing matter tree + navigates to new matter detail.
+   No data logic in this template. All state in window._intakeState.
+#}
+
+<div id="bil-intake-wrap" style="display:flex; flex-direction:column; height:100%; padding:16px; gap:14px;">
+
+  {# ── State: idle ──────────────────────────────────────────────────────── #}
+  <div id="bil-intake-idle">
+
+    {# Header row #}
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+      <div>
+        <div style="font-size:13px; font-weight:600; color:var(--text);">New Matter Intake</div>
+        <div style="font-size:11px; color:var(--muted); margin-top:1px;">
+          Drop a document or enter manually
+        </div>
+      </div>
+      <div style="display:flex; gap:6px;">
+        <a href="/billing/clients/new"
+           style="font-size:11px; padding:5px 12px; border:1px solid var(--border-color,#e2e8f0);
+                  border-radius:6px; text-decoration:none; color:var(--text); background:var(--surface);">
+          + New Client
+        </a>
+        <a href="/billing/matters/new"
+           style="font-size:11px; padding:5px 12px; background:var(--primary,#1B2A4A);
+                  color:#fff; border-radius:6px; text-decoration:none; font-weight:500;">
+          + New Matter
+        </a>
+      </div>
+    </div>
+
+    {# Drop zone #}
+    <div id="bil-drop-zone"
+         ondragover="event.preventDefault(); this.style.borderColor='var(--primary,#1B2A4A)'; this.style.background='#EFF6FF';"
+         ondragleave="this.style.borderColor=''; this.style.background='';"
+         ondrop="bilHandleDrop(event)"
+         onclick="document.getElementById('bil-file-input').click()"
+         style="border:2px dashed var(--border-color,#e2e8f0); border-radius:10px;
+                padding:32px 20px; text-align:center; cursor:pointer;
+                transition:all 0.15s; background:var(--surface,#fff);">
+
+      <div style="font-size:28px; margin-bottom:8px;">📄</div>
+      <div style="font-size:13px; font-weight:500; color:var(--text); margin-bottom:4px;">
+        Drop a pleading, complaint, contract, or scheduling order
+      </div>
+      <div style="font-size:11px; color:var(--muted);">
+        PDF · DOCX · Image — AI reads and proposes matter fields
+      </div>
+      <div style="margin-top:12px; font-size:11px; color:var(--primary,#1B2A4A); font-weight:500;">
+        or click to browse
+      </div>
+      <input type="file" id="bil-file-input" accept=".pdf,.docx,.doc,.png,.jpg,.jpeg"
+             style="display:none;" onchange="bilHandleFileInput(this)">
+    </div>
+
+    {# Divider #}
+    <div style="display:flex; align-items:center; gap:10px; margin:14px 0 10px;">
+      <div style="flex:1; height:1px; background:var(--border-color,#e2e8f0);"></div>
+      <span style="font-size:11px; color:var(--muted);">or enter manually</span>
+      <div style="flex:1; height:1px; background:var(--border-color,#e2e8f0);"></div>
+    </div>
+
+    {# Quick manual entry #}
+    <div style="display:flex; gap:8px; align-items:flex-end;">
+      <div style="flex:1;">
+        <label style="font-size:10px; font-weight:600; color:var(--muted); display:block; margin-bottom:3px;">
+          Client
+        </label>
+        <input type="text" id="bil-quick-client" placeholder="Client name…"
+               style="width:100%; padding:7px 10px; font-size:12px; box-sizing:border-box;
+                      border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                      background:var(--surface); color:var(--text);">
+      </div>
+      <div style="flex:1;">
+        <label style="font-size:10px; font-weight:600; color:var(--muted); display:block; margin-bottom:3px;">
+          Matter type
+        </label>
+        <select id="bil-quick-type"
+                style="width:100%; padding:7px 10px; font-size:12px;
+                       border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                       background:var(--surface); color:var(--text);">
+          <option value="litigation">Litigation</option>
+          <option value="transactional">Transactional</option>
+          <option value="real_estate">Real Estate</option>
+          <option value="family">Family</option>
+          <option value="probate">Probate</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <a href="#" onclick="bilOpenManualForm(); return false;"
+         style="padding:7px 14px; font-size:11px; font-weight:500;
+                background:var(--primary,#1B2A4A); color:#fff; border-radius:6px;
+                text-decoration:none; white-space:nowrap; flex-shrink:0;">
+        Open Form →
+      </a>
+    </div>
+
+  </div>
+
+  {# ── State: analyzing ─────────────────────────────────────────────────── #}
+  <div id="bil-intake-analyzing" style="display:none; flex:1; flex-direction:column;
+       align-items:center; justify-content:center; gap:12px; text-align:center;">
+
+    <div style="width:36px; height:36px; border:3px solid #e2e8f0;
+                border-top-color:var(--primary,#1B2A4A); border-radius:50%;
+                animation:bilSpin 0.8s linear infinite;"></div>
+    <div style="font-size:13px; font-weight:500; color:var(--text);">Analyzing document…</div>
+    <div id="bil-analyze-status"
+         style="font-size:11px; color:var(--muted);">Reading document text</div>
+
+  </div>
+
+  {# ── State: review ────────────────────────────────────────────────────── #}
+  <div id="bil-intake-review" style="display:none; flex-direction:column; gap:12px;">
+
+    {# Review header #}
+    <div style="display:flex; align-items:center; justify-content:space-between;">
+      <div style="display:flex; align-items:center; gap:8px;">
+        <span style="font-size:13px; font-weight:600; color:var(--text);">Review Proposed Fields</span>
+        <span style="font-size:10px; background:#DCFCE7; color:#166534; padding:2px 8px;
+                     border-radius:10px; font-weight:600;">AI Proposed</span>
+      </div>
+      <button onclick="bilResetIntake()"
+              style="font-size:11px; color:var(--muted); background:none; border:none;
+                     cursor:pointer; text-decoration:underline;">
+        Start over
+      </button>
+    </div>
+
+    {# Conflict warning — shown if conflict detected #}
+    <div id="bil-conflict-warn"
+         style="display:none; padding:8px 12px; background:#FEF2F2; border:1px solid #FECACA;
+                border-radius:6px; font-size:11px; color:#991B1B;">
+      ⚠ Potential conflict detected — review before confirming.
+    </div>
+
+    {# Form fields — all pre-populated by AI, all editable #}
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+
+      <div>
+        <label style="font-size:10px; font-weight:600; color:var(--muted); display:block; margin-bottom:3px;">
+          Client Name
+        </label>
+        <input type="text" id="bil-r-client"
+               style="width:100%; padding:6px 10px; font-size:12px; box-sizing:border-box;
+                      border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                      background:var(--surface); color:var(--text);">
+      </div>
+
+      <div>
+        <label style="font-size:10px; font-weight:600; color:var(--muted); display:block; margin-bottom:3px;">
+          Matter Type
+        </label>
+        <select id="bil-r-type"
+                style="width:100%; padding:6px 10px; font-size:12px;
+                       border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                       background:var(--surface); color:var(--text);">
+          <option value="litigation">Litigation</option>
+          <option value="transactional">Transactional</option>
+          <option value="real_estate">Real Estate</option>
+          <option value="family">Family</option>
+          <option value="probate">Probate</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+
+      <div>
+        <label style="font-size:10px; font-weight:600; color:var(--muted); display:block; margin-bottom:3px;">
+          Court
+        </label>
+        <input type="text" id="bil-r-court"
+               style="width:100%; padding:6px 10px; font-size:12px; box-sizing:border-box;
+                      border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                      background:var(--surface); color:var(--text);">
+      </div>
+
+      <div>
+        <label style="font-size:10px; font-weight:600; color:var(--muted); display:block; margin-bottom:3px;">
+          Case Number
+        </label>
+        <input type="text" id="bil-r-case"
+               style="width:100%; padding:6px 10px; font-size:12px; box-sizing:border-box;
+                      border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                      background:var(--surface); color:var(--text);">
+      </div>
+
+      <div>
+        <label style="font-size:10px; font-weight:600; color:var(--muted); display:block; margin-bottom:3px;">
+          Adverse Parties
+        </label>
+        <input type="text" id="bil-r-adverse" placeholder="Comma separated"
+               style="width:100%; padding:6px 10px; font-size:12px; box-sizing:border-box;
+                      border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                      background:var(--surface); color:var(--text);">
+      </div>
+
+      <div>
+        <label style="font-size:10px; font-weight:600; color:var(--muted); display:block; margin-bottom:3px;">
+          Responsible Attorney
+        </label>
+        <select id="bil-r-attorney"
+                style="width:100%; padding:6px 10px; font-size:12px;
+                       border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                       background:var(--surface); color:var(--text);">
+          <option value="">Loading…</option>
+        </select>
+      </div>
+
+    </div>
+
+    {# Key dates — rendered from AI extraction #}
+    <div id="bil-key-dates-wrap" style="display:none;">
+      <div style="font-size:10px; font-weight:600; color:var(--muted); margin-bottom:6px;">
+        Key Dates Found
+      </div>
+      <div id="bil-key-dates-list"
+           style="display:flex; flex-direction:column; gap:4px;"></div>
+    </div>
+
+    {# Error #}
+    <div id="bil-review-error"
+         style="display:none; padding:8px 12px; background:#FEF2F2;
+                border:1px solid #FECACA; border-radius:6px; font-size:11px; color:#991B1B;">
+    </div>
+
+    {# Actions #}
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:4px;">
+      <a id="bil-edit-first-btn" href="#"
+         style="padding:7px 16px; font-size:12px; border:1px solid var(--border-color,#e2e8f0);
+                border-radius:6px; text-decoration:none; color:var(--text); background:var(--surface);">
+        Edit in Full Form
+      </a>
+      <button id="bil-confirm-btn" onclick="bilConfirmIntake()"
+              style="padding:7px 20px; font-size:12px; font-weight:600;
+                     background:var(--primary,#1B2A4A); color:#fff; border:none;
+                     border-radius:6px; cursor:pointer;">
+        Confirm &amp; Open Matter
+      </button>
+    </div>
+
+  </div>
+
+</div>
+
+<style>
+@keyframes bilSpin { to { transform: rotate(360deg); } }
+</style>
+
+<script>
+// ── Intake state — no business logic, pure routing + DOM ──────────────────
+window._intakeState = window._intakeState || {
+  intakeId:  null,
+  fields:    null,
+  keyDates:  [],
+};
+
+// ── Load attorney options once ────────────────────────────────────────────
+(async function bilLoadAttorneys() {
+  try {
+    const res  = await fetch('/api/billing/timekeepers');
+    const data = await res.json();
+    const sel  = document.getElementById('bil-r-attorney');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">Select attorney…</option>';
+    (data.timekeepers || []).forEach(tk => {
+      const opt = document.createElement('option');
+      opt.value       = tk.ts_tk_id || tk.id;
+      opt.textContent = tk.ts_name || tk.full_name || tk.ts_initials;
+      sel.appendChild(opt);
+    });
+  } catch(e) { console.warn('Could not load attorneys:', e); }
+})();
+
+// ── Drop handler ──────────────────────────────────────────────────────────
+function bilHandleDrop(e) {
+  e.preventDefault();
+  const zone = document.getElementById('bil-drop-zone');
+  if (zone) { zone.style.borderColor = ''; zone.style.background = ''; }
+  const files = e.dataTransfer?.files;
+  if (files && files.length) bilProcessFiles(files);
+}
+
+function bilHandleFileInput(input) {
+  if (input.files && input.files.length) bilProcessFiles(input.files);
+}
+
+// ── Main processing flow — routing only ──────────────────────────────────
+async function bilProcessFiles(files) {
+  bilShowState('analyzing');
+  bilSetStatus('Uploading and analyzing document…');
+
+  try {
+    // Single stateless call — upload + analyze in one request
+    const form = new FormData();
+    Array.from(files).forEach(f => form.append('files', f));
+
+    bilSetStatus('AI is reading and extracting fields…');
+    const res = await fetch('/api/v1/billing/intake/analyze', {
+      method: 'POST',
+      body:   form,
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'Analysis failed (' + res.status + ')');
+    }
+
+    const result = await res.json();
+    const fields   = result.extracted_fields || {};
+    const keyDates = fields.key_dates || [];
+
+    window._intakeState.fields   = fields;
+    window._intakeState.keyDates = keyDates;
+
+    bilPopulateReview(fields, keyDates);
+    bilShowState('review');
+
+  } catch(err) {
+    bilShowState('idle');
+    alert('Intake error: ' + err.message);
+  }
+}
+
+// ── Populate review form with AI-proposed fields ──────────────────────────
+function bilPopulateReview(fields, keyDates) {
+  bilSetField('bil-r-client',  fields.client_name  || '');
+  bilSetField('bil-r-court',   fields.court_name   || '');
+  bilSetField('bil-r-case',    fields.case_number  || '');
+  bilSetField('bil-r-adverse', (fields.adverse_parties || []).join(', '));
+
+  const typeEl = document.getElementById('bil-r-type');
+  if (typeEl && fields.matter_type) typeEl.value = fields.matter_type;
+
+  // Key dates
+  const datesWrap = document.getElementById('bil-key-dates-wrap');
+  const datesList = document.getElementById('bil-key-dates-list');
+  if (datesList && keyDates.length) {
+    datesList.innerHTML = keyDates.map((kd, i) => `
+      <label style="display:flex; align-items:center; gap:8px; font-size:11px;
+                    color:var(--text); cursor:pointer;">
+        <input type="checkbox" checked data-date-idx="${i}"
+               style="cursor:pointer;">
+        <span style="font-weight:500; min-width:130px;">${kd.name || 'Date'}</span>
+        <span style="color:var(--muted);">${kd.date || ''}</span>
+        ${kd.description ? `<span style="color:var(--muted); font-size:10px;">— ${kd.description}</span>` : ''}
+      </label>
+    `).join('');
+    if (datesWrap) datesWrap.style.display = 'block';
+  } else {
+    if (datesWrap) datesWrap.style.display = 'none';
+  }
+
+  // Edit in full form link — pre-populate via query string
+  const editBtn = document.getElementById('bil-edit-first-btn');
+  if (editBtn) {
+    const params = new URLSearchParams({
+      client_name:  fields.client_name  || '',
+      matter_type:  fields.matter_type  || '',
+      court:        fields.court_name   || '',
+      case_number:  fields.case_number  || '',
+    });
+    editBtn.href = '/billing/matters/new?' + params.toString();
+  }
+}
+
+// ── Confirm intake — POST to matter creation ──────────────────────────────
+async function bilConfirmIntake() {
+  const btn = document.getElementById('bil-confirm-btn');
+  if (btn) { btn.textContent = 'Creating matter…'; btn.disabled = true; }
+
+  const errEl = document.getElementById('bil-review-error');
+  if (errEl) errEl.style.display = 'none';
+
+  // Gather checked key dates
+  const selectedDates = [];
+  document.querySelectorAll('[data-date-idx]').forEach(cb => {
+    if (cb.checked) {
+      const kd = window._intakeState.keyDates[parseInt(cb.dataset.dateIdx)];
+      if (kd) selectedDates.push(kd);
+    }
+  });
+
+  const payload = {
+    client_name:          document.getElementById('bil-r-client')?.value.trim(),
+    matter_type:          document.getElementById('bil-r-type')?.value,
+    court_name:           document.getElementById('bil-r-court')?.value.trim(),
+    case_number:          document.getElementById('bil-r-case')?.value.trim(),
+    adverse_parties:      (document.getElementById('bil-r-adverse')?.value || '')
+                            .split(',').map(s => s.trim()).filter(Boolean),
+    responsible_attorney: document.getElementById('bil-r-attorney')?.value,
+    key_dates:            selectedDates,
+    source:               'intake_widget',
+  };
+
+  try {
+    // Build query string to pre-populate the full matter form
+    // Attorney reviews and submits — matter created on that page
+    const params = new URLSearchParams();
+    if (payload.client_name)  params.set('client_name',  payload.client_name);
+    if (payload.matter_type)  params.set('matter_type',  payload.matter_type);
+    if (payload.court_name)   params.set('court',        payload.court_name);
+    if (payload.case_number)  params.set('case_number',  payload.case_number);
+    if (payload.adverse_parties.length)
+      params.set('adverse', payload.adverse_parties.join(', '));
+    if (payload.responsible_attorney)
+      params.set('attorney', payload.responsible_attorney);
+    if (selectedDates.length)
+      params.set('key_dates', JSON.stringify(selectedDates));
+
+    // Navigate to pre-populated matter form
+    window.location.href = '/billing/matters/new?' + params.toString();
+
+  } catch(err) {
+    if (errEl) { errEl.textContent = 'Error: ' + err.message; errEl.style.display = 'block'; }
+    if (btn) { btn.textContent = 'Confirm & Open Matter'; btn.disabled = false; }
+  }
+}
+
+// ── Manual form shortcut ──────────────────────────────────────────────────
+function bilOpenManualForm() {
+  const client = document.getElementById('bil-quick-client')?.value.trim();
+  const type   = document.getElementById('bil-quick-type')?.value;
+  const params = new URLSearchParams();
+  if (client) params.set('client_name', client);
+  if (type)   params.set('matter_type', type);
+  window.location.href = '/billing/matters/new' + (params.toString() ? '?' + params : '');
+}
+
+// ── Reset ─────────────────────────────────────────────────────────────────
+function bilResetIntake() {
+  window._intakeState = { intakeId: null, fields: null, keyDates: [] };
+  bilShowState('idle');
+}
+
+// ── UI helpers — DOM only ─────────────────────────────────────────────────
+function bilShowState(state) {
+  ['idle','analyzing','review'].forEach(s => {
+    const el = document.getElementById('bil-intake-' + s);
+    if (!el) return;
+    el.style.display = s === state
+      ? (s === 'analyzing' ? 'flex' : (s === 'review' ? 'flex' : 'block'))
+      : 'none';
+    if (s === 'review') el.style.flexDirection = 'column';
+  });
+}
+
+function bilSetStatus(msg) {
+  const el = document.getElementById('bil-analyze-status');
+  if (el) el.textContent = msg;
+}
+
+function bilSetField(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.value = val;
+}
+</script>

@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}New Collection — {{ brand.portal_name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto py-8 px-4">
+  <h1 class="text-2xl font-bold text-gray-900 mb-6">New eDiscovery Collection</h1>
+
+  <form id="collection-form"
+        hx-post="/api/v1/ediscovery/collections"
+        hx-target="#form-result"
+        hx-swap="innerHTML"
+        hx-indicator="#submit-spinner"
+        class="space-y-6 bg-white shadow rounded-lg p-6">
+
+    <!-- Matter Selection -->
+    <div>
+      <label for="matter_id" class="block text-sm font-medium text-gray-700">Matter</label>
+      <select id="matter_id" name="matter_id" required
+              class="mt-1 block w-full rounded-md border-gray-300 shadow-sm
+                     focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              hx-get="/api/v1/ediscovery/dms-folders/"
+              hx-trigger="change"
+              hx-target="#dms-folder-browser"
+              hx-swap="innerHTML"
+              hx-include="[name='matter_id']">
+        <option value="">Select a matter...</option>
+        {% for matter in matters %}
+        <option value="{{ matter.id }}">{{ matter.matter_number }} — {{ matter.matter_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!-- Collection Name -->
+    <div>
+      <label for="collection_name" class="block text-sm font-medium text-gray-700">Collection Name</label>
+      <input type="text" id="collection_name" name="collection_name" required
+             placeholder="e.g., Client Production 001, Opposing Production - Smith"
+             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm
+                    focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+    </div>
+
+    <!-- Source Type Dropdown -->
+    <div>
+      <label for="source_type" class="block text-sm font-medium text-gray-700">Source Type</label>
+      <select id="source_type" name="source_type" required
+              class="mt-1 block w-full rounded-md border-gray-300 shadow-sm
+                     focus:border-blue-500 focus:ring-blue-500 sm:text-sm"
+              onchange="toggleSourceFields()">
+        <option value="client_collection_dms">Client Documents (from DMS)</option>
+        <option value="client_collection_dedicated">Client Documents (bulk upload — PST, archives)</option>
+        <option value="opposing_production">Opposing Counsel Production</option>
+        <option value="third_party_subpoena">Third Party Subpoena Response</option>
+        <option value="internal_collection">Internal Collection</option>
+      </select>
+    </div>
+
+    <!-- Source Party -->
+    <div>
+      <label for="source_party" class="block text-sm font-medium text-gray-700">Source Party</label>
+      <input type="text" id="source_party" name="source_party"
+             placeholder="e.g., Acme Corp (client), Smith & Jones LLP (opposing)"
+             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm
+                    focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+    </div>
+
+    <!-- Received Date and Method -->
+    <div class="grid grid-cols-2 gap-4">
+      <div>
+        <label for="received_date" class="block text-sm font-medium text-gray-700">Date Received</label>
+        <input type="date" id="received_date" name="received_date"
+               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm
+                      focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+      </div>
+      <div>
+        <label for="received_method" class="block text-sm font-medium text-gray-700">Delivery Method</label>
+        <input type="text" id="received_method" name="received_method"
+               placeholder="USB drive, Relativity transfer, Box link"
+               class="mt-1 block w-full rounded-md border-gray-300 shadow-sm
+                      focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+      </div>
+    </div>
+
+    <!-- Stated Bates Range (opposing productions) -->
+    <div id="bates-range-section" class="hidden">
+      <label for="stated_bates_range" class="block text-sm font-medium text-gray-700">
+        Stated Bates Range (as represented by producing party)
+      </label>
+      <input type="text" id="stated_bates_range" name="stated_bates_range"
+             placeholder="SJ000001 - SJ045832"
+             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm
+                    focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+    </div>
+
+    <!-- DMS Import Checkbox -->
+    <div id="dms-import-section" class="bg-blue-50 rounded-lg p-4 border border-blue-200">
+      <div class="flex items-start">
+        <div class="flex items-center h-5">
+          <input id="import_from_dms" name="import_from_dms" type="checkbox"
+                 checked
+                 class="h-4 w-4 rounded border-gray-300 text-blue-600
+                        focus:ring-blue-500"
+                 onchange="toggleDmsFolderBrowser()">
+        </div>
+        <div class="ml-3 text-sm">
+          <label for="import_from_dms" class="font-medium text-gray-700">
+            Import client documents from DMS
+          </label>
+          <p class="text-gray-500">
+            Copies files from the matter folder on the DMS file share into the
+            eDiscovery platform. Originals are preserved — the DMS copies remain
+            your working files, the eDiscovery copies are immutable for chain of custody.
+          </p>
+        </div>
+      </div>
+
+      <!-- DMS Folder Browser (loaded via HTMX when matter is selected) -->
+      <div id="dms-folder-browser" class="mt-4">
+        <p class="text-sm text-gray-500 italic">Select a matter above to browse its folder structure.</p>
+      </div>
+
+      <input type="hidden" id="dms_folder_path" name="dms_folder_path" value="">
+    </div>
+
+    <!-- Dedicated Source Path (for bulk uploads / PST) -->
+    <div id="dedicated-path-section" class="hidden">
+      <label for="dedicated_source_path" class="block text-sm font-medium text-gray-700">
+        Source Path (eDiscovery storage volume)
+      </label>
+      <input type="text" id="dedicated_source_path" name="dedicated_source_path"
+             placeholder="/mnt/ediscovery/incoming/client_pst_files"
+             class="mt-1 block w-full rounded-md border-gray-300 shadow-sm
+                    focus:border-blue-500 focus:ring-blue-500 sm:text-sm">
+      <p class="mt-1 text-sm text-gray-500">
+        Path where PST files, archives, or bulk document collections have been placed
+        on the dedicated eDiscovery storage volume.
+      </p>
+    </div>
+
+    <!-- Submit -->
+    <div class="flex items-center justify-end space-x-4">
+      <div id="submit-spinner" class="htmx-indicator">
+        <svg class="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+        </svg>
+      </div>
+      <a href="/ediscovery/collections"
+         class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border
+                border-gray-300 rounded-md shadow-sm hover:bg-gray-50">
+        Cancel
+      </a>
+      <button type="submit"
+              class="px-4 py-2 text-sm font-medium text-white bg-blue-600
+                     border border-transparent rounded-md shadow-sm
+                     hover:bg-blue-700 focus:outline-none focus:ring-2
+                     focus:ring-offset-2 focus:ring-blue-500">
+        Create Collection &amp; Begin Ingestion
+      </button>
+    </div>
+  </form>
+
+  <div id="form-result" class="mt-4"></div>
+</div>
+
+<script>
+function toggleSourceFields() {
+  const sourceType = document.getElementById('source_type').value;
+  const dmsSection = document.getElementById('dms-import-section');
+  const dedicatedSection = document.getElementById('dedicated-path-section');
+  const batesSection = document.getElementById('bates-range-section');
+  const dmsCheckbox = document.getElementById('import_from_dms');
+
+  // Reset visibility
+  dmsSection.classList.add('hidden');
+  dedicatedSection.classList.add('hidden');
+  batesSection.classList.add('hidden');
+
+  if (sourceType === 'client_collection_dms') {
+    dmsSection.classList.remove('hidden');
+    dmsCheckbox.checked = true;
+  } else if (sourceType === 'client_collection_dedicated') {
+    dedicatedSection.classList.remove('hidden');
+  } else if (sourceType === 'opposing_production' || sourceType === 'third_party_subpoena') {
+    dedicatedSection.classList.remove('hidden');
+    batesSection.classList.remove('hidden');
+  } else if (sourceType === 'internal_collection') {
+    dmsSection.classList.remove('hidden');
+    dmsCheckbox.checked = false;
+    dedicatedSection.classList.remove('hidden');
+  }
+}
+
+function toggleDmsFolderBrowser() {
+  const checkbox = document.getElementById('import_from_dms');
+  const browser = document.getElementById('dms-folder-browser');
+  browser.style.display = checkbox.checked ? 'block' : 'none';
+}
+
+function selectDmsFolder(path) {
+  document.getElementById('dms_folder_path').value = path;
+  // Highlight the selected folder
+  document.querySelectorAll('.dms-folder-item').forEach(el => {
+    el.classList.remove('bg-blue-100', 'border-blue-400');
+    el.classList.add('bg-white', 'border-gray-200');
+  });
+  event.currentTarget.classList.remove('bg-white', 'border-gray-200');
+  event.currentTarget.classList.add('bg-blue-100', 'border-blue-400');
+}
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', toggleSourceFields);
+</script>
+{% endblock %}

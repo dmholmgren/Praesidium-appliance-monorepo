@@ -1,0 +1,67 @@
+{#
+  firm_calendar_strip.html
+  7-day rolling calendar from exchange_calendar_events.
+#}
+<div style="padding:10px 12px; height:100%; display:flex; flex-direction:column;">
+
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              margin-bottom:8px; flex-shrink:0;">
+    <span style="font-size:11px; font-weight:600; color:var(--text,#1a202c);
+                 text-transform:uppercase; letter-spacing:0.05em;">Calendar</span>
+    <span style="font-size:10px; color:var(--muted,#64748b);">Next 7 days</span>
+  </div>
+
+  {% if error %}
+  <div style="font-size:11px; color:#dc2626;">{{ error }}</div>
+
+  {% else %}
+  <div style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:2px;">
+    {% for day in days %}
+    <div style="border-radius:5px; overflow:hidden;
+                {% if day.is_today %}background:#eff6ff; border:1px solid #bfdbfe;{% else %}background:transparent;{% endif %}">
+
+      {# Day header #}
+      <div style="display:flex; align-items:center; gap:6px; padding:4px 8px;
+                  {% if day.is_today %}background:#1d4ed8; color:#fff;{% else %}color:var(--muted,#64748b);{% endif %}">
+        <span style="font-size:10px; font-weight:{% if day.is_today %}700{% else %}500{% endif %};">
+          {{ day.label }}</span>
+        <span style="font-size:11px; font-weight:600;">{{ day.day_num }}</span>
+        {% if not day.has_events %}
+        <span style="font-size:10px; {% if day.is_today %}opacity:0.8{% endif %}; margin-left:auto;">—</span>
+        {% endif %}
+      </div>
+
+      {# Events for this day #}
+      {% if day.has_events %}
+      <div style="padding:2px 0 4px;">
+        {% for event in day.events %}
+        <div style="padding:3px 8px; border-bottom:1px solid var(--border-color,#e2e8f0);"
+             title="{{ event.subject }}">
+          <div style="display:flex; align-items:baseline; gap:5px;">
+            <span style="font-size:10px; color:var(--muted,#64748b); flex-shrink:0; min-width:44px;">
+              {{ event.time_label }}</span>
+            <span style="font-size:11px; color:var(--text,#1a202c); overflow:hidden;
+                         text-overflow:ellipsis; white-space:nowrap;">
+              {{ event.subject }}</span>
+          </div>
+          {% if event.matter_name %}
+          <div style="font-size:10px; color:var(--muted,#64748b); padding-left:49px;
+                      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            {{ event.matter_name }}</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    {% if total_events == 0 %}
+    <div style="padding:16px; text-align:center; font-size:11px; color:var(--muted,#64748b);">
+      No events in the next 7 days.
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+</div>

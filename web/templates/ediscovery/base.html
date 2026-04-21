@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full {% if nav.theme == 'light' %}bg-gray-50{% else %}bg-gray-950{% endif %}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Praesidium{% endblock %} — {{ nav.firm_name or 'Praesidium' }}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+  <style>
+    /* Nav active state */
+    .nav-active {
+      background-color: rgb(30 58 92);
+      border-left: 3px solid #60a5fa;
+      color: #fff;
+    }
+    /* Status badges */
+    .status-ok   { background: #166534; color: #bbf7d0; }
+    .status-warn { background: #854d0e; color: #fef08a; }
+    .status-err  { background: #991b1b; color: #fecaca; }
+    .status-unk  { background: #374151; color: #d1d5db; }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .03em;
+    }
+    /* HTMX loading indicator */
+    .htmx-indicator { opacity: 0; transition: opacity 200ms ease-in; }
+    .htmx-request .htmx-indicator { opacity: 1; }
+    .htmx-request.htmx-indicator { opacity: 1; }
+
+    /* Light theme overrides */
+    {% if nav.theme == 'light' %}
+    body { background: #f9fafb; color: #111827; }
+    .tenant-sidebar { background: #ffffff; border-color: #e5e7eb; }
+    .tenant-nav-link { color: #374151; }
+    .tenant-nav-link:hover { background: #f3f4f6; color: #111827; }
+    .tenant-header { background: #ffffff; border-color: #e5e7eb; }
+    .tenant-main { background: #f9fafb; }
+    .nav-section-label { color: #9ca3af; }
+    {% else %}
+    body { background: #030712; color: #f3f4f6; }
+    .tenant-sidebar { background: #111827; border-color: #1f2937; }
+    .tenant-nav-link { color: #d1d5db; }
+    .tenant-nav-link:hover { background: #1f2937; color: #ffffff; }
+    .tenant-header { background: #111827; border-color: #1f2937; }
+    .tenant-main { background: #030712; }
+    .nav-section-label { color: #4b5563; }
+    {% endif %}
+  </style>
+  {% block head %}{% endblock %}
+</head>
+<body class="h-full flex font-sans text-sm">
+
+  <!-- ── Left Navigation ──────────────────────────────────────────────── -->
+  <nav class="tenant-sidebar w-56 flex-shrink-0 border-r flex flex-col h-screen sticky top-0">
+
+    <!-- Logo / firm name -->
+    <div class="px-4 py-4 border-b {% if nav.theme == 'light' %}border-gray-200{% else %}border-gray-800{% endif %}">
+      <div class="text-blue-500 font-bold tracking-wide text-sm">PRAESIDIUM</div>
+      {% if nav.firm_name %}
+      <div class="text-xs mt-0.5 truncate {% if nav.theme == 'light' %}text-gray-500{% else %}text-gray-400{% endif %}">
+        {{ nav.firm_name }}
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Nav body -->
+    <div class="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
+
+      <!-- Dashboard -->
+      <a href="/dashboard"
+         class="tenant-nav-link flex items-center gap-2.5 px-3 py-2 rounded transition-colors
+                {% if nav.page == 'dashboard' %}nav-active{% endif %}">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+        </svg>
+        <span class="text-sm">Dashboard</span>
+      </a>
+
+      <!-- Matters -->
+      <a href="/matters"
+         class="tenant-nav-link flex items-center gap-2.5 px-3 py-2 rounded transition-colors
+                {% if nav.page == 'matters' %}nav-active{% endif %}">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+        </svg>
+        <span class="text-sm">Matters</span>
+      </a>
+
+      <!-- DMS -->
+      {% if nav.features.feature_dms %}
+      <a href="/dms"
+         class="tenant-nav-link flex items-center gap-2.5 px-3 py-2 rounded transition-colors
+                {% if nav.page == 'dms' %}nav-active{% endif %}">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        <span class="text-sm">Documents</span>
+      </a>
+      {% endif %}
+
+      <!-- eDiscovery -->
+      {% if nav.features.feature_ediscovery %}
+      <div class="pt-3 pb-1">
+        <p class="nav-section-label px-3 text-xs font-semibold uppercase tracking-wider">eDiscovery</p>
+      </div>
+      <a href="/ediscovery"
+         class="tenant-nav-link flex items-center gap-2.5 px-3 py-2 rounded transition-colors
+                {% if nav.page == 'ediscovery' %}nav-active{% endif %}">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+        <span class="text-sm">Collections</span>
+      </a>
+      {% endif %}
+
+      <!-- Billing -->
+      {% if nav.features.feature_billing %}
+      <div class="pt-3 pb-1">
+        <p class="nav-section-label px-3 text-xs font-semibold uppercase tracking-wider">Billing</p>
+      </div>
+      <a href="/billing"
+         class="tenant-nav-link flex items-center gap-2.5 px-3 py-2 rounded transition-colors
+                {% if nav.page == 'billing' %}nav-active{% endif %}">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <span class="text-sm">Billing</span>
+      </a>
+      <a href="/billing/import"
+         class="tenant-nav-link flex items-center gap-2.5 px-3 py-2 rounded transition-colors
+                {% if nav.page == 'billing_import' %}nav-active{% endif %}">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+        </svg>
+        <span class="text-sm">Import</span>
+      </a>
+      <a href="/tenant-admin/connectors"
+         class="tenant-nav-link flex items-center gap-2.5 px-3 py-2 rounded transition-colors
+                {% if nav.page == 'connectors' %}nav-active{% endif %}">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M13 10V3L4 14h7v7l9-11h-7z"/>
+        </svg>
+        <span class="text-sm">Connectors</span>
+      </a>
+      {% endif %}
+
+      <!-- Intelligence -->
+      {% if nav.features.feature_intelligence_chat or nav.features.feature_cite_it %}
+      <div class="pt-3 pb-1">
+        <p class="nav-section-label px-3 text-xs font-semibold uppercase tracking-wider">Intelligence</p>
+      </div>
+      {% if nav.features.feature_intelligence_chat %}
+      <a href="/intelligence/chat"
+         class="tenant-nav-link flex items-center gap-2.5 px-3 py-2 rounded transition-colors
+                {% if nav.page == 'case_chat' %}nav-active{% endif %}">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+        </svg>
+        <span class="text-sm">Case Chat</span>
+      </a>
+      {% endif %}
+      {% if nav.features.feature_cite_it %}
+      <a href="/cite-it"
+         class="tenant-nav-link flex items-center gap-2.5 px-3 py-2 rounded transition-colors
+                {% if nav.page == 'cite_it' %}nav-active{% endif %}">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        <span class="text-sm">Cite-It</span>
+      </a>
+      {% endif %}
+      {% endif %}
+
+      <!-- Court Calendar -->
+      {% if nav.features.feature_court_calendar %}
+      <div class="pt-3 pb-1">
+        <p class="nav-section-label px-3 text-xs font-semibold uppercase tracking-wider">Calendar</p>
+      </div>
+      <a href="/calendar"
+         class="tenant-nav-link flex items-center gap-2.5 px-3 py-2 rounded transition-colors
+                {% if nav.page == 'calendar' %}nav-active{% endif %}">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+        </svg>
+        <span class="text-sm">Court Calendar</span>
+      </a>
+      {% endif %}
+
+      <!-- Tenant Admin -->
+      {% if nav.features.feature_tenant_admin and nav.user_role in ('admin', 'attorney') %}
+      <div class="pt-3 pb-1">
+        <p class="nav-section-label px-3 text-xs font-semibold uppercase tracking-wider">Admin</p>
+      </div>
+      <a href="/tenant/users"
+         class="tenant-nav-link flex items-center gap-2.5 px-3 py-2 rounded transition-colors
+                {% if nav.page == 'tenant_users' %}nav-active{% endif %}">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+        </svg>
+        <span class="text-sm">Users</span>
+      </a>
+      {% endif %}
+
+    </div>
+
+    <!-- User footer -->
+    <div class="px-4 py-3 border-t {% if nav.theme == 'light' %}border-gray-200{% else %}border-gray-800{% endif %}">
+      {% if nav.user_name %}
+      <div class="text-xs font-medium truncate {% if nav.theme == 'light' %}text-gray-700{% else %}text-gray-300{% endif %}">
+        {{ nav.user_name }}
+      </div>
+      <div class="text-xs {% if nav.theme == 'light' %}text-gray-400{% else %}text-gray-600{% endif %} truncate">
+        {{ nav.user_role | title if nav.user_role else '' }}
+      </div>
+      {% endif %}
+      <div class="mt-2 flex items-center gap-3">
+        <form method="post" action="/logout">
+          <button type="submit"
+                  class="text-xs {% if nav.theme == 'light' %}text-gray-400 hover:text-gray-700{% else %}text-gray-600 hover:text-gray-300{% endif %} transition-colors">
+            Sign out
+          </button>
+        </form>
+      </div>
+      <div class="text-xs {% if nav.theme == 'light' %}text-gray-300{% else %}text-gray-800{% endif %} mt-1">
+        Patent Pending 64/020,027
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── Main Content Area ─────────────────────────────────────────────── -->
+  <div class="flex-1 flex flex-col min-h-0 overflow-hidden">
+
+    <!-- Top bar -->
+    <header class="tenant-header flex-shrink-0 border-b px-6 py-3 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <h1 class="font-semibold text-base {% if nav.theme == 'light' %}text-gray-900{% else %}text-white{% endif %}">
+          {% block page_title %}{% endblock %}
+        </h1>
+        <span id="global-spinner" class="htmx-indicator">
+          <svg class="animate-spin h-4 w-4 text-blue-400" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+          </svg>
+        </span>
+      </div>
+      <div class="flex items-center gap-4">
+        {% block header_right %}{% endblock %}
+        {% if nav.matter_name %}
+        <span class="text-xs {% if nav.theme == 'light' %}text-gray-400{% else %}text-gray-500{% endif %}">
+          {{ nav.matter_name }}
+        </span>
+        {% endif %}
+      </div>
+    </header>
+
+    <!-- Page content -->
+    <main class="tenant-main flex-1 overflow-y-auto p-6">
+      {% block content %}{% endblock %}
+    </main>
+
+  </div>
+
+  <script>
+    htmx.config.indicatorClass = 'htmx-request';
+    htmx.config.requestClass = 'htmx-request';
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

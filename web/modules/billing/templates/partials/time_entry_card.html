@@ -1,0 +1,13 @@
+<div class="te-card bg-white rounded-lg shadow-sm border p-4 flex items-start gap-3" data-entry-id="{{ entry.id }}">
+  <input type="checkbox" class="entry-cb mt-1 rounded border-gray-300 text-blue-600" value="{{ entry.id }}">
+  <div class="flex-1 min-w-0">
+    <div class="flex justify-between"><span class="text-sm font-medium">{{ entry.entry_date }}</span>
+    <span class="px-2 py-0.5 rounded text-xs font-medium {% if entry.status == 'approved' %}bg-green-100 text-green-800{% elif entry.status == 'draft' %}bg-gray-100 text-gray-800{% elif entry.status == 'billed' %}bg-blue-100 text-blue-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">{{ entry.status }}</span></div>
+    <p class="text-sm text-gray-600 mt-1">{{ entry.matter.matter_number if entry.matter else '' }} - {{ entry.matter.matter_name if entry.matter else '' }}</p>
+    <p class="text-sm text-gray-800 mt-1">{{ entry.description }}</p>
+    <div class="flex gap-4 mt-2 text-xs text-gray-500">
+      <span>{{ entry.hours }}h</span><span>${{ "%.2f"|format(entry.rate) }}/hr</span><span class="font-medium text-gray-900">${{ "%.2f"|format(entry.amount) }}</span>
+      {% if entry.source != 'manual' %}<span class="px-1.5 py-0.5 rounded bg-purple-50 text-purple-700">{{ entry.source }}</span>{% endif %}
+    </div>
+  </div>
+</div>

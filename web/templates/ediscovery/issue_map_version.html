@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block title %}Issue Map v{{ version.version_num }} — {{ matter.name }}{% endblock %}
+{% block content %}
+<div class="max-w-5xl mx-auto py-8 px-4">
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <a href="/ediscovery/matters/{{ matter_id }}/issue-map"
+         class="text-slate-400 hover:text-slate-300 text-sm mb-2 inline-block">
+        ← Issue Map
+      </a>
+      <h1 class="text-2xl font-bold text-white">
+        Version {{ version.version_num }}
+      </h1>
+      <p class="text-slate-400 text-sm mt-1">{{ matter.name | trim }}</p>
+    </div>
+    <div class="text-right text-sm text-slate-400">
+      <div>Trigger: <span class="text-slate-300">{{ version.trigger_type }}</span></div>
+      <div class="mt-1">
+        Magnitude:
+        <span class="font-mono {% if version.magnitude >= 0.7 %}text-red-400{% elif version.magnitude >= 0.35 %}text-yellow-400{% else %}text-green-400{% endif %}">
+          {{ "%.2f"|format(version.magnitude) }}
+        </span>
+        {% if version.magnitude >= 0.7 %}
+        <span class="ml-2 px-2 py-0.5 bg-red-900 text-red-300 text-xs rounded">HIGH DRIFT — review queued</span>
+        {% elif version.magnitude >= 0.35 %}
+        <span class="ml-2 px-2 py-0.5 bg-yellow-900 text-yellow-300 text-xs rounded">MODERATE DRIFT</span>
+        {% endif %}
+      </div>
+      <div class="mt-1 text-slate-500">
+        {{ version.created_at.strftime('%Y-%m-%d %H:%M UTC') if version.created_at else '' }}
+      </div>
+    </div>
+  </div>
+
+  <!-- Issue map data -->
+  {% set im = version.issue_map %}
+  {% if im and im is mapping %}
+
+    {% if im.get('claims') %}
+    <div class="bg-slate-800 border border-slate-700 rounded-lg mb-4">
+      <div class="px-4 py-3 border-b border-slate-700">
+        <h2 class="text-base font-semibold text-slate-200">
+          Claims ({{ im.claims|length }})
+        </h2>
+      </div>
+      <div class="divide-y divide-slate-700">
+        {% for claim in im.claims %}
+        <div class="px-4 py-3">
+          <div class="text-slate-200 font-medium">{{ claim.get('name', claim.get('claim_name', '')) }}</div>
+          {% if claim.get('elements') %}
+          <ul class="mt-2 space-y-1">
+            {% for el in claim.elements %}
+            <li class="text-slate-400 text-sm pl-4 border-l border-slate-600">
+              {{ el.get('element_name', el) if el is mapping else el }}
+            </li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if im.get('defenses') %}
+    <div class="bg-slate-800 border border-slate-700 rounded-lg mb-4">
+      <div class="px-4 py-3 border-b border-slate-700">
+        <h2 class="text-base font-semibold text-slate-200">
+          Defenses ({{ im.defenses|length }})
+        </h2>
+      </div>
+      <div class="divide-y divide-slate-700">
+        {% for defense in im.defenses %}
+        <div class="px-4 py-3 text-slate-300 text-sm">
+          {{ defense.get('name', defense.get('defense_name', '')) if defense is mapping else defense }}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if im.get('key_players') %}
+    <div class="bg-slate-800 border border-slate-700 rounded-lg mb-4">
+      <div class="px-4 py-3 border-b border-slate-700">
+        <h2 class="text-base font-semibold text-slate-200">
+          Key Players ({{ im.key_players|length }})
+        </h2>
+      </div>
+      <div class="px-4 py-3 flex flex-wrap gap-2">
+        {% for p in im.key_players %}
+        <span class="px-3 py-1 bg-slate-700 text-slate-300 rounded text-sm">
+          {{ p.get('name', p) if p is mapping else p }}
+          {% if p is mapping and p.get('role') %}
+          <span class="text-slate-500 ml-1">· {{ p.role }}</span>
+          {% endif %}
+        </span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+  {% else %}
+  <div class="bg-slate-800 border border-slate-700 rounded-lg p-6 text-slate-500 text-sm">
+    No structured issue map data in this version.
+  </div>
+  {% endif %}
+
+  <!-- Differential -->
+  {% if version.differential and version.differential != '{}' %}
+  <div class="bg-slate-800 border border-slate-700 rounded-lg mt-4">
+    <div class="px-4 py-3 border-b border-slate-700">
+      <h2 class="text-base font-semibold text-slate-200">Differential from Prior Version</h2>
+    </div>
+    <div class="px-4 py-3">
+      <pre class="text-xs text-slate-400 overflow-x-auto">{{ version.differential | tojson(indent=2) }}</pre>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

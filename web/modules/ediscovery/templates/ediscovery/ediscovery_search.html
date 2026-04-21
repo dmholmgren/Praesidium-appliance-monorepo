@@ -1,0 +1,618 @@
+{% extends "base.html" %}
+{% block title %}Search — {% if matter %}{{ matter.matter_name }} — {% endif %}{{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}eDiscovery Search{% endblock %}
+
+{% block content %}
+<style>
+  .edisco-search-outer {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 120px);
+    min-height: 0;
+    overflow: hidden;
+  }
+  .edisco-search-body {
+    display: grid;
+    grid-template-columns: 220px 1fr 300px;
+    flex: 1;
+    min-height: 0;
+    gap: 10px;
+    overflow: hidden;
+  }
+  .facet-rail {
+    overflow-y: auto;
+    min-height: 0;
+  }
+  .facet-card {
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 6px;
+    background: var(--surface, #fff);
+    margin-bottom: 8px;
+    overflow: hidden;
+  }
+  .facet-hdr {
+    padding: 7px 10px;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    background: #f8fafc;
+    border-bottom: 1px solid var(--border-color, #f1f5f9);
+  }
+  .facet-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    border-bottom: 1px solid #f8fafc;
+  }
+  .facet-item:hover { background: #f1f5f9; }
+  .facet-item.active { background: #eff6ff; color: var(--primary); font-weight: 600; }
+  .results-panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .result-row {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color, #f1f5f9);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .result-row:hover { background: #f8fafc; }
+  .result-row.active { background: #eff6ff; border-left: 3px solid var(--primary); }
+  .right-rail {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-left: 1px solid var(--border-color, #e2e8f0);
+    overflow: hidden;
+  }
+</style>
+
+<div class="edisco-search-outer">
+
+  {# eDiscovery tab bar — mirrors ediscovery_home tabs #}
+  <div style="display:flex; align-items:center; gap:2px; margin-bottom:12px;
+              border-bottom:2px solid var(--border-color,#e2e8f0); flex-shrink:0;">
+    <a href="/ediscovery" class="edisco-tab-link"
+       style="padding:7px 14px; font-size:12px; font-weight:500; text-decoration:none;
+              color:var(--muted); border-bottom:2px solid transparent; margin-bottom:-2px;">
+      Overview
+    </a>
+    <a href="/ediscovery#collections" class="edisco-tab-link"
+       style="padding:7px 14px; font-size:12px; font-weight:500; text-decoration:none;
+              color:var(--muted); border-bottom:2px solid transparent; margin-bottom:-2px;">
+      Collections
+    </a>
+    <a href="/ediscovery#review" class="edisco-tab-link"
+       style="padding:7px 14px; font-size:12px; font-weight:500; text-decoration:none;
+              color:var(--muted); border-bottom:2px solid transparent; margin-bottom:-2px;">
+      Review
+    </a>
+    <a href="/ediscovery#productions" class="edisco-tab-link"
+       style="padding:7px 14px; font-size:12px; font-weight:500; text-decoration:none;
+              color:var(--muted); border-bottom:2px solid transparent; margin-bottom:-2px;">
+      Productions
+    </a>
+    <a href="/ediscovery/search{% if matter_id %}?matter_id={{ matter_id }}{% endif %}"
+       style="padding:7px 14px; font-size:12px; font-weight:600; text-decoration:none;
+              color:var(--primary); border-bottom:2px solid var(--primary); margin-bottom:-2px;">
+      Search
+    </a>
+  </div>
+
+  {# Context nav breadcrumb #}
+  <div style="display:flex; align-items:center; gap:16px; margin-bottom:10px;
+              font-size:12px; color:var(--muted); flex-shrink:0;">
+    <a href="/ediscovery" style="color:var(--muted); text-decoration:none;"
+       onmouseenter="this.style.color='var(--primary)'"
+       onmouseleave="this.style.color='var(--muted)'">eDiscovery</a>
+    {% if matter %}
+    <span style="color:var(--border);">›</span>
+    <a href="/ediscovery/matters/{{ matter_id }}/collections"
+       style="color:var(--muted); text-decoration:none;"
+       onmouseenter="this.style.color='var(--primary)'"
+       onmouseleave="this.style.color='var(--muted)'">{{ matter.matter_name }}</a>
+    {% endif %}
+    <span style="color:var(--border);">›</span>
+    <span style="color:var(--primary); font-weight:500;">Search</span>
+  </div>
+
+  {# Search bar #}
+  <div style="flex-shrink:0; margin-bottom:10px;">
+    <form method="get" action="/ediscovery/search" id="search-form">
+      <input type="hidden" name="matter_id" value="{{ matter_id }}">
+      <input type="hidden" name="collection_id" value="{{ collection_id }}">
+      <input type="hidden" name="doc_type" id="f-doc-type" value="{{ doc_type }}">
+      <input type="hidden" name="review_status" id="f-review-status" value="{{ review_status }}">
+      <input type="hidden" name="custodian" id="f-custodian" value="{{ custodian }}">
+      <input type="hidden" name="tag_id" id="f-tag-id" value="{{ tag_id }}">
+      <input type="hidden" name="production_id" id="f-production-id" value="{{ production_id }}">
+      <input type="hidden" name="date_from" value="{{ date_from }}">
+      <input type="hidden" name="date_to" value="{{ date_to }}">
+
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+        <div style="flex:1; position:relative;">
+          <input type="text" name="q" value="{{ q }}"
+                 id="search-input"
+                 placeholder="Search documents — keyword, Boolean (AND OR NOT), or plain English…"
+                 style="width:100%; padding:9px 14px 9px 34px; font-size:13px;
+                        border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                        box-sizing:border-box; background:var(--surface,#fff);
+                        color:var(--text); font-family:inherit; outline:none;"
+                 onkeydown="if(event.key==='Enter'){document.getElementById('search-form').submit();}">
+          <span style="position:absolute; left:11px; top:50%; transform:translateY(-50%);
+                       font-size:13px; color:var(--muted); pointer-events:none;">🔍</span>
+        </div>
+        {% if matter_id and collections %}
+        <select name="collection_id" onchange="this.form.submit()"
+                style="font-size:12px; padding:8px 10px; border:1px solid var(--border-color,#e2e8f0);
+                       border-radius:6px; background:var(--surface,#fff); font-family:inherit;">
+          <option value="">All collections</option>
+          {% for c in collections %}
+          <option value="{{ c.id }}" {% if c.id == collection_id %}selected{% endif %}>
+            {{ c.display_name }}
+          </option>
+          {% endfor %}
+        </select>
+        {% endif %}
+        <button type="submit"
+                style="padding:8px 20px; background:var(--primary,#1B2A4A); color:#fff;
+                       border:none; border-radius:6px; font-size:12px; font-weight:600;
+                       cursor:pointer; white-space:nowrap;">Search</button>
+        {% if q or doc_type or review_status or custodian %}
+        <a href="/ediscovery/search?matter_id={{ matter_id }}"
+           style="padding:8px 12px; font-size:12px; color:var(--muted);
+                  text-decoration:none; white-space:nowrap;"
+           onmouseenter="this.style.color='var(--primary)'"
+           onmouseleave="this.style.color='var(--muted)'">Clear ×</a>
+        {% endif %}
+      </div>
+
+      {# Search mode tabs #}
+      <div style="display:flex; gap:4px;">
+        {% for mode, label, tip in [
+          ('keyword',  'Keyword',  'Exact word and phrase match'),
+          ('boolean',  'Boolean',  'AND OR NOT operators'),
+          ('semantic', 'Semantic', 'Conceptually similar documents'),
+          ('ai',       'Ask AI',   'Plain English — describe what you need'),
+          ('pleading', 'Pleading-Aware', 'Procedure-aware search (coming soon)'),
+        ] %}
+        <button type="button"
+                id="smode-{{ mode }}"
+                onclick="setSearchMode('{{ mode }}')"
+                title="{{ tip }}"
+                style="font-size:11px; padding:2px 10px; border-radius:10px; cursor:pointer;
+                       border:1px solid var(--border-color,#e2e8f0);
+                       background:{% if mode == 'keyword' %}var(--primary,#1B2A4A){% else %}transparent{% endif %};
+                       color:{% if mode == 'keyword' %}#fff{% else %}var(--muted){% endif %};">
+          {{ label }}{% if mode in ('semantic','ai','pleading') %} <span style="font-size:9px; opacity:0.7;">✦</span>{% endif %}
+        </button>
+        {% endfor %}
+      </div>
+    </form>
+  </div>
+
+  {# Results summary bar #}
+  {% if results.total is defined %}
+  <div style="flex-shrink:0; font-size:11px; color:var(--muted); margin-bottom:8px;
+              display:flex; align-items:center; gap:12px;">
+    <span>
+      <strong style="color:var(--text);">{{ "{:,}".format(results.total) }}</strong>
+      result{{ 's' if results.total != 1 else '' }}
+      {% if q %} for <em>"{{ q }}"</em>{% endif %}
+      {% if matter %} in {{ matter.matter_name }}{% endif %}
+    </span>
+    {% if results.get('error') %}
+    <span style="color:#dc2626;">⚠ Search error — showing database results</span>
+    {% endif %}
+    {% if results.total > 0 %}
+    <span style="margin-left:auto; display:flex; gap:10px;">
+      {% if page > 1 %}
+      <a href="?{{ request.query_params | replace('page=' ~ page, 'page=' ~ (page-1)) }}"
+         style="color:var(--primary); text-decoration:none; font-size:11px;">← Prev</a>
+      {% endif %}
+      <span>Page {{ page }} of {{ total_pages }}</span>
+      {% if page < total_pages %}
+      <a href="?{{ request.query_params | replace('page=' ~ page, 'page=' ~ (page+1)) if 'page=' in request.query_params else request.query_params ~ '&page=' ~ (page+1) }}"
+         style="color:var(--primary); text-decoration:none; font-size:11px;">Next →</a>
+      {% endif %}
+    </span>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# Three-panel body #}
+  <div class="edisco-search-body">
+
+    {# ── LEFT: Facet rail ─────────────────────────────────────────────────── #}
+    <div class="facet-rail">
+
+      {# Ingestions #}
+      {% if facets.collections %}
+      <div class="facet-card">
+        <div class="facet-hdr">Ingestions</div>
+        {% for f in facets.collections %}
+        <div class="facet-item {% if collection_id == f.id %}active{% endif %}"
+             onclick="applyFacet('collection_id', '{{ f.id }}')">
+          <span style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+                       max-width:140px;" title="{{ f.name }}">{{ f.name }}</span>
+          <span style="font-size:10px; color:var(--muted); background:#f1f5f9;
+                       padding:1px 5px; border-radius:8px; flex-shrink:0;">{{ f.cnt or 0 }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {# Productions #}
+      {% if facets.productions %}
+      <div class="facet-card">
+        <div class="facet-hdr">Productions</div>
+        {% for f in facets.productions %}
+        <div class="facet-item {% if production_id == f.id %}active{% endif %}"
+             onclick="applyFacet('production_id', '{{ f.id }}')">
+          <div style="flex:1; min-width:0;">
+            <div style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+                        max-width:130px; font-size:11px;" title="{{ f.production_name }}">
+              {{ f.production_name }}
+            </div>
+            {% if f.bates_prefix and f.bates_start %}
+            <div style="font-size:9px; color:var(--muted); font-family:monospace;">
+              {{ f.bates_prefix }}{{ '%06d' | format(f.bates_start) }}
+              –{{ f.bates_prefix }}{{ '%06d' | format(f.bates_end or f.bates_start) }}
+            </div>
+            {% endif %}
+          </div>
+          <span style="font-size:9px; flex-shrink:0; padding:1px 5px; border-radius:8px;
+                       {% if f.status in ('complete','produced') %}background:#dcfce7;color:#166534;
+                       {% else %}background:#f1f5f9;color:var(--muted);{% endif %}">
+            {{ f.status | title if f.status else 'Pending' }}
+          </span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {# Review Status #}
+      {% if facets.review_statuses %}
+      <div class="facet-card">
+        <div class="facet-hdr">Review Status</div>
+        {% for f in facets.review_statuses %}
+        <div class="facet-item {% if review_status == f.review_status %}active{% endif %}"
+             onclick="applyFacet('review_status', '{{ f.review_status }}')">
+          <span>{{ f.review_status | replace('_',' ') | title }}</span>
+          <span style="font-size:10px; color:var(--muted); background:#f1f5f9;
+                       padding:1px 5px; border-radius:8px;">{{ f.cnt }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {# Tags #}
+      {% if facets.tags %}
+      <div class="facet-card">
+        <div class="facet-hdr">Tags</div>
+        {% for f in facets.tags %}
+        <div class="facet-item {% if tag_id == f.id %}active{% endif %}"
+             onclick="applyFacet('tag_id', '{{ f.id }}')">
+          <div style="display:flex; align-items:center; gap:5px; flex:1; min-width:0;">
+            <span style="width:8px; height:8px; border-radius:50%; flex-shrink:0;
+                         background:{{ f.color or '#6B7280' }};"></span>
+            <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+                         max-width:120px; font-size:11px;">{{ f.name }}</span>
+          </div>
+          <span style="font-size:10px; color:var(--muted); background:#f1f5f9;
+                       padding:1px 5px; border-radius:8px; flex-shrink:0;">{{ f.cnt }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {# Document Type #}
+      {% if facets.doc_types %}
+      <div class="facet-card">
+        <div class="facet-hdr">Document Type</div>
+        {% for f in facets.doc_types %}
+        <div class="facet-item {% if doc_type == f.doc_type %}active{% endif %}"
+             onclick="applyFacet('doc_type', '{{ f.doc_type }}')">
+          <span>{{ f.doc_type | upper }}</span>
+          <span style="font-size:10px; color:var(--muted); background:#f1f5f9;
+                       padding:1px 5px; border-radius:8px;">{{ f.cnt }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {# Custodians #}
+      {% if facets.custodians %}
+      <div class="facet-card">
+        <div class="facet-hdr">Custodians</div>
+        {% for f in facets.custodians %}
+        <div class="facet-item {% if custodian == f.custodian %}active{% endif %}"
+             onclick="applyFacet('custodian', '{{ f.custodian }}')">
+          <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+                       max-width:140px; font-size:11px;" title="{{ f.custodian }}">
+            {{ f.custodian }}
+          </span>
+          <span style="font-size:10px; color:var(--muted); background:#f1f5f9;
+                       padding:1px 5px; border-radius:8px; flex-shrink:0;">{{ f.cnt }}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {# Date Range #}
+      <div class="facet-card">
+        <div class="facet-hdr">Date Range</div>
+        <div style="padding:8px 10px; display:flex; flex-direction:column; gap:6px;">
+          <div>
+            <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">From</div>
+            <input type="date" id="facet-date-from" value="{{ date_from }}"
+                   style="width:100%; font-size:11px; padding:3px 6px;
+                          border:1px solid var(--border-color,#e2e8f0); border-radius:4px;
+                          box-sizing:border-box; font-family:inherit;">
+          </div>
+          <div>
+            <div style="font-size:10px; color:var(--muted); margin-bottom:2px;">To</div>
+            <input type="date" id="facet-date-to" value="{{ date_to }}"
+                   style="width:100%; font-size:11px; padding:3px 6px;
+                          border:1px solid var(--border-color,#e2e8f0); border-radius:4px;
+                          box-sizing:border-box; font-family:inherit;">
+          </div>
+          <button onclick="applyDateRange()"
+                  style="font-size:11px; padding:3px 8px; border-radius:4px;
+                         border:none; background:var(--primary,#1B2A4A); color:#fff; cursor:pointer;">
+            Apply
+          </button>
+        </div>
+      </div>
+
+    </div>{# end facet rail #}
+
+    {# ── CENTER: Results ──────────────────────────────────────────────────── #}
+    <div class="results-panel">
+
+      {% if results.results %}
+      <div style="flex:1; overflow-y:auto; min-height:0;
+                  border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                  background:var(--surface,#fff);">
+        {% for hit in results.results %}
+        <div class="result-row" id="result-row-{{ hit.id }}"
+             onclick="selectSearchDoc('{{ hit.id }}')">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:13px;">
+              {% set ext = (hit.document_type or hit.filename or '').rsplit('.',1)[-1].lower() %}
+              {% if ext == 'pdf' %}📕{% elif ext in ('doc','docx') %}📘{% elif ext in ('xls','xlsx') %}📗{% elif ext in ('msg','eml') %}📧{% else %}📄{% endif %}
+            </span>
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:12px; font-weight:500; color:var(--text);
+                          white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+                {{ hit.filename or '—' }}
+              </div>
+              <div style="font-size:10px; color:var(--muted); display:flex; gap:8px; margin-top:1px;">
+                {% if hit.document_type %}
+                <span style="background:#f1f5f9; padding:0 4px; border-radius:2px;">
+                  {{ hit.document_type | upper }}
+                </span>
+                {% endif %}
+                {% if hit.score is defined %}
+                <span>Score: {{ "%.2f"|format(hit.score) }}</span>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+          {# Highlight snippets #}
+          {% if hit.highlight %}
+          <div style="font-size:11px; color:var(--muted); line-height:1.5;
+                      padding-left:21px; margin-top:2px;">
+            {% for snippet in hit.highlight[:2] %}
+            <div style="margin-bottom:2px;">…{{ snippet | striptags }}…</div>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+
+      {% elif q or doc_type or review_status or custodian %}
+      <div style="flex:1; display:flex; align-items:center; justify-content:center;
+                  border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                  background:var(--surface,#fff);">
+        <div style="text-align:center; color:var(--muted); font-size:12px;">
+          <div style="font-size:28px; margin-bottom:8px;">🔍</div>
+          No results found.
+          {% if q %}<div style="margin-top:4px;">Try broader terms or check spelling.</div>{% endif %}
+        </div>
+      </div>
+
+      {% else %}
+      <div style="flex:1; display:flex; align-items:center; justify-content:center;
+                  border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                  background:#f8fafc;">
+        <div style="text-align:center; color:var(--muted); font-size:12px;">
+          <div style="font-size:28px; margin-bottom:8px;">🔍</div>
+          Enter a search term or select a filter to begin.
+          {% if not matter_id %}
+          <div style="margin-top:6px; font-size:11px;">
+            Tip: open search from a matter page to scope results automatically.
+          </div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+    </div>{# end center #}
+
+    {# ── RIGHT: Viewer + widgets ──────────────────────────────────────────── #}
+    <div class="right-rail">
+
+      {# Document viewer — populated on row click #}
+      <div id="search-doc-viewer"
+           style="flex-shrink:0; border-bottom:1px solid var(--border-color,#e2e8f0);
+                  min-height:200px; max-height:45%; overflow-y:auto;">
+        <div style="padding:20px; text-align:center; color:var(--muted); font-size:12px;">
+          <div style="font-size:24px; margin-bottom:6px;">👁</div>
+          Select a document to preview.
+        </div>
+      </div>
+
+      {# Widget rail #}
+      <div style="flex:1; overflow-y:auto; padding:8px;">
+
+        {# Tags widget — scoped to selected doc #}
+        <div id="search-tags-widget"
+             style="margin-bottom:8px;">
+          <div style="padding:8px 10px; font-size:10px; font-weight:700;
+                      color:var(--muted); text-transform:uppercase;
+                      letter-spacing:0.06em; background:#f8fafc;
+                      border:1px solid var(--border-color,#f1f5f9);
+                      border-radius:6px;">
+            Select a document to tag
+          </div>
+        </div>
+
+        {# Drafting Tags stub — shared widget from DMS #}
+        <div id="search-drafting-widget"
+             hx-get="/widgets/dms_drafting_tags"
+             hx-trigger="load"
+             hx-swap="innerHTML"
+             style="margin-bottom:8px;">
+          <div style="padding:10px; font-size:11px; color:var(--muted);">Loading…</div>
+        </div>
+
+        {# AI Tags stub #}
+        <div style="border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                    overflow:hidden; margin-bottom:8px;">
+          <div style="padding:8px 10px; background:#f8fafc;
+                      border-bottom:1px solid var(--border-color,#f1f5f9);
+                      display:flex; align-items:center; justify-content:space-between;">
+            <span style="font-size:10px; font-weight:700; color:var(--muted);
+                         text-transform:uppercase; letter-spacing:0.06em;">AI Analysis</span>
+            <span style="font-size:9px; background:#FEF3C7; color:#92400e;
+                         padding:1px 6px; border-radius:8px; font-weight:500;">
+              Coming Soon
+            </span>
+          </div>
+          <div style="padding:10px 12px; font-size:11px; color:var(--muted); line-height:1.6;">
+            {# AI intervention point: privilege analysis, responsiveness scoring,
+               hot document detection, pleading-aware relevance.
+               Wired when Anthropic adapter (Session 2a) is live. #}
+            Privilege analysis · Responsiveness score ·
+            Hot document detection · Pleading-aware relevance
+          </div>
+        </div>
+
+      </div>
+    </div>{# end right rail #}
+
+  </div>{# end three-panel body #}
+
+</div>{# end outer #}
+
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+var searchMode = 'keyword';
+var currentDocId = null;
+var MATTER_ID = '{{ matter_id }}';
+
+// ── Search mode ────────────────────────────────────────────────────────────
+function setSearchMode(mode) {
+  searchMode = mode;
+  ['keyword','boolean','semantic','ai','pleading'].forEach(function(m) {
+    var btn = document.getElementById('smode-' + m);
+    if (!btn) return;
+    var active = m === mode;
+    btn.style.background = active ? 'var(--primary,#1B2A4A)' : 'transparent';
+    btn.style.color = active ? '#fff' : 'var(--muted)';
+    btn.style.borderColor = active ? 'var(--primary,#1B2A4A)' : 'var(--border-color,#e2e8f0)';
+  });
+  var ph = {
+    keyword:  'Search by exact keywords…',
+    boolean:  'Boolean: damages AND (negligence OR liability) NOT punitive…',
+    semantic: 'Describe what you\'re looking for — finds conceptually similar documents…',
+    ai:       'Ask in plain English: "emails about pipeline safety from 2001"…',
+    pleading: 'Pleading-aware search coming in a future build…',
+  };
+  document.getElementById('search-input').placeholder = ph[mode] || ph.keyword;
+  if (mode === 'pleading') {
+    document.getElementById('search-input').disabled = true;
+    document.getElementById('search-input').style.opacity = '0.5';
+  } else {
+    document.getElementById('search-input').disabled = false;
+    document.getElementById('search-input').style.opacity = '1';
+  }
+}
+
+// ── Facet application ──────────────────────────────────────────────────────
+function applyFacet(field, value) {
+  var el = document.getElementById('f-' + field.replace('_','-'));
+  if (!el) el = document.getElementById('f-' + field);
+  if (!el) return;
+  // Toggle off if already active
+  el.value = el.value === value ? '' : value;
+  document.getElementById('search-form').submit();
+}
+
+function applyDateRange() {
+  var from = document.getElementById('facet-date-from').value;
+  var to   = document.getElementById('facet-date-to').value;
+  var url  = new URL(window.location.href);
+  url.searchParams.set('date_from', from);
+  url.searchParams.set('date_to', to);
+  url.searchParams.set('page', '1');
+  window.location.href = url.toString();
+}
+
+// ── Document selection → viewer + tags ────────────────────────────────────
+async function selectSearchDoc(docId) {
+  currentDocId = docId;
+
+  // Highlight selected row
+  document.querySelectorAll('.result-row').forEach(function(r) {
+    r.classList.remove('active');
+  });
+  var row = document.getElementById('result-row-' + docId);
+  if (row) row.classList.add('active');
+
+  // Load viewer
+  var viewer = document.getElementById('search-doc-viewer');
+  viewer.innerHTML = '<div style="padding:16px; font-size:12px; color:var(--muted);">Loading…</div>';
+  try {
+    var resp = await fetch('/ediscovery/documents/' + docId + '/panes');
+    if (resp.ok) {
+      var html = await resp.text();
+      viewer.innerHTML = html;
+    } else {
+      // Fallback — show file directly
+      viewer.innerHTML = '<iframe src="/ediscovery/documents/' + docId + '/file" ' +
+        'style="width:100%;height:100%;min-height:280px;border:none;"></iframe>';
+    }
+  } catch(e) {
+    viewer.innerHTML = '<div style="padding:12px; font-size:12px; color:#dc2626;">Load failed.</div>';
+  }
+
+  // Load tags widget
+  var tagsEl = document.getElementById('search-tags-widget');
+  tagsEl.innerHTML = '<div style="padding:10px; font-size:11px; color:var(--muted);">Loading tags…</div>';
+  try {
+    var tresp = await fetch('/widgets/ediscovery_doc_tags?ediscovery_doc_id=' + docId +
+      (MATTER_ID ? '&matter_id=' + MATTER_ID : ''));
+    if (tresp.ok) {
+      tagsEl.innerHTML = await tresp.text();
+      htmx.process(tagsEl);
+    }
+  } catch(e) {
+    tagsEl.innerHTML = '<div style="padding:8px; font-size:11px; color:var(--muted);">Tags unavailable.</div>';
+  }
+}
+</script>
+{% endblock %}

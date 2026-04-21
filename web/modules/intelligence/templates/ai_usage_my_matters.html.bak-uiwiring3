@@ -1,0 +1,101 @@
+{# widgets/ai_usage_my_matters.html
+   My AI Usage — shaded header matching native widgets.
+   Data source: modules.intelligence.widget_service.get_my_matters_ai_usage
+#}
+<div style="display:flex; flex-direction:column; height:100%; min-height:0;"
+     id="widget-ai-usage-my-matters-body"
+     hx-get="/widgets/ai_usage_my_matters"
+     hx-trigger="every 60s"
+     hx-swap="outerHTML">
+
+  <div style="padding:6px 12px; border-bottom:1px solid #f1f5f9;
+              background:#f8fafc; flex-shrink:0;">
+    <span style="font-size:11px; font-weight:600; color:var(--muted);">
+      My AI Usage
+    </span>
+  </div>
+
+  {% if empty_state %}
+  <div style="flex:1; display:flex; align-items:center; justify-content:center;
+              padding:16px; text-align:center;">
+    <div style="font-size:10px; color:var(--muted);">
+      {{ reason or 'No AI usage yet this month.' }}
+    </div>
+  </div>
+
+  {% else %}
+
+  {# Totals row — horizontal #}
+  <div style="padding:8px 12px; flex-shrink:0;
+              display:flex; align-items:baseline; gap:16px;">
+    <div>
+      <div style="font-size:9px; font-weight:700; color:var(--muted);
+                  text-transform:uppercase; letter-spacing:0.05em;">
+        Month to date
+      </div>
+      <div style="font-size:15px; font-weight:700; color:var(--text);
+                  font-variant-numeric:tabular-nums; line-height:1.2;">
+        ${{ "{:,.2f}".format(totals.month) }}
+      </div>
+    </div>
+    <div>
+      <div style="font-size:9px; font-weight:700; color:var(--muted);
+                  text-transform:uppercase; letter-spacing:0.05em;">
+        Today
+      </div>
+      <div style="font-size:15px; font-weight:700; color:var(--text);
+                  font-variant-numeric:tabular-nums; line-height:1.2;">
+        ${{ "{:,.4f}".format(totals.today) }}
+      </div>
+    </div>
+  </div>
+
+  <div style="flex:1; min-height:0; overflow-y:auto; border-top:1px solid #f1f5f9;">
+    <div style="padding:5px 12px 3px; font-size:9px; font-weight:700;
+                color:var(--muted); text-transform:uppercase;
+                letter-spacing:0.05em;">
+      By Matter
+    </div>
+    {% for row in rows %}
+    <a href="/billing/ai-usage/client/{{ row.client_id }}"
+       style="display:flex; align-items:center; justify-content:space-between;
+              padding:5px 12px; text-decoration:none; border-bottom:1px solid #f8fafc;"
+       onmouseover="this.style.background='#f8fafc'"
+       onmouseout="this.style.background=''">
+      <div style="flex:1; min-width:0; padding-right:8px;">
+        <div style="font-size:11px; color:var(--text);
+                    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          {{ row.matter_name }}
+        </div>
+        <div style="font-size:9px; color:var(--muted);">
+          {{ row.matter_number }}
+          {% if row.call_count %} · {{ row.call_count }} call{{ 's' if row.call_count != 1 else '' }}{% endif %}
+        </div>
+      </div>
+      <div style="text-align:right; flex-shrink:0;">
+        <div style="font-size:11px; font-weight:600; color:var(--text);
+                    font-variant-numeric:tabular-nums;">
+          ${{ "{:,.2f}".format(row.spend_month) }}
+        </div>
+        <div style="font-size:9px; color:var(--muted);">
+          {% if row.pending_exceptions > 0 %}
+          <span style="color:#b45309;" title="Pending exceptions">
+            ⚠ {{ row.pending_exceptions }}
+          </span>
+          {% elif row.override_count > 0 %}
+          <span style="color:#dc2626;" title="Overrides">
+            !{{ row.override_count }}
+          </span>
+          {% elif row.fallback_count > 0 %}
+          <span style="color:#1d4ed8;" title="Fallbacks">
+            ↓{{ row.fallback_count }}
+          </span>
+          {% endif %}
+        </div>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+
+  {% endif %}
+</div>

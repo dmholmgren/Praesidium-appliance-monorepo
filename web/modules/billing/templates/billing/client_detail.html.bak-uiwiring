@@ -1,0 +1,1302 @@
+{% extends "base.html" %}
+{% block title %}{{ client.client_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}{{ client.client_name }}{% endblock %}
+{% block head_extra %}
+<script>
+// Define scope callbacks before any widget loads.
+// bilScopeMatter: navigate down to matter detail.
+// bilScopeClient: no-op if same client, navigate if different client.
+window.bilScopeMatter = function(event, matterId, clientId) {
+  event && event.preventDefault && event.preventDefault();
+  window.location.href = '/billing/clients/' + clientId + '/matters/' + matterId;
+};
+window.bilScopeClient = function(clientId) {
+  if (clientId && clientId !== '{{ client.id }}') {
+    window.location.href = '/billing/clients/' + clientId;
+  }
+};
+</script>
+{# ── Client Edit Modal ────────────────────────────────────────────────────────── #}
+<div id="client-edit-overlay"
+     style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4);
+            z-index:200; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:10px; width:560px; max-height:90vh;
+              overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.2);">
+
+    <div style="padding:18px 24px; border-bottom:1px solid var(--border);
+                display:flex; justify-content:space-between; align-items:center;">
+      <div style="font-family:'Lora',serif; font-size:16px; font-weight:600;">Edit Client</div>
+      <button onclick="closeClientEditModal()"
+              style="border:none; background:none; font-size:20px; color:var(--muted);
+                     cursor:pointer; padding:4px 8px; line-height:1;">✕</button>
+    </div>
+
+    <div style="padding:24px;">
+      <div id="client-modal-error"
+           style="display:none; background:#FEF2F2; border:1px solid #FECACA;
+                  color:#7F1D1D; border-radius:6px; padding:10px 14px;
+                  margin-bottom:16px; font-size:13px;"></div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+
+        <div style="grid-column:1/-1;">
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Client Name *</label>
+          <input type="text" id="ce-client_name"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Client Number</label>
+          <input type="text" id="ce-client_number"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Primary Contact</label>
+          <input type="text" id="ce-primary_contact"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Email</label>
+          <input type="email" id="ce-email"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Phone</label>
+          <input type="text" id="ce-phone"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div style="grid-column:1/-1;">
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Address</label>
+          <input type="text" id="ce-address1" placeholder="Street address"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;
+                        margin-bottom:6px;">
+          <input type="text" id="ce-address2" placeholder="Suite, floor, etc."
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">City</label>
+          <input type="text" id="ce-city"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+          <div>
+            <label style="display:block; font-size:12px; font-weight:500;
+                          color:#374151; margin-bottom:4px;">State</label>
+            <input type="text" id="ce-state" maxlength="2" placeholder="TX"
+                   style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                          padding:8px 12px; font-size:13px; box-sizing:border-box;
+                          text-transform:uppercase;">
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; font-weight:500;
+                          color:#374151; margin-bottom:4px;">ZIP</label>
+            <input type="text" id="ce-zip_code"
+                   style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                          padding:8px 12px; font-size:13px; box-sizing:border-box;">
+          </div>
+        </div>
+
+        <div style="grid-column:1/-1;">
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Notes</label>
+          <textarea id="ce-notes" rows="3"
+                    style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                           padding:8px 12px; font-size:13px; resize:vertical;
+                           font-family:inherit; box-sizing:border-box;"></textarea>
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Status</label>
+          <select id="ce-is_active"
+                  style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                         padding:8px 12px; font-size:13px; background:#fff;
+                         box-sizing:border-box;">
+            <option value="true">Active</option>
+            <option value="false">Inactive</option>
+          </select>
+        </div>
+
+      </div>
+    </div>
+
+    <div style="padding:16px 24px; border-top:1px solid var(--border);
+                display:flex; gap:10px; justify-content:flex-end;">
+      <button onclick="closeClientEditModal()"
+              style="padding:8px 20px; border:1px solid #D1D5DB; background:#fff;
+                     border-radius:6px; font-size:13px; cursor:pointer;">Cancel</button>
+      <button onclick="saveClientEdit()" id="ce-save-btn"
+              style="padding:8px 20px; background:var(--primary); color:#fff;
+                     border:none; border-radius:6px; font-size:13px;
+                     font-weight:500; cursor:pointer;">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Client Edit Modal ────────────────────────────────────────────────────────
+var CLIENT_DATA = {{ client | tojson }};
+
+function openClientEditModal() {
+  const c = CLIENT_DATA;
+  document.getElementById('ce-client_name').value    = c.client_name    || '';
+  document.getElementById('ce-client_number').value  = c.client_number  || '';
+  document.getElementById('ce-primary_contact').value= c.primary_contact|| '';
+  document.getElementById('ce-email').value          = c.email          || '';
+  document.getElementById('ce-phone').value          = c.phone          || '';
+  document.getElementById('ce-address1').value       = c.address1       || '';
+  document.getElementById('ce-address2').value       = c.address2       || '';
+  document.getElementById('ce-city').value           = c.city           || '';
+  document.getElementById('ce-state').value          = c.state          || '';
+  document.getElementById('ce-zip_code').value       = c.zip_code       || '';
+  document.getElementById('ce-notes').value          = c.notes          || '';
+  document.getElementById('ce-is_active').value      = c.is_active ? 'true' : 'false';
+  document.getElementById('client-modal-error').style.display = 'none';
+  document.getElementById('client-edit-overlay').style.display = 'flex';
+}
+
+function closeClientEditModal() {
+  document.getElementById('client-edit-overlay').style.display = 'none';
+}
+
+async function saveClientEdit() {
+  const btn = document.getElementById('ce-save-btn');
+  btn.textContent = 'Saving…'; btn.disabled = true;
+
+  const payload = {
+    client_name:     document.getElementById('ce-client_name').value.trim(),
+    client_number:   document.getElementById('ce-client_number').value.trim(),
+    primary_contact: document.getElementById('ce-primary_contact').value.trim(),
+    email:           document.getElementById('ce-email').value.trim(),
+    phone:           document.getElementById('ce-phone').value.trim(),
+    address1:        document.getElementById('ce-address1').value.trim(),
+    address2:        document.getElementById('ce-address2').value.trim(),
+    city:            document.getElementById('ce-city').value.trim(),
+    state:           document.getElementById('ce-state').value.trim().toUpperCase(),
+    zip_code:        document.getElementById('ce-zip_code').value.trim(),
+    notes:           document.getElementById('ce-notes').value.trim(),
+    is_active:       document.getElementById('ce-is_active').value === 'true',
+  };
+
+  if (!payload.client_name) {
+    const e = document.getElementById('client-modal-error');
+    e.textContent = 'Client name is required.';
+    e.style.display = 'block';
+    btn.textContent = 'Save Changes'; btn.disabled = false;
+    return;
+  }
+
+  const errEl = document.getElementById('client-modal-error');
+  try {
+    const res = await fetch('/api/billing/clients/{{ client.id }}', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      closeClientEditModal();
+      // Update visible header without full reload
+      document.querySelector('h2').textContent = payload.client_name;
+      Object.assign(CLIENT_DATA, payload);
+    } else {
+      const err = await res.json();
+      errEl.textContent   = err.detail || 'Error saving client.';
+      errEl.style.display = 'block';
+    }
+  } catch(e) {
+    errEl.textContent   = 'Network error. Please try again.';
+    errEl.style.display = 'block';
+  } finally {
+    btn.textContent = 'Save Changes'; btn.disabled = false;
+  }
+}
+
+// Close modal on overlay click
+document.getElementById('client-edit-overlay')
+  .addEventListener('click', function(e) {
+    if (e.target === this) closeClientEditModal();
+  });
+
+// ── Inline Slip Editing ───────────────────────────────────────────────────────
+// After the billing_recent_slips widget loads, slip rows have data-slip attr.
+// Clicking a row expands an inline edit form beneath it.
+
+var _activeSlipRow = null;
+
+function toggleInlineSlipEdit(row) {
+  // If clicking the already-open row, close it
+  if (_activeSlipRow === row) {
+    closeInlineSlipEdit();
+    return;
+  }
+  // Close any existing open row
+  closeInlineSlipEdit();
+
+  const slip = JSON.parse(row.dataset.slip);
+  _activeSlipRow = row;
+  row.style.background = '#EFF6FF';
+
+  const colCount = row.cells.length;
+  const editRow = document.createElement('tr');
+  editRow.id = 'inline-slip-edit-row';
+  editRow.innerHTML = `
+    <td colspan="${colCount}" style="padding:12px 16px; background:#F8FAFF;
+        border-bottom:2px solid var(--primary);">
+      <div style="display:grid; grid-template-columns:140px 180px 80px 90px 1fr auto;
+                  gap:10px; align-items:end;">
+
+        <div>
+          <div style="font-size:10px; font-weight:600; color:var(--muted);
+                      margin-bottom:3px;">DATE</div>
+          <input type="date" id="is-date" value="${slip.slip_date || ''}"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:4px;
+                        padding:5px 8px; font-size:12px;">
+        </div>
+
+        <div>
+          <div style="font-size:10px; font-weight:600; color:var(--muted);
+                      margin-bottom:3px;">TIMEKEEPER</div>
+          <select id="is-tk"
+                  style="width:100%; border:1px solid #D1D5DB; border-radius:4px;
+                         padding:5px 8px; font-size:12px; background:#fff;">
+            <option value="${slip.source_tk_id}">${slip.tk_name}</option>
+          </select>
+        </div>
+
+        <div>
+          <div style="font-size:10px; font-weight:600; color:var(--muted);
+                      margin-bottom:3px;">HOURS</div>
+          <input type="number" id="is-hours" value="${parseFloat(slip.hours||0).toFixed(2)}"
+                 step="0.1" min="0" max="24"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:4px;
+                        padding:5px 8px; font-size:12px;"
+                 oninput="updateInlineValue()">
+        </div>
+
+        <div>
+          <div style="font-size:10px; font-weight:600; color:var(--muted);
+                      margin-bottom:3px;">RATE</div>
+          <input type="number" id="is-rate" value="${parseFloat(slip.rate||0).toFixed(2)}"
+                 step="0.01" min="0"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:4px;
+                        padding:5px 8px; font-size:12px;"
+                 oninput="updateInlineValue()">
+        </div>
+
+        <div>
+          <div style="font-size:10px; font-weight:600; color:var(--muted);
+                      margin-bottom:3px;">NARRATIVE</div>
+          <input type="text" id="is-narrative"
+                 value="${(slip.narrative||'').replace(/paid by dmh[^;.]*/gi,'').trim()}"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:4px;
+                        padding:5px 8px; font-size:12px;">
+        </div>
+
+        <div style="display:flex; gap:6px; align-items:flex-end; padding-bottom:1px;">
+          <div style="font-size:11px; font-weight:600; color:var(--primary);
+                      white-space:nowrap; padding:5px 0;" id="is-value">
+            $${(parseFloat(slip.hours||0)*parseFloat(slip.rate||0)).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
+          </div>
+          <select id="is-billed"
+                  style="border:1px solid #D1D5DB; border-radius:4px;
+                         padding:5px 6px; font-size:11px; background:#fff;">
+            <option value="false" ${!slip.billed?'selected':''}>WIP</option>
+            <option value="true"  ${slip.billed?'selected':''}>Billed</option>
+          </select>
+          <button onclick="saveInlineSlip('${slip.source_slip_id}')"
+                  style="padding:5px 12px; background:var(--primary); color:#fff;
+                         border:none; border-radius:4px; font-size:12px;
+                         font-weight:500; cursor:pointer; white-space:nowrap;"
+                  id="is-save-btn">Save</button>
+          <button onclick="closeInlineSlipEdit()"
+                  style="padding:5px 8px; border:1px solid #D1D5DB; background:#fff;
+                         border-radius:4px; font-size:12px; cursor:pointer;">✕</button>
+        </div>
+
+      </div>
+      <div id="is-error"
+           style="display:none; margin-top:8px; font-size:11px; color:#dc2626;"></div>
+    </td>`;
+
+  row.parentNode.insertBefore(editRow, row.nextSibling);
+
+  // Populate timekeeper dropdown
+  fetch('/api/billing/timekeepers')
+    .then(r => r.json())
+    .then(data => {
+      const sel = document.getElementById('is-tk');
+      if (!sel) return;
+      sel.innerHTML = '';
+      (data.timekeepers || []).forEach(tk => {
+        const opt = document.createElement('option');
+        opt.value = tk.ts_tk_id;
+        opt.textContent = `${tk.ts_name} (${tk.ts_initials || tk.ts_tk_id})`;
+        if (tk.ts_tk_id === slip.source_tk_id) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    })
+    .catch(() => {});
+}
+
+function closeInlineSlipEdit() {
+  const existing = document.getElementById('inline-slip-edit-row');
+  if (existing) existing.remove();
+  if (_activeSlipRow) {
+    _activeSlipRow.style.background = '';
+    _activeSlipRow = null;
+  }
+}
+
+function updateInlineValue() {
+  const h = parseFloat(document.getElementById('is-hours').value || 0);
+  const r = parseFloat(document.getElementById('is-rate').value  || 0);
+  const el = document.getElementById('is-value');
+  if (el) el.textContent = '$' + (h*r).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+
+async function saveInlineSlip(slipId) {
+  const btn = document.getElementById('is-save-btn');
+  btn.textContent = '…'; btn.disabled = true;
+
+  const billed = document.getElementById('is-billed').value === 'true';
+  const hours  = parseFloat(document.getElementById('is-hours').value || 0);
+  const rate   = parseFloat(document.getElementById('is-rate').value  || 0);
+
+  const payload = {
+    slip_date:    document.getElementById('is-date').value,
+    source_tk_id: document.getElementById('is-tk').value,
+    hours,
+    rate,
+    narrative:    document.getElementById('is-narrative').value.trim(),
+    billed,
+    wip_value:    billed ? 0 : round2(hours * rate),
+    billed_value: billed ? round2(hours * rate) : 0,
+  };
+
+  const errEl = document.getElementById('is-error');
+  try {
+    const res = await fetch(`/api/billing/ts-slips/${slipId}`, {
+      method:  'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify(payload),
+    });
+    if (res.ok) {
+      closeInlineSlipEdit();
+      // Reload KPI and slips widgets
+      htmx.trigger(document.getElementById('widget-client-kpi'),   'load');
+      htmx.trigger(document.getElementById('widget-recent-slips'), 'load');
+      htmx.trigger(document.getElementById('widget-wip-by-tk'),    'load');
+    } else {
+      const err = await res.json();
+      errEl.textContent   = err.detail || 'Error saving.';
+      errEl.style.display = 'block';
+      btn.textContent = 'Save'; btn.disabled = false;
+    }
+  } catch(e) {
+    errEl.textContent   = 'Network error.';
+    errEl.style.display = 'block';
+    btn.textContent = 'Save'; btn.disabled = false;
+  }
+}
+
+function round2(n) { return Math.round(n * 100) / 100; }
+
+// After slips widget loads, replace openSlipDrawer with inline toggle
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.target.id === 'widget-recent-slips') {
+    document.querySelectorAll('.slip-row').forEach(function(row) {
+      // Replace onclick with inline edit toggle
+      row.onclick = function() { toggleInlineSlipEdit(this); };
+    });
+  }
+});
+</script>
+
+{% endblock %}
+
+{% block content %}
+
+{# ── Header ──────────────────────────────────────────────────────────────────── #}
+<div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:20px;">
+  <div>
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px;">
+      <a href="/billing/clients" style="font-size:12px; color:var(--muted); text-decoration:none;">← Clients</a>
+      {% if client.client_number %}
+      <span style="font-size:11px; color:#D1D5DB;">·</span>
+      <span style="font-size:12px; color:var(--muted);">{{ client.client_number }}</span>
+      {% endif %}
+    </div>
+    <h2 style="font-family:'Lora',serif; font-size:20px; font-weight:600; color:var(--text); margin:0 0 4px 0;">
+      {{ client.client_name }}
+    </h2>
+    <p style="font-size:12px; color:var(--muted); margin:0;">
+      {% if client.email %}{{ client.email }}{% endif %}
+      {% if client.phone %} · {{ client.phone }}{% endif %}
+      {% if client.city %} · {{ client.city }}{% if client.state %}, {{ client.state }}{% endif %}{% endif %}
+    </p>
+  </div>
+  <div style="display:flex; gap:8px; align-items:center; flex-shrink:0;">
+    <button onclick="openClientEditModal()"
+            style="font-size:12px; padding:6px 14px; background:#fff; color:var(--primary);
+                   border:1px solid var(--primary); border-radius:6px; cursor:pointer;">
+      Edit Client
+    </button>
+    <a href="/billing/timesheet?client_id={{ client.id }}"
+       style="font-size:12px; padding:6px 14px; background:var(--primary); color:#fff; border-radius:6px; text-decoration:none;">
+      + Time Entry
+    </a>
+    <a href="/billing/payments/new?client_id={{ client.id }}"
+       style="font-size:12px; padding:6px 14px; background:#166534; color:#fff; border-radius:6px; text-decoration:none;">
+      + Payment
+    </a>
+    <button onclick="generatePrebill()"
+            style="font-size:12px; padding:6px 14px; background:#b45309; color:#fff; border:none; border-radius:6px; cursor:pointer;">
+      Prebill All Matters
+    </button>
+  </div>
+</div>
+
+{# ── KPI Row — billing_client_kpi widget ─────────────────────────────────────── #}
+<div id="widget-client-kpi" style="margin-bottom:20px;"
+     hx-get="/widgets/billing_client_kpi?client_id={{ client.id }}"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+  <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px;">
+    {% for _ in range(4) %}
+    <div class="card" style="padding:14px; min-height:72px; background:#F9FAFB;">
+      <div style="height:10px; width:60%; background:#E5E7EB; border-radius:3px; margin-bottom:8px;"></div>
+      <div style="height:22px; width:50%; background:#E5E7EB; border-radius:3px;"></div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+{# ── Row 2: Matter Table + Timekeeper Allocation ──────────────────────────────── #}
+<div style="display:grid; grid-template-columns:1fr 300px; gap:16px; margin-bottom:16px;">
+
+  {# Matter Table — billing_matter_table widget #}
+  <div class="card" style="padding:0; overflow:hidden;">
+    <div style="padding:12px 16px; border-bottom:1px solid var(--border);
+                display:flex; justify-content:space-between; align-items:center;">
+      <span style="font-size:13px; font-weight:600;">
+        Matters
+        <span id="matter-count" style="font-weight:400; color:var(--muted);"></span>
+      </span>
+      <div style="display:flex; gap:6px;">
+        <button onclick="setMF('active')" id="mf-active"
+                style="font-size:11px; padding:2px 10px; border-radius:4px;
+                       border:1px solid var(--primary); background:var(--primary);
+                       color:#fff; cursor:pointer;">Active</button>
+        <button onclick="setMF('all')" id="mf-all"
+                style="font-size:11px; padding:2px 10px; border-radius:4px;
+                       border:1px solid var(--border); background:#fff;
+                       color:var(--muted); cursor:pointer;">All</button>
+      </div>
+    </div>
+    <div id="widget-matter-table"
+         hx-get="/widgets/billing_matter_table?client_id={{ client.id }}"
+         hx-trigger="load"
+         hx-swap="innerHTML"
+         hx-on::after-swap="updateMatterCount()">
+      <div style="padding:30px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+    </div>
+  </div>
+
+  {# Timekeeper Allocation — billing_timekeeper_allocation widget #}
+  <div class="card" style="padding:0; overflow:hidden;">
+    <div style="padding:12px 16px; border-bottom:1px solid var(--border);">
+      <div style="font-size:13px; font-weight:600;">Timekeeper Allocation</div>
+      <div style="font-size:11px; color:var(--muted); margin-top:2px;">All time on this client</div>
+    </div>
+    <div id="widget-tk-allocation"
+         hx-get="/widgets/billing_timekeeper_allocation?client_id={{ client.id }}"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div style="padding:30px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+    </div>
+  </div>
+</div>
+
+{# ── Row 3: WIP by Timekeeper + Open Invoices ─────────────────────────────────── #}
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
+
+  {# WIP by Timekeeper — billing_wip_by_timekeeper widget #}
+  <div class="card" style="padding:0; overflow:hidden;">
+    <div style="padding:12px 16px; border-bottom:1px solid var(--border);">
+      <div style="font-size:13px; font-weight:600;">WIP by Timekeeper</div>
+      <div style="font-size:11px; color:var(--muted); margin-top:2px;">Unbilled time grouped by attorney</div>
+    </div>
+    <div id="widget-wip-by-tk"
+         hx-get="/widgets/billing_wip_by_timekeeper?client_id={{ client.id }}"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div style="padding:30px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+    </div>
+  </div>
+
+  {# Open Invoices — billing_open_invoices widget #}
+  <div class="card" style="padding:0; overflow:hidden;">
+    <div style="padding:12px 16px; border-bottom:1px solid var(--border);
+                display:flex; justify-content:space-between; align-items:center;">
+      <div>
+        <div style="font-size:13px; font-weight:600;">Open Invoices</div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px;">AR aging</div>
+      </div>
+    </div>
+    <div id="widget-open-invoices"
+         hx-get="/widgets/billing_open_invoices?client_id={{ client.id }}"
+         hx-trigger="load"
+         hx-swap="innerHTML">
+      <div style="padding:30px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+    </div>
+  </div>
+</div>
+
+{# ── Row 4: Recent Slips — billing_recent_slips widget ───────────────────────── #}
+<div class="card" style="padding:0; overflow:hidden; margin-bottom:16px;">
+  <div style="padding:12px 16px; border-bottom:1px solid var(--border);
+              display:flex; justify-content:space-between; align-items:center;">
+    <div style="font-size:13px; font-weight:600;">
+      Recent Time Entries <span style="font-weight:400; color:var(--muted);">(last 50)</span>
+    </div>
+    <div style="display:flex; gap:6px;">
+      <button onclick="setSF('all')" id="sf-all"
+              style="font-size:11px; padding:2px 10px; border-radius:4px;
+                     border:1px solid var(--primary); background:var(--primary);
+                     color:#fff; cursor:pointer;">All</button>
+      <button onclick="setSF('wip')" id="sf-wip"
+              style="font-size:11px; padding:2px 10px; border-radius:4px;
+                     border:1px solid var(--border); background:#fff;
+                     color:var(--muted); cursor:pointer;">WIP</button>
+      <button onclick="setSF('billed')" id="sf-billed"
+              style="font-size:11px; padding:2px 10px; border-radius:4px;
+                     border:1px solid var(--border); background:#fff;
+                     color:var(--muted); cursor:pointer;">Billed</button>
+    </div>
+  </div>
+  <div id="widget-recent-slips"
+       hx-get="/widgets/billing_recent_slips?client_id={{ client.id }}"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    <div style="padding:30px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+  </div>
+</div>
+
+{# ── Page-level JS — filter toggles + matter count ───────────────────────────── #}
+<script>
+var CLIENT_ID = "{{ client.id }}";
+
+
+
+// Matter filter toggle (active/all) — operates on rendered widget rows
+let matterFilter = 'active';
+function setMF(f) {
+  matterFilter = f;
+  document.querySelectorAll('.matter-inactive').forEach(r => {
+    r.style.display = f === 'all' ? '' : 'none';
+  });
+  ['active', 'all'].forEach(k => {
+    const b = document.getElementById(`mf-${k}`);
+    if (!b) return;
+    if (k === f) {
+      b.style.background = 'var(--primary)'; b.style.color = '#fff';
+      b.style.borderColor = 'var(--primary)';
+    } else {
+      b.style.background = '#fff'; b.style.color = 'var(--muted)';
+      b.style.borderColor = 'var(--border)';
+    }
+  });
+  updateMatterCount();
+}
+
+function updateMatterCount() {
+  const all    = document.querySelectorAll('.matter-row').length;
+  const active = document.querySelectorAll('.matter-row:not(.matter-inactive)').length;
+  const el = document.getElementById('matter-count');
+  if (el) el.textContent = `(${active} active${all !== active ? ', ' + all + ' total' : ''})`;
+}
+
+// Slip filter toggle — shows/hides rows by data-billed attr
+let slipFilter = 'all';
+function setSF(f) {
+  slipFilter = f;
+  document.querySelectorAll('.slip-row').forEach(r => {
+    const billed = r.dataset.billed === 'true';
+    if (f === 'wip')    r.style.display = billed ? 'none' : '';
+    else if (f === 'billed') r.style.display = billed ? '' : 'none';
+    else r.style.display = '';
+  });
+  ['all', 'wip', 'billed'].forEach(k => {
+    const b = document.getElementById(`sf-${k}`);
+    if (!b) return;
+    if (k === f) {
+      b.style.background = 'var(--primary)'; b.style.color = '#fff';
+      b.style.borderColor = 'var(--primary)';
+    } else {
+      b.style.background = '#fff'; b.style.color = 'var(--muted)';
+      b.style.borderColor = 'var(--border)';
+    }
+  });
+}
+
+function generatePrebill() {
+  alert('Prebill generation for all active matters — coming in next build.');
+}
+</script>
+
+{# ── Slip Edit Drawer — interaction logic, lives in page shell ───────────────── #}
+<script>
+(function() {
+
+const drawerHTML = `
+<div id="slip-overlay" onclick="closeSlipDrawer()"
+     style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.3); z-index:100;"></div>
+<div id="slip-drawer"
+     style="display:none; position:fixed; top:0; right:0; width:480px; height:100vh;
+            background:#fff; box-shadow:-4px 0 24px rgba(0,0,0,0.12); z-index:101;
+            flex-direction:column; overflow:hidden;">
+  <div style="padding:16px 20px; border-bottom:1px solid #E5E7EB;
+              display:flex; justify-content:space-between; align-items:center;">
+    <div>
+      <div style="font-family:'Lora',serif; font-size:16px; font-weight:600;">Edit Time Entry</div>
+      <div id="drawer-matter" style="font-size:12px; color:#6B7280; margin-top:2px;"></div>
+    </div>
+    <button onclick="closeSlipDrawer()"
+            style="border:none; background:none; font-size:20px; color:#6B7280;
+                   cursor:pointer; padding:4px 8px;">✕</button>
+  </div>
+  <div style="flex:1; overflow-y:auto; padding:20px;">
+    <div id="drawer-error"
+         style="display:none; background:#FEF2F2; border:1px solid #FECACA;
+                color:#7F1D1D; border-radius:6px; padding:10px 14px;
+                margin-bottom:16px; font-size:13px;"></div>
+
+    <div style="margin-bottom:16px;">
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Date</label>
+      <input type="date" id="edit-date"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                    padding:8px 12px; font-size:13px;">
+    </div>
+
+    <div style="margin-bottom:16px;">
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Timekeeper</label>
+      <select id="edit-tk"
+              style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                     padding:8px 12px; font-size:13px; background:#fff;">
+      </select>
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:16px;">
+      <div>
+        <label style="display:block; font-size:12px; font-weight:500;
+                      color:#374151; margin-bottom:4px;">Hours</label>
+        <input type="number" id="edit-hours" step="0.1" min="0" max="24"
+               style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                      padding:8px 12px; font-size:13px;"
+               oninput="updateDrawerValue()">
+      </div>
+      <div>
+        <label style="display:block; font-size:12px; font-weight:500;
+                      color:#374151; margin-bottom:4px;">Rate ($/hr)</label>
+        <input type="number" id="edit-rate" step="0.01" min="0"
+               style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                      padding:8px 12px; font-size:13px;"
+               oninput="updateDrawerValue()">
+      </div>
+    </div>
+
+    <div style="margin-bottom:16px; padding:12px; background:#F9FAFB;
+                border-radius:6px; border:1px solid #E5E7EB;">
+      <div style="font-size:11px; color:#6B7280; margin-bottom:2px;">Calculated Value</div>
+      <div id="drawer-value" style="font-size:20px; font-weight:600; color:#1D4ED8;">$0.00</div>
+    </div>
+
+    <div style="margin-bottom:16px;">
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Narrative</label>
+      <textarea id="edit-narrative" rows="6"
+                style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                       padding:8px 12px; font-size:13px; resize:vertical;
+                       font-family:inherit;"></textarea>
+      <div style="font-size:11px; color:#9CA3AF; margin-top:4px;">
+        Tip: Remove "Paid by dmh" and similar expense notations before finalizing.
+      </div>
+    </div>
+
+    <div style="margin-bottom:16px;">
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Status</label>
+      <select id="edit-billed"
+              style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                     padding:8px 12px; font-size:13px; background:#fff;">
+        <option value="false">WIP (Unbilled)</option>
+        <option value="true">Billed</option>
+      </select>
+    </div>
+
+    <div id="edit-source-row"
+         style="display:none; margin-bottom:16px; padding:10px 12px; background:#EFF6FF;
+                border-radius:6px; border:1px solid #BFDBFE; font-size:12px; color:#1E40AF;">
+      <strong>Timeslips Record</strong> — changes save to Praesidium only. Source data unchanged.
+    </div>
+  </div>
+
+  <div style="padding:16px 20px; border-top:1px solid #E5E7EB;
+              display:flex; gap:10px; justify-content:flex-end;">
+    <button onclick="closeSlipDrawer()"
+            style="padding:8px 20px; border:1px solid #D1D5DB; background:#fff;
+                   border-radius:6px; font-size:13px; color:#374151; cursor:pointer;">
+      Cancel
+    </button>
+    <button onclick="saveSlip()"
+            style="padding:8px 20px; background:#1D4ED8; color:#fff; border:none;
+                   border-radius:6px; font-size:13px; font-weight:500; cursor:pointer;"
+            id="save-btn">
+      Save Changes
+    </button>
+  </div>
+</div>`;
+
+document.body.insertAdjacentHTML('beforeend', drawerHTML);
+
+// Load timekeepers into drawer select
+async function loadTKOptions() {
+  try {
+    const res  = await fetch('/api/billing/timekeepers');
+    const data = await res.json();
+    const sel  = document.getElementById('edit-tk');
+    (data.timekeepers || data).forEach(tk => {
+      const opt = document.createElement('option');
+      opt.value       = tk.ts_tk_id || tk.id;
+      opt.textContent = `${tk.ts_name || tk.full_name} (${tk.ts_initials || tk.ts_tk_id || ''})`;
+      sel.appendChild(opt);
+    });
+  } catch(e) {
+    console.warn('Could not load timekeepers:', e);
+  }
+}
+loadTKOptions();
+
+let currentSlipId     = null;
+let currentSlipSource = null;
+
+window.openSlipDrawer = function(slip) {
+  currentSlipId     = slip.source_slip_id || slip.id;
+  currentSlipSource = slip.source || 'timeslips';
+
+  document.getElementById('drawer-matter').textContent  = slip.matter_name || '';
+  document.getElementById('edit-date').value            = slip.slip_date || '';
+  document.getElementById('edit-tk').value              = slip.source_tk_id || '';
+  document.getElementById('edit-hours').value           = parseFloat(slip.hours || 0).toFixed(2);
+  document.getElementById('edit-rate').value            = parseFloat(slip.rate  || 0).toFixed(2);
+  document.getElementById('edit-narrative').value       =
+    (slip.narrative || '').replace(/paid by dmh[^;.]*/gi, '').replace(/\s{2,}/g,' ').trim();
+  document.getElementById('edit-billed').value          = slip.billed ? 'true' : 'false';
+  document.getElementById('drawer-error').style.display = 'none';
+  document.getElementById('edit-source-row').style.display =
+    currentSlipSource === 'timeslips' ? 'block' : 'none';
+
+  updateDrawerValue();
+  document.getElementById('slip-overlay').style.display = 'block';
+  document.getElementById('slip-drawer').style.display  = 'flex';
+};
+
+window.closeSlipDrawer = function() {
+  document.getElementById('slip-overlay').style.display = 'none';
+  document.getElementById('slip-drawer').style.display  = 'none';
+  currentSlipId = null;
+};
+
+window.updateDrawerValue = function() {
+  const h = parseFloat(document.getElementById('edit-hours').value || 0);
+  const r = parseFloat(document.getElementById('edit-rate').value  || 0);
+  document.getElementById('drawer-value').textContent =
+    '$' + (h * r).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+};
+
+window.saveSlip = async function() {
+  if (!currentSlipId) return;
+  const btn = document.getElementById('save-btn');
+  btn.textContent = 'Saving…'; btn.disabled = true;
+
+  const payload = {
+    slip_date:    document.getElementById('edit-date').value,
+    source_tk_id: document.getElementById('edit-tk').value,
+    hours:        parseFloat(document.getElementById('edit-hours').value),
+    rate:         parseFloat(document.getElementById('edit-rate').value),
+    narrative:    document.getElementById('edit-narrative').value.trim(),
+    billed:       document.getElementById('edit-billed').value === 'true',
+  };
+  payload.wip_value    = payload.billed ? 0 : payload.hours * payload.rate;
+  payload.billed_value = payload.billed ? payload.hours * payload.rate : 0;
+
+  const errEl = document.getElementById('drawer-error');
+  errEl.style.display = 'none';
+
+  try {
+    const res = await fetch(`/api/v1/billing/slips/${currentSlipId}`, {
+      method:  'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify(payload),
+    });
+    if (res.ok) {
+      closeSlipDrawer();
+      // Reload KPI and slips widgets to reflect change
+      htmx.trigger(document.getElementById('widget-client-kpi'),    'load');
+      htmx.trigger(document.getElementById('widget-recent-slips'),  'load');
+      htmx.trigger(document.getElementById('widget-wip-by-tk'),     'load');
+    } else {
+      const err = await res.json();
+      errEl.textContent   = err.detail || 'Error saving slip.';
+      errEl.style.display = 'block';
+    }
+  } catch(e) {
+    errEl.textContent   = 'Network error. Please try again.';
+    errEl.style.display = 'block';
+  } finally {
+    btn.textContent = 'Save Changes'; btn.disabled = false;
+  }
+};
+
+})();
+</script>
+
+{# ── Client Edit Modal ────────────────────────────────────────────────────────── #}
+<div id="client-edit-overlay"
+     style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4);
+            z-index:200; align-items:center; justify-content:center;">
+  <div style="background:#fff; border-radius:10px; width:560px; max-height:90vh;
+              overflow-y:auto; box-shadow:0 20px 60px rgba(0,0,0,0.2);">
+
+    <div style="padding:18px 24px; border-bottom:1px solid var(--border);
+                display:flex; justify-content:space-between; align-items:center;">
+      <div style="font-family:'Lora',serif; font-size:16px; font-weight:600;">Edit Client</div>
+      <button onclick="closeClientEditModal()"
+              style="border:none; background:none; font-size:20px; color:var(--muted);
+                     cursor:pointer; padding:4px 8px; line-height:1;">✕</button>
+    </div>
+
+    <div style="padding:24px;">
+      <div id="client-modal-error"
+           style="display:none; background:#FEF2F2; border:1px solid #FECACA;
+                  color:#7F1D1D; border-radius:6px; padding:10px 14px;
+                  margin-bottom:16px; font-size:13px;"></div>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+
+        <div style="grid-column:1/-1;">
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Client Name *</label>
+          <input type="text" id="ce-client_name"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Client Number</label>
+          <input type="text" id="ce-client_number"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Primary Contact</label>
+          <input type="text" id="ce-primary_contact"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Email</label>
+          <input type="email" id="ce-email"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Phone</label>
+          <input type="text" id="ce-phone"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div style="grid-column:1/-1;">
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Address</label>
+          <input type="text" id="ce-address1" placeholder="Street address"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;
+                        margin-bottom:6px;">
+          <input type="text" id="ce-address2" placeholder="Suite, floor, etc."
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">City</label>
+          <input type="text" id="ce-city"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                        padding:8px 12px; font-size:13px; box-sizing:border-box;">
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+          <div>
+            <label style="display:block; font-size:12px; font-weight:500;
+                          color:#374151; margin-bottom:4px;">State</label>
+            <input type="text" id="ce-state" maxlength="2" placeholder="TX"
+                   style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                          padding:8px 12px; font-size:13px; box-sizing:border-box;
+                          text-transform:uppercase;">
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; font-weight:500;
+                          color:#374151; margin-bottom:4px;">ZIP</label>
+            <input type="text" id="ce-zip_code"
+                   style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                          padding:8px 12px; font-size:13px; box-sizing:border-box;">
+          </div>
+        </div>
+
+        <div style="grid-column:1/-1;">
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Notes</label>
+          <textarea id="ce-notes" rows="3"
+                    style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                           padding:8px 12px; font-size:13px; resize:vertical;
+                           font-family:inherit; box-sizing:border-box;"></textarea>
+        </div>
+
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500;
+                        color:#374151; margin-bottom:4px;">Status</label>
+          <select id="ce-is_active"
+                  style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                         padding:8px 12px; font-size:13px; background:#fff;
+                         box-sizing:border-box;">
+            <option value="true">Active</option>
+            <option value="false">Inactive</option>
+          </select>
+        </div>
+
+      </div>
+    </div>
+
+    <div style="padding:16px 24px; border-top:1px solid var(--border);
+                display:flex; gap:10px; justify-content:flex-end;">
+      <button onclick="closeClientEditModal()"
+              style="padding:8px 20px; border:1px solid #D1D5DB; background:#fff;
+                     border-radius:6px; font-size:13px; cursor:pointer;">Cancel</button>
+      <button onclick="saveClientEdit()" id="ce-save-btn"
+              style="padding:8px 20px; background:var(--primary); color:#fff;
+                     border:none; border-radius:6px; font-size:13px;
+                     font-weight:500; cursor:pointer;">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Client Edit Modal ────────────────────────────────────────────────────────
+
+function openClientEditModal() {
+  const c = CLIENT_DATA;
+  document.getElementById('ce-client_name').value    = c.client_name    || '';
+  document.getElementById('ce-client_number').value  = c.client_number  || '';
+  document.getElementById('ce-primary_contact').value= c.primary_contact|| '';
+  document.getElementById('ce-email').value          = c.email          || '';
+  document.getElementById('ce-phone').value          = c.phone          || '';
+  document.getElementById('ce-address1').value       = c.address1       || '';
+  document.getElementById('ce-address2').value       = c.address2       || '';
+  document.getElementById('ce-city').value           = c.city           || '';
+  document.getElementById('ce-state').value          = c.state          || '';
+  document.getElementById('ce-zip_code').value       = c.zip_code       || '';
+  document.getElementById('ce-notes').value          = c.notes          || '';
+  document.getElementById('ce-is_active').value      = c.is_active ? 'true' : 'false';
+  document.getElementById('client-modal-error').style.display = 'none';
+  document.getElementById('client-edit-overlay').style.display = 'flex';
+}
+
+function closeClientEditModal() {
+  document.getElementById('client-edit-overlay').style.display = 'none';
+}
+
+async function saveClientEdit() {
+  const btn = document.getElementById('ce-save-btn');
+  btn.textContent = 'Saving…'; btn.disabled = true;
+
+  const payload = {
+    client_name:     document.getElementById('ce-client_name').value.trim(),
+    client_number:   document.getElementById('ce-client_number').value.trim(),
+    primary_contact: document.getElementById('ce-primary_contact').value.trim(),
+    email:           document.getElementById('ce-email').value.trim(),
+    phone:           document.getElementById('ce-phone').value.trim(),
+    address1:        document.getElementById('ce-address1').value.trim(),
+    address2:        document.getElementById('ce-address2').value.trim(),
+    city:            document.getElementById('ce-city').value.trim(),
+    state:           document.getElementById('ce-state').value.trim().toUpperCase(),
+    zip_code:        document.getElementById('ce-zip_code').value.trim(),
+    notes:           document.getElementById('ce-notes').value.trim(),
+    is_active:       document.getElementById('ce-is_active').value === 'true',
+  };
+
+  if (!payload.client_name) {
+    const e = document.getElementById('client-modal-error');
+    e.textContent = 'Client name is required.';
+    e.style.display = 'block';
+    btn.textContent = 'Save Changes'; btn.disabled = false;
+    return;
+  }
+
+  const errEl = document.getElementById('client-modal-error');
+  try {
+    const res = await fetch('/api/billing/clients/{{ client.id }}', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) {
+      closeClientEditModal();
+      // Update visible header without full reload
+      document.querySelector('h2').textContent = payload.client_name;
+      Object.assign(CLIENT_DATA, payload);
+    } else {
+      const err = await res.json();
+      errEl.textContent   = err.detail || 'Error saving client.';
+      errEl.style.display = 'block';
+    }
+  } catch(e) {
+    errEl.textContent   = 'Network error. Please try again.';
+    errEl.style.display = 'block';
+  } finally {
+    btn.textContent = 'Save Changes'; btn.disabled = false;
+  }
+}
+
+// Close modal on overlay click
+document.getElementById('client-edit-overlay')
+  .addEventListener('click', function(e) {
+    if (e.target === this) closeClientEditModal();
+  });
+
+// ── Inline Slip Editing ───────────────────────────────────────────────────────
+// After the billing_recent_slips widget loads, slip rows have data-slip attr.
+// Clicking a row expands an inline edit form beneath it.
+
+
+function toggleInlineSlipEdit(row) {
+  // If clicking the already-open row, close it
+  if (_activeSlipRow === row) {
+    closeInlineSlipEdit();
+    return;
+  }
+  // Close any existing open row
+  closeInlineSlipEdit();
+
+  const slip = JSON.parse(row.dataset.slip);
+  _activeSlipRow = row;
+  row.style.background = '#EFF6FF';
+
+  const colCount = row.cells.length;
+  const editRow = document.createElement('tr');
+  editRow.id = 'inline-slip-edit-row';
+  editRow.innerHTML = `
+    <td colspan="${colCount}" style="padding:12px 16px; background:#F8FAFF;
+        border-bottom:2px solid var(--primary);">
+      <div style="display:grid; grid-template-columns:140px 180px 80px 90px 1fr auto;
+                  gap:10px; align-items:end;">
+
+        <div>
+          <div style="font-size:10px; font-weight:600; color:var(--muted);
+                      margin-bottom:3px;">DATE</div>
+          <input type="date" id="is-date" value="${slip.slip_date || ''}"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:4px;
+                        padding:5px 8px; font-size:12px;">
+        </div>
+
+        <div>
+          <div style="font-size:10px; font-weight:600; color:var(--muted);
+                      margin-bottom:3px;">TIMEKEEPER</div>
+          <select id="is-tk"
+                  style="width:100%; border:1px solid #D1D5DB; border-radius:4px;
+                         padding:5px 8px; font-size:12px; background:#fff;">
+            <option value="${slip.source_tk_id}">${slip.tk_name}</option>
+          </select>
+        </div>
+
+        <div>
+          <div style="font-size:10px; font-weight:600; color:var(--muted);
+                      margin-bottom:3px;">HOURS</div>
+          <input type="number" id="is-hours" value="${parseFloat(slip.hours||0).toFixed(2)}"
+                 step="0.1" min="0" max="24"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:4px;
+                        padding:5px 8px; font-size:12px;"
+                 oninput="updateInlineValue()">
+        </div>
+
+        <div>
+          <div style="font-size:10px; font-weight:600; color:var(--muted);
+                      margin-bottom:3px;">RATE</div>
+          <input type="number" id="is-rate" value="${parseFloat(slip.rate||0).toFixed(2)}"
+                 step="0.01" min="0"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:4px;
+                        padding:5px 8px; font-size:12px;"
+                 oninput="updateInlineValue()">
+        </div>
+
+        <div>
+          <div style="font-size:10px; font-weight:600; color:var(--muted);
+                      margin-bottom:3px;">NARRATIVE</div>
+          <input type="text" id="is-narrative"
+                 value="${(slip.narrative||'').replace(/paid by dmh[^;.]*/gi,'').trim()}"
+                 style="width:100%; border:1px solid #D1D5DB; border-radius:4px;
+                        padding:5px 8px; font-size:12px;">
+        </div>
+
+        <div style="display:flex; gap:6px; align-items:flex-end; padding-bottom:1px;">
+          <div style="font-size:11px; font-weight:600; color:var(--primary);
+                      white-space:nowrap; padding:5px 0;" id="is-value">
+            $${(parseFloat(slip.hours||0)*parseFloat(slip.rate||0)).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}
+          </div>
+          <select id="is-billed"
+                  style="border:1px solid #D1D5DB; border-radius:4px;
+                         padding:5px 6px; font-size:11px; background:#fff;">
+            <option value="false" ${!slip.billed?'selected':''}>WIP</option>
+            <option value="true"  ${slip.billed?'selected':''}>Billed</option>
+          </select>
+          <button onclick="saveInlineSlip('${slip.source_slip_id}')"
+                  style="padding:5px 12px; background:var(--primary); color:#fff;
+                         border:none; border-radius:4px; font-size:12px;
+                         font-weight:500; cursor:pointer; white-space:nowrap;"
+                  id="is-save-btn">Save</button>
+          <button onclick="closeInlineSlipEdit()"
+                  style="padding:5px 8px; border:1px solid #D1D5DB; background:#fff;
+                         border-radius:4px; font-size:12px; cursor:pointer;">✕</button>
+        </div>
+
+      </div>
+      <div id="is-error"
+           style="display:none; margin-top:8px; font-size:11px; color:#dc2626;"></div>
+    </td>`;
+
+  row.parentNode.insertBefore(editRow, row.nextSibling);
+
+  // Populate timekeeper dropdown
+  fetch('/api/billing/timekeepers')
+    .then(r => r.json())
+    .then(data => {
+      const sel = document.getElementById('is-tk');
+      if (!sel) return;
+      sel.innerHTML = '';
+      (data.timekeepers || []).forEach(tk => {
+        const opt = document.createElement('option');
+        opt.value = tk.ts_tk_id;
+        opt.textContent = `${tk.ts_name} (${tk.ts_initials || tk.ts_tk_id})`;
+        if (tk.ts_tk_id === slip.source_tk_id) opt.selected = true;
+        sel.appendChild(opt);
+      });
+    })
+    .catch(() => {});
+}
+
+function closeInlineSlipEdit() {
+  const existing = document.getElementById('inline-slip-edit-row');
+  if (existing) existing.remove();
+  if (_activeSlipRow) {
+    _activeSlipRow.style.background = '';
+    _activeSlipRow = null;
+  }
+}
+
+function updateInlineValue() {
+  const h = parseFloat(document.getElementById('is-hours').value || 0);
+  const r = parseFloat(document.getElementById('is-rate').value  || 0);
+  const el = document.getElementById('is-value');
+  if (el) el.textContent = '$' + (h*r).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+
+async function saveInlineSlip(slipId) {
+  const btn = document.getElementById('is-save-btn');
+  btn.textContent = '…'; btn.disabled = true;
+
+  const billed = document.getElementById('is-billed').value === 'true';
+  const hours  = parseFloat(document.getElementById('is-hours').value || 0);
+  const rate   = parseFloat(document.getElementById('is-rate').value  || 0);
+
+  const payload = {
+    slip_date:    document.getElementById('is-date').value,
+    source_tk_id: document.getElementById('is-tk').value,
+    hours,
+    rate,
+    narrative:    document.getElementById('is-narrative').value.trim(),
+    billed,
+    wip_value:    billed ? 0 : round2(hours * rate),
+    billed_value: billed ? round2(hours * rate) : 0,
+  };
+
+  const errEl = document.getElementById('is-error');
+  try {
+    const res = await fetch(`/api/billing/ts-slips/${slipId}`, {
+      method:  'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify(payload),
+    });
+    if (res.ok) {
+      closeInlineSlipEdit();
+      // Reload KPI and slips widgets
+      htmx.trigger(document.getElementById('widget-client-kpi'),   'load');
+      htmx.trigger(document.getElementById('widget-recent-slips'), 'load');
+      htmx.trigger(document.getElementById('widget-wip-by-tk'),    'load');
+    } else {
+      const err = await res.json();
+      errEl.textContent   = err.detail || 'Error saving.';
+      errEl.style.display = 'block';
+      btn.textContent = 'Save'; btn.disabled = false;
+    }
+  } catch(e) {
+    errEl.textContent   = 'Network error.';
+    errEl.style.display = 'block';
+    btn.textContent = 'Save'; btn.disabled = false;
+  }
+}
+
+function round2(n) { return Math.round(n * 100) / 100; }
+
+// After slips widget loads, replace openSlipDrawer with inline toggle
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.target.id === 'widget-recent-slips') {
+    document.querySelectorAll('.slip-row').forEach(function(row) {
+      // Replace onclick with inline edit toggle
+      row.onclick = function() { toggleInlineSlipEdit(this); };
+    });
+  }
+});
+</script>
+
+{% endblock %}

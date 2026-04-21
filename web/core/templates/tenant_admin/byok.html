@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}AI API Keys{% endblock %}
+{% block content %}
+<div style="padding:0;">
+
+  {% include "tenant_admin/_topnav.html" %}
+
+  <div style="max-width:720px; padding:24px;">
+
+    <h1 style="font-size:20px; font-weight:700; color:var(--text); margin-bottom:4px;">API Keys — BYOK</h1>
+    <p style="font-size:13px; color:var(--muted); margin-bottom:24px;">
+      Bring Your Own Key. Enter your Anthropic and/or OpenAI API keys.
+      Keys are stored encrypted and used for all AI operations within your tenant.
+    </p>
+
+    {% if saved %}
+    <div style="background:#f0fdf4; border:1px solid #86efac; color:#166534; border-radius:6px; padding:10px 14px; font-size:13px; margin-bottom:16px;">
+      ✓ API key saved successfully.
+    </div>
+    {% endif %}
+    {% if request.query_params.get('error') %}
+    <div style="background:#fef2f2; border:1px solid #fca5a5; color:#991b1b; border-radius:6px; padding:10px 14px; font-size:13px; margin-bottom:16px;">
+      Error: {{ request.query_params.get('error') | replace('_', ' ') | title }}
+    </div>
+    {% endif %}
+
+    {% if keys %}
+    <div class="card" style="margin-bottom:20px; overflow:hidden;">
+      <table style="width:100%; font-size:13px; border-collapse:collapse;">
+        <thead>
+          <tr style="border-bottom:1px solid var(--border-color,#e2e8f0);">
+            <th style="padding:10px 14px; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); font-weight:600;">Provider</th>
+            <th style="padding:10px 14px; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); font-weight:600;">Key (masked)</th>
+            <th style="padding:10px 14px; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.05em; color:var(--muted); font-weight:600;">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for k in keys %}
+          <tr style="border-bottom:1px solid var(--border-color,#e2e8f0);">
+            <td style="padding:10px 14px; color:var(--text); font-weight:600;">{{ k.provider|title }}</td>
+            <td style="padding:10px 14px; color:var(--muted); font-family:monospace; font-size:12px;">{{ k.key_hint }}</td>
+            <td style="padding:10px 14px; font-size:12px; color:var(--muted);">Replace using form below</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:14px; font-size:13px; color:#92400e; margin-bottom:20px;">
+      No API keys configured. The platform will use its default provider keys (rate-limited).
+      Add your own keys for dedicated capacity.
+    </div>
+    {% endif %}
+
+    <div class="card" style="padding:20px; margin-bottom:20px;">
+      <h3 style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:16px;">Add or Replace API Key</h3>
+      <form method="post" action="/tenant-admin/byok">
+        <div style="margin-bottom:14px;">
+          <label style="display:block; font-size:12px; font-weight:500; color:var(--text); margin-bottom:6px;">Provider</label>
+          <select name="provider"
+                  style="width:100%; padding:8px 10px; border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                         font-size:13px; font-family:inherit; background:var(--surface,#fff); color:var(--text); outline:none;">
+            <option value="anthropic">Anthropic (Claude)</option>
+            <option value="openai">OpenAI</option>
+          </select>
+        </div>
+        <div style="margin-bottom:14px;">
+          <label style="display:block; font-size:12px; font-weight:500; color:var(--text); margin-bottom:6px;">API Key</label>
+          <input name="api_key" type="password" required placeholder="sk-ant-..." autocomplete="off"
+                 style="width:100%; padding:8px 10px; border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                        font-size:13px; font-family:monospace; background:var(--surface,#fff); color:var(--text);
+                        outline:none; box-sizing:border-box;" />
+          <p style="font-size:11px; color:var(--muted); margin-top:4px;">Stored encrypted at rest. Only the last 4 characters are shown after saving.</p>
+        </div>
+        <button type="submit" class="btn-primary" style="padding:8px 20px; font-size:13px;">
+          Save API Key
+        </button>
+      </form>
+    </div>
+
+    <div class="card" style="padding:20px;">
+      <h3 style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:8px;">Subscription & Billing</h3>
+      <p style="font-size:13px; color:var(--muted);">
+        To change your subscription tier, add seats, or update billing information,
+        contact your platform administrator at
+        <a href="mailto:admin@praesidium.legal" style="color:var(--primary); text-decoration:none;">admin@praesidium.legal</a>.
+      </p>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

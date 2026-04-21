@@ -1,0 +1,818 @@
+"""
+modules/admin/timesheet_api.py
+Module 9 Component 6 — AI Timesheet Reconciliation
+
+Ingests uploaded files (Excel, phone CSV, flat files) plus pulls from
+ai_api_calls and ts_slips, then uses Claude to cross-reference all sources
+against matter summaries and produce draft time entries with confidence scores.
+Attorney reviews, approves/edits/rejects, then pushes approved entries to time_entries.
+
+Sources:
+  timeslips    — ts_slips staging table (already ingested by M9 C1)
+  ai_api_calls — Claude/AI usage logs (timestamp, module, tokens → estimated time)
+  phone_csv    — uploaded carrier CSV (AT&T, Verizon, T-Mobile export)
+  manictime    — uploaded ManicTime activity export (CSV/XML)
+  excel        — uploaded timesheet Excel
+  flat_file    — uploaded flat text file
+
+Endpoints:
+  GET  /admin/timesheet                        — session list / upload form
+  POST /admin/timesheet/start                  — start reconciliation session
+  GET  /admin/timesheet/{session_id}           — draft review page
+  POST /admin/timesheet/{session_id}/approve/{draft_id}  — approve draft
+  POST /admin/timesheet/{session_id}/reject/{draft_id}   — reject draft
+  POST /admin/timesheet/{session_id}/edit/{draft_id}     — edit and approve
+  POST /admin/timesheet/{session_id}/push      — push all approved to time_entries
+  GET  /admin/timesheet/{session_id}/status    — HTMX poll: session progress
+
+Patent Pending — 64/020,027 — Dennis M. Holmgren, Reg. No. 54,168
+"""
+
+from __future__ import annotations
+
+import csv
+import io
+import json
+import logging
+import math
+import os
+import uuid
+from datetime import date, datetime, timedelta
+from typing import Optional
+
+import httpx
+from modules.intelligence import (
+    call as ai_call,
+    resolve_prompt,
+    AICallContext,
+    AILayerError,
+    strip_markdown_fences,
+)
+from fastapi import APIRouter, File, Form, Request, HTTPException, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.templating import Jinja2Templates
+from sqlalchemy import text
+
+from core.db.base import AsyncSessionLocal
+
+log = logging.getLogger("praesidium.admin.timesheet_api")
+
+router = APIRouter(prefix="/admin/timesheet", tags=["admin-timesheet"])
+
+_TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "../../templates/admin")
+templates = Jinja2Templates(directory=_TEMPLATE_DIR)
+
+# Model routing now lives in ai_model_routing — see modules.intelligence
+
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+
+async def _require_admin(request: Request) -> dict:
+    session_token = (
+        request.cookies.get("session_token")
+        or request.cookies.get("admin_session")
+    )
+    if not session_token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    async with AsyncSessionLocal() as db:
+        row = await db.execute(
+            text("""
+                SELECT s.user_id, s.tenant_id, s.expires_at, u.role,
+                       u.full_name, u.username
+                FROM sessions s
+                JOIN users u ON u.id = s.user_id
+                WHERE s.token = :token AND s.expires_at > NOW()
+            """),
+            {"token": session_token},
+        )
+        session = row.fetchone()
+    if not session:
+        raise HTTPException(status_code=401, detail="Session expired")
+    return {
+        "user_id": session.user_id,
+        "tenant_id": (session.tenant_id or "").strip(),
+        "role": session.role,
+        "name": session.full_name or session.username,
+    }
+
+
+# ── Source ingestion helpers ───────────────────────────────────────────────────
+
+async def _load_timeslips_entries(tenant_id: str, user_id: int,
+                                   date_from: date, date_to: date) -> list[dict]:
+    """Pull ts_slips for this user's matters in the date range."""
+    entries = []
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(
+            text("""
+                SELECT ts.slip_date, ts.hours, ts.narrative, ts.slip_type,
+                       ts.ts_matter_id, tm.display_name AS matter_name,
+                       tm.praesidium_matter_id
+                FROM ts_slips ts
+                LEFT JOIN ts_matters tm ON tm.ts_matter_id = ts.ts_matter_id
+                    AND tm.tenant_id = ts.tenant_id
+                WHERE ts.tenant_id = :tid
+                  AND ts.slip_date BETWEEN :df AND :dt
+                  AND ts.slip_type = 'Time'
+                ORDER BY ts.slip_date, ts.ts_matter_id
+            """),
+            {"tid": tenant_id, "df": date_from, "dt": date_to},
+        )
+        for r in rows.mappings().fetchall():
+            entries.append({
+                "source": "timeslips",
+                "entry_date": r["slip_date"],
+                "hours": float(r["hours"] or 0),
+                "description": r["narrative"] or "",
+                "matter_id": r["praesidium_matter_id"],
+                "matter_name": r["matter_name"] or r["ts_matter_id"],
+                "ai_confidence": 0.95,  # Timeslips entries are high confidence
+                "source_detail": {"ts_matter_id": r["ts_matter_id"]},
+            })
+    return entries
+
+
+async def _load_ai_api_calls(tenant_id: str, user_id: int,
+                              date_from: date, date_to: date) -> list[dict]:
+    """Pull ai_api_calls and estimate billable time from token counts."""
+    entries = []
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(
+            text("""
+                SELECT DATE(created_at) AS entry_date,
+                       SUM(total_tokens) AS total_tokens,
+                       COUNT(*) AS call_count,
+                       module,
+                       purpose
+                FROM ai_api_calls
+                WHERE tenant_id = :tid
+                  AND user_id = :uid
+                  AND DATE(created_at) BETWEEN :df AND :dt
+                  AND status = 'success'
+                GROUP BY DATE(created_at), module, purpose
+                ORDER BY entry_date, module
+            """),
+            {"tid": tenant_id, "uid": user_id, "df": date_from, "dt": date_to},
+        )
+        for r in rows.mappings().fetchall():
+            # Rough estimate: 1000 tokens ≈ 6 minutes of substantive work
+            tokens = r["total_tokens"] or 0
+            hours_est = round(max(0.1, (tokens / 1000) * 0.1), 2)
+            # Round to nearest quarter hour
+            hours_est = math.ceil(hours_est * 4) / 4
+
+            desc = f"AI-assisted work — {r['module'] or 'Platform'}"
+            if r["purpose"]:
+                desc += f": {r['purpose']}"
+            desc += f" ({r['call_count']} sessions, {tokens:,} tokens)"
+
+            entries.append({
+                "source": "ai_api_calls",
+                "entry_date": r["entry_date"],
+                "hours": hours_est,
+                "description": desc,
+                "matter_id": None,
+                "matter_name": None,
+                "ai_confidence": 0.4,  # Low — needs matter attribution
+                "source_detail": {
+                    "total_tokens": tokens,
+                    "call_count": r["call_count"],
+                    "module": r["module"],
+                },
+            })
+    return entries
+
+
+def _parse_phone_csv(content: str) -> list[dict]:
+    """Parse carrier CSV exports. Handles AT&T, Verizon, T-Mobile common formats."""
+    entries = []
+    reader = csv.DictReader(io.StringIO(content))
+    headers = [h.lower().strip() for h in (reader.fieldnames or [])]
+
+    # Detect carrier format by header patterns
+    date_col = next((h for h in reader.fieldnames or []
+                     if any(k in h.lower() for k in ("date", "time", "when"))), None)
+    dur_col = next((h for h in reader.fieldnames or []
+                    if any(k in h.lower() for k in ("duration", "min", "seconds", "length"))), None)
+    num_col = next((h for h in reader.fieldnames or []
+                    if any(k in h.lower() for k in ("number", "phone", "to", "from", "contact"))), None)
+
+    if not date_col:
+        return entries
+
+    for row in reader:
+        try:
+            raw_date = row.get(date_col, "").strip()
+            if not raw_date:
+                continue
+
+            # Try common date formats
+            parsed_date = None
+            for fmt in ("%m/%d/%Y", "%Y-%m-%d", "%m-%d-%Y", "%d/%m/%Y"):
+                try:
+                    parsed_date = datetime.strptime(raw_date[:10], fmt).date()
+                    break
+                except ValueError:
+                    continue
+            if not parsed_date:
+                continue
+
+            # Duration
+            raw_dur = row.get(dur_col, "0").strip() if dur_col else "0"
+            hours = 0.0
+            if ":" in raw_dur:
+                parts = raw_dur.split(":")
+                try:
+                    if len(parts) == 3:
+                        hours = int(parts[0]) + int(parts[1]) / 60 + int(parts[2]) / 3600
+                    elif len(parts) == 2:
+                        hours = int(parts[0]) / 60 + int(parts[1]) / 3600
+                except (ValueError, IndexError):
+                    pass
+            else:
+                try:
+                    val = float(raw_dur.replace(",", ""))
+                    # Detect if seconds or minutes
+                    if val > 300:
+                        hours = val / 3600
+                    else:
+                        hours = val / 60
+                except ValueError:
+                    pass
+
+            if hours < 0.02:  # Skip calls under ~1 minute
+                continue
+
+            number = row.get(num_col, "").strip() if num_col else ""
+            desc = f"Phone call: {number}" if number else "Phone call"
+
+            entries.append({
+                "source": "phone_csv",
+                "entry_date": parsed_date,
+                "hours": round(math.ceil(hours * 4) / 4, 2),  # Round up to quarter hour
+                "description": desc,
+                "matter_id": None,
+                "matter_name": None,
+                "ai_confidence": 0.3,
+                "source_detail": {"raw_number": number, "raw_duration": raw_dur},
+            })
+        except Exception:
+            continue
+
+    return entries
+
+
+def _parse_excel_timesheet(content: bytes) -> list[dict]:
+    """Parse Excel timesheet upload. Expects date, hours, description columns."""
+    entries = []
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
+        ws = wb.active
+
+        # Find header row
+        headers = {}
+        for row in ws.iter_rows(min_row=1, max_row=5):
+            for cell in row:
+                val = str(cell.value or "").lower().strip()
+                if any(k in val for k in ("date", "day")):
+                    headers["date"] = cell.column
+                elif any(k in val for k in ("hour", "time", "duration")):
+                    headers["hours"] = cell.column
+                elif any(k in val for k in ("desc", "note", "narr", "work", "task")):
+                    headers["desc"] = cell.column
+                elif any(k in val for k in ("matter", "client", "case", "file")):
+                    headers["matter"] = cell.column
+
+        if "date" not in headers or "hours" not in headers:
+            return entries
+
+        start_row = 2
+        for row in ws.iter_rows(min_row=start_row, values_only=True):
+            try:
+                raw_date = row[headers["date"] - 1]
+                raw_hours = row[headers["hours"] - 1]
+                if raw_date is None or raw_hours is None:
+                    continue
+
+                if isinstance(raw_date, datetime):
+                    entry_date = raw_date.date()
+                elif isinstance(raw_date, date):
+                    entry_date = raw_date
+                else:
+                    continue
+
+                hours = float(str(raw_hours).replace(",", "").strip())
+                if hours <= 0:
+                    continue
+
+                desc = ""
+                if "desc" in headers and row[headers["desc"] - 1]:
+                    desc = str(row[headers["desc"] - 1]).strip()
+
+                matter_name = None
+                if "matter" in headers and row[headers["matter"] - 1]:
+                    matter_name = str(row[headers["matter"] - 1]).strip()
+
+                entries.append({
+                    "source": "excel",
+                    "entry_date": entry_date,
+                    "hours": hours,
+                    "description": desc,
+                    "matter_id": None,
+                    "matter_name": matter_name,
+                    "ai_confidence": 0.7,
+                    "source_detail": {"matter_hint": matter_name},
+                })
+            except (ValueError, TypeError, IndexError):
+                continue
+    except Exception as exc:
+        log.warning("Excel parse failed: %s", exc)
+    return entries
+
+
+# ── AI reconciliation ─────────────────────────────────────────────────────────
+
+async def _ai_reconcile(
+    entries: list[dict],
+    matters: list[dict],
+    tenant_id: str,
+    user_name: str,
+    date_from: date,
+    date_to: date,
+) -> list[dict]:
+    """
+    Send all raw entries to Claude for matter attribution, narrative improvement,
+    and confidence scoring. Returns enriched entries.
+    """
+    if not entries:
+        return entries
+
+    # Build matter list for context
+    matter_list = "\n".join(
+        f"  - {m['matter_name']} (ID: {m['matter_id']})"
+        for m in matters[:50]  # Cap at 50 for prompt size
+    )
+
+    # Build entries summary for prompt
+    entries_summary = []
+    for i, e in enumerate(entries):
+        entries_summary.append(
+            f"{i}: [{e['source']}] {e['entry_date']} | {e['hours']}h | "
+            f"{e.get('matter_name') or 'No matter'} | {e['description'][:100]}"
+        )
+
+    try:
+        rendered = await resolve_prompt(
+            tenant_id=tenant_id,
+            slug="admin.timesheet_reconcile",
+            variables={
+                "user_name":       user_name,
+                "date_from":       str(date_from),
+                "date_to":         str(date_to),
+                "matter_list":     matter_list or "  (none found)",
+                "entries_summary": chr(10).join(entries_summary),
+            },
+        )
+        ctx = AICallContext(
+            tenant_id=tenant_id,
+            module="admin",
+            purpose="timesheet_reconcile",
+            matter_id=None,  # Cross-matter by design — routes to firm_overhead
+        )
+        result = await ai_call(ctx, prompt=rendered)
+        raw_text = strip_markdown_fences(result.text)
+        enriched_entries = json.loads(raw_text)
+        return enriched_entries
+    except json.JSONDecodeError as exc:
+        logger.error("timesheet reconcile JSON parse error: %s", exc)
+        return entries  # Return originals on parse failure
+    except AILayerError as exc:
+        logger.error("timesheet reconcile AI error: %s", exc)
+        return entries
+
+
+
+
+# ── Routes ────────────────────────────────────────────────────────────────────
+
+@router.get("", response_class=HTMLResponse)
+async def timesheet_dashboard(
+    request: Request,
+    tenant_id: Optional[str] = None,
+):
+    sess = await _require_admin(request)
+    tid = (tenant_id or sess["tenant_id"]).strip()
+
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(
+            text("""
+                SELECT id, date_from, date_to, status,
+                       draft_count, approved_count, pushed_count,
+                       created_at, completed_at, error_message
+                FROM timesheet_sessions
+                WHERE tenant_id = :tid AND user_id = :uid
+                ORDER BY created_at DESC
+                LIMIT 20
+            """),
+            {"tid": tid, "uid": sess["user_id"]},
+        )
+        sessions = [dict(r) for r in rows.mappings().fetchall()]
+
+    # Default date range: current month
+    today = date.today()
+    default_from = today.replace(day=1)
+    default_to = today
+
+    return templates.TemplateResponse(request, "timesheet_dashboard.html", {
+        "page": "timesheet",
+        "sessions": sessions,
+        "tenant_id": tid,
+        "default_from": default_from.isoformat(),
+        "default_to": default_to.isoformat(),
+        "branding": getattr(request.state, "branding", None),
+    })
+
+
+@router.post("/start")
+async def timesheet_start(
+    request: Request,
+    tenant_id: str = Form(...),
+    date_from: str = Form(...),
+    date_to: str = Form(...),
+    files: list[UploadFile] = File(default=[]),
+):
+    sess = await _require_admin(request)
+    tid = (tenant_id or sess["tenant_id"]).strip()
+
+    try:
+        df = date.fromisoformat(date_from)
+        dt = date.fromisoformat(date_to)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format")
+
+    if dt < df:
+        raise HTTPException(status_code=400, detail="date_to must be >= date_from")
+    if (dt - df).days > 366:
+        raise HTTPException(status_code=400, detail="Date range cannot exceed 1 year")
+
+    session_id = str(uuid.uuid4())
+
+    # Create session record
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            text("""
+                INSERT INTO timesheet_sessions
+                  (id, tenant_id, user_id, date_from, date_to, status)
+                VALUES (:id, :tid, :uid, :df, :dt, 'running')
+            """),
+            {"id": session_id, "tid": tid, "uid": sess["user_id"],
+             "df": df, "dt": dt},
+        )
+        await db.commit()
+
+    # Enqueue RQ job
+    try:
+        from redis import Redis
+        from rq import Queue
+        REDIS_URL = os.environ.get("REDIS_URL", "redis://10.10.60.12:6379/0")
+        redis_conn = Redis.from_url(REDIS_URL)
+        q = Queue("default", connection=redis_conn)
+
+        # Read uploaded file contents before passing to job
+        file_data = []
+        for f in files:
+            if f.filename:
+                content = await f.read()
+                file_data.append({
+                    "filename": f.filename,
+                    "content_type": f.content_type,
+                    "content_b64": content.hex(),  # hex-encode for JSON serialization
+                })
+
+        q.enqueue(
+            "jobs.timesheet_reconcile_job.run",
+            session_id,
+            tid,
+            sess["user_id"],
+            sess["name"],
+            df.isoformat(),
+            dt.isoformat(),
+            file_data,
+            job_timeout=600,
+        )
+    except Exception as exc:
+        log.error("Failed to enqueue timesheet job: %s", exc)
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                text("""
+                    UPDATE timesheet_sessions
+                    SET status = 'failed', error_message = :err, completed_at = NOW()
+                    WHERE id = :id
+                """),
+                {"err": str(exc)[:300], "id": session_id},
+            )
+            await db.commit()
+
+    return RedirectResponse(
+        f"/admin/timesheet/{session_id}?tenant_id={tid}",
+        status_code=303,
+    )
+
+
+@router.get("/{session_id}", response_class=HTMLResponse)
+async def timesheet_review(
+    request: Request,
+    session_id: str,
+    tenant_id: Optional[str] = None,
+    filter: str = "pending",
+):
+    sess = await _require_admin(request)
+    tid = (tenant_id or sess["tenant_id"]).strip()
+
+    async with AsyncSessionLocal() as db:
+        session_row = await db.execute(
+            text("""
+                SELECT id, date_from, date_to, status,
+                       draft_count, approved_count, pushed_count,
+                       error_message, created_at, completed_at
+                FROM timesheet_sessions
+                WHERE id = :sid AND tenant_id = :tid AND user_id = :uid
+            """),
+            {"sid": session_id, "tid": tid, "uid": sess["user_id"]},
+        )
+        session = session_row.mappings().fetchone()
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        # Load drafts
+        if filter == "all":
+            status_filter = ""
+        elif filter == "approved":
+            status_filter = "AND status = 'approved'"
+        elif filter == "rejected":
+            status_filter = "AND status = 'rejected'"
+        else:
+            status_filter = "AND status = 'pending'"
+
+        drafts_row = await db.execute(
+            text(f"""
+                SELECT id, entry_date, matter_id, matter_name,
+                       hours, description, ai_narrative, source,
+                       ai_confidence, status, source_detail,
+                       reviewed_at, time_entry_id
+                FROM timesheet_drafts
+                WHERE session_id = :sid {status_filter}
+                ORDER BY entry_date ASC, ai_confidence DESC
+            """),
+            {"sid": session_id},
+        )
+        drafts = [dict(r) for r in drafts_row.mappings().fetchall()]
+
+    return templates.TemplateResponse(request, "timesheet_review.html", {
+        "page": "timesheet",
+        "session": dict(session),
+        "drafts": drafts,
+        "tenant_id": tid,
+        "filter": filter,
+        "branding": getattr(request.state, "branding", None),
+    })
+
+
+@router.post("/{session_id}/approve/{draft_id}")
+async def draft_approve(
+    request: Request,
+    session_id: str,
+    draft_id: str,
+    tenant_id: str = Form(...),
+):
+    sess = await _require_admin(request)
+    tid = (tenant_id or sess["tenant_id"]).strip()
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            text("""
+                UPDATE timesheet_drafts
+                SET status = 'approved', reviewed_at = NOW(), reviewed_by = :uid
+                WHERE id = :did AND session_id = :sid
+            """),
+            {"uid": sess["user_id"], "did": draft_id, "sid": session_id},
+        )
+        await db.execute(
+            text("""
+                UPDATE timesheet_sessions
+                SET approved_count = (
+                    SELECT COUNT(*) FROM timesheet_drafts
+                    WHERE session_id = :sid AND status = 'approved'
+                )
+                WHERE id = :sid
+            """),
+            {"sid": session_id},
+        )
+        await db.commit()
+    return RedirectResponse(
+        f"/admin/timesheet/{session_id}?tenant_id={tid}",
+        status_code=303,
+    )
+
+
+@router.post("/{session_id}/reject/{draft_id}")
+async def draft_reject(
+    request: Request,
+    session_id: str,
+    draft_id: str,
+    tenant_id: str = Form(...),
+):
+    sess = await _require_admin(request)
+    tid = (tenant_id or sess["tenant_id"]).strip()
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            text("""
+                UPDATE timesheet_drafts
+                SET status = 'rejected', reviewed_at = NOW(), reviewed_by = :uid
+                WHERE id = :did AND session_id = :sid
+            """),
+            {"uid": sess["user_id"], "did": draft_id, "sid": session_id},
+        )
+        await db.commit()
+    return RedirectResponse(
+        f"/admin/timesheet/{session_id}?tenant_id={tid}",
+        status_code=303,
+    )
+
+
+@router.post("/{session_id}/edit/{draft_id}")
+async def draft_edit(
+    request: Request,
+    session_id: str,
+    draft_id: str,
+    tenant_id: str = Form(...),
+    hours: float = Form(...),
+    description: str = Form(...),
+    matter_id: Optional[str] = Form(None),
+    matter_name: Optional[str] = Form(None),
+):
+    sess = await _require_admin(request)
+    tid = (tenant_id or sess["tenant_id"]).strip()
+
+    # Round hours to quarter
+    hours = math.ceil(hours * 4) / 4
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            text("""
+                UPDATE timesheet_drafts
+                SET hours = :hours,
+                    description = :desc,
+                    matter_id = :mid,
+                    matter_name = :mname,
+                    status = 'approved',
+                    reviewed_at = NOW(),
+                    reviewed_by = :uid
+                WHERE id = :did AND session_id = :sid
+            """),
+            {
+                "hours": hours, "desc": description,
+                "mid": matter_id or None,
+                "mname": matter_name or None,
+                "uid": sess["user_id"],
+                "did": draft_id, "sid": session_id,
+            },
+        )
+        await db.commit()
+    return RedirectResponse(
+        f"/admin/timesheet/{session_id}?tenant_id={tid}",
+        status_code=303,
+    )
+
+
+@router.post("/{session_id}/push")
+async def push_to_time_entries(
+    request: Request,
+    session_id: str,
+    tenant_id: str = Form(...),
+):
+    sess = await _require_admin(request)
+    tid = (tenant_id or sess["tenant_id"]).strip()
+
+    pushed = 0
+    errors = 0
+
+    async with AsyncSessionLocal() as db:
+        drafts_row = await db.execute(
+            text("""
+                SELECT id, entry_date, matter_id, hours, description,
+                       ai_narrative, source, ai_confidence
+                FROM timesheet_drafts
+                WHERE session_id = :sid AND status = 'approved'
+                  AND time_entry_id IS NULL
+            """),
+            {"sid": session_id},
+        )
+        approved = [dict(r) for r in drafts_row.mappings().fetchall()]
+
+    for draft in approved:
+        try:
+            entry_id = str(uuid.uuid4())
+            narrative = draft.get("ai_narrative") or draft.get("description") or ""
+            async with AsyncSessionLocal() as db2:
+                await db2.execute(
+                    text("""
+                        INSERT INTO time_entries
+                          (id, tenant_id, matter_id, user_id, description,
+                           hours, date, entry_date, billable, status,
+                           source, ai_confidence, ai_original_description,
+                           created_at, updated_at)
+                        VALUES
+                          (:id, :tid, :mid, :uid, :desc,
+                           :hours, :edate, :edate, true, 'draft',
+                           :source, :conf, :orig_desc,
+                           NOW(), NOW())
+                    """),
+                    {
+                        "id": entry_id,
+                        "tid": tid,
+                        "mid": draft.get("matter_id"),
+                        "uid": sess["user_id"],
+                        "desc": narrative,
+                        "hours": draft["hours"],
+                        "edate": draft["entry_date"],
+                        "source": draft.get("source", "timesheet_reconciliation"),
+                        "conf": draft.get("ai_confidence"),
+                        "orig_desc": draft.get("description"),
+                    },
+                )
+                await db2.execute(
+                    text("""
+                        UPDATE timesheet_drafts
+                        SET status = 'pushed', time_entry_id = :eid
+                        WHERE id = :did
+                    """),
+                    {"eid": entry_id, "did": draft["id"]},
+                )
+                await db2.commit()
+            pushed += 1
+        except Exception as exc:
+            log.warning("Failed to push draft %s: %s", draft["id"], exc)
+            errors += 1
+
+    async with AsyncSessionLocal() as db3:
+        await db3.execute(
+            text("""
+                UPDATE timesheet_sessions
+                SET pushed_count = :pushed,
+                    status = 'complete',
+                    completed_at = NOW()
+                WHERE id = :sid
+            """),
+            {"pushed": pushed, "sid": session_id},
+        )
+        await db3.commit()
+
+    return RedirectResponse(
+        f"/admin/timesheet/{session_id}?tenant_id={tid}&filter=all",
+        status_code=303,
+    )
+
+
+@router.get("/{session_id}/status")
+async def timesheet_status(
+    request: Request,
+    session_id: str,
+    tenant_id: Optional[str] = None,
+):
+    """HTMX poll endpoint — returns status badge HTML."""
+    sess = await _require_admin(request)
+    tid = (tenant_id or sess["tenant_id"]).strip()
+
+    async with AsyncSessionLocal() as db:
+        row = await db.execute(
+            text("""
+                SELECT status, draft_count, approved_count, error_message
+                FROM timesheet_sessions
+                WHERE id = :sid AND tenant_id = :tid
+            """),
+            {"sid": session_id, "tid": tid},
+        )
+        session = row.mappings().fetchone()
+
+    if not session:
+        return HTMLResponse('<span class="badge status-err">Not found</span>')
+
+    status = session["status"]
+    if status == "running":
+        html = (
+            f'<span class="badge bg-blue-900 text-blue-200">Running…</span>'
+            f'<span class="text-xs text-gray-500 ml-2">{session["draft_count"]} drafts</span>'
+        )
+    elif status == "complete":
+        html = (
+            f'<span class="badge status-ok">Complete</span>'
+            f'<span class="text-xs text-gray-500 ml-2">'
+            f'{session["draft_count"]} drafts · {session["approved_count"]} approved</span>'
+        )
+    elif status == "failed":
+        html = f'<span class="badge status-err">Failed</span>'
+    else:
+        html = f'<span class="badge status-unk">{status}</span>'
+
+    return HTMLResponse(html)

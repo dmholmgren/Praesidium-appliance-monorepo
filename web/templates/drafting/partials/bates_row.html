@@ -1,0 +1,38 @@
+{# HTMX partial — returned after accept/reject of a bates insertion item #}
+{# Replaces the #bates-{id} div in drafting_session.html #}
+<div class="bates-item" id="bates-{{ item.id }}">
+  <div class="bates-citation">{{ item.citation_text[:60] }}</div>
+  {% if item.bates_ref %}
+  <div class="bates-ref">→ {{ item.bates_ref }}</div>
+  {% else %}
+  <div class="bates-ref" style="color:#B45309;">Not found in productions</div>
+  {% endif %}
+  <div class="bates-flags">
+    {% if item.flag_clawback %}<span class="bates-flag bates-flag-clawback">CLAWBACK</span>{% endif %}
+    {% if item.flag_privilege_log %}<span class="bates-flag bates-flag-priv">PRIVILEGE</span>{% endif %}
+    {% if item.flag_not_produced %}<span class="bates-flag bates-flag-missing">NOT PRODUCED</span>{% endif %}
+    {% if item.match_method == 'fuzzy' %}<span class="bates-flag bates-flag-fuzzy">FUZZY {{ (item.match_confidence * 100) | int }}%</span>{% endif %}
+  </div>
+  {% if item.disposition == 'accepted' %}
+    <span class="bates-accepted">✓ Accepted</span>
+  {% elif item.disposition == 'rejected' %}
+    <span class="bates-rejected">Rejected</span>
+  {% else %}
+    <div class="bates-actions">
+      <form method="post"
+            action="/drafting/sessions/{{ item.session_id }}/bates/{{ item.id }}/dispose"
+            hx-post="/drafting/sessions/{{ item.session_id }}/bates/{{ item.id }}/dispose"
+            hx-target="#bates-{{ item.id }}" hx-swap="outerHTML">
+        <input type="hidden" name="disposition" value="accepted">
+        <button type="submit" class="btn btn-gold" style="padding:4px 10px; font-size:11px;">Accept</button>
+      </form>
+      <form method="post"
+            action="/drafting/sessions/{{ item.session_id }}/bates/{{ item.id }}/dispose"
+            hx-post="/drafting/sessions/{{ item.session_id }}/bates/{{ item.id }}/dispose"
+            hx-target="#bates-{{ item.id }}" hx-swap="outerHTML">
+        <input type="hidden" name="disposition" value="rejected">
+        <button type="submit" class="btn btn-ghost" style="padding:4px 10px; font-size:11px;">Reject</button>
+      </form>
+    </div>
+  {% endif %}
+</div>

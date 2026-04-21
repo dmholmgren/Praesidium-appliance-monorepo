@@ -1,0 +1,64 @@
+{#
+  firm_new_service_items.html
+  Combined DMS + Exchange items from last 48h.
+#}
+<div style="padding:10px 12px; height:100%; display:flex; flex-direction:column;">
+
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              margin-bottom:8px; flex-shrink:0;">
+    <span style="font-size:11px; font-weight:600; color:var(--text,#1a202c);
+                 text-transform:uppercase; letter-spacing:0.05em;">New Service Items</span>
+    <span style="font-size:10px; color:var(--muted,#64748b);">Last 48h</span>
+  </div>
+
+  {% if error %}
+  <div style="font-size:11px; color:#dc2626;">{{ error }}</div>
+
+  {% elif not items %}
+  <div style="flex:1; display:flex; align-items:center; justify-content:center;
+              font-size:11px; color:var(--muted,#64748b);">
+    Nothing new in the last 48 hours.
+  </div>
+
+  {% else %}
+  <div style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:3px;">
+    {% for item in items %}
+    <div style="display:flex; align-items:flex-start; gap:8px;
+                padding:5px 6px; border-radius:5px;
+                border-bottom:1px solid var(--border-color,#e2e8f0);">
+
+      {# Type badge #}
+      <div style="flex-shrink:0; margin-top:1px;">
+        <span style="font-size:9px; font-weight:600; padding:2px 5px;
+                     border-radius:3px; color:{{ item.color }}; background:{{ item.bg }};
+                     white-space:nowrap;">
+          {% if item.source_type == 'email' %}✉ {% endif %}{{ item.doc_type }}</span>
+      </div>
+
+      {# Content #}
+      <div style="flex:1; min-width:0;">
+        <div style="font-size:11px; color:var(--text,#1a202c);
+                    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+             title="{{ item.title }}">{{ item.title }}</div>
+        <div style="font-size:10px; color:var(--muted,#64748b);
+                    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+          {{ item.subtitle }}
+          {% if item.source_type == 'email' and item.has_attachments %}
+          · 📎
+          {% endif %}
+        </div>
+      </div>
+
+      {# Timestamp #}
+      {% if item.timestamp %}
+      <div style="flex-shrink:0; font-size:9px; color:var(--muted,#94a3b8); white-space:nowrap;">
+        {{ item.timestamp.strftime("%-m/%-d") if item.timestamp else "" }}
+      </div>
+      {% endif %}
+
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+</div>

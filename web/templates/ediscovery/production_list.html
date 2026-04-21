@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}Productions — {{ matter.name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block page_title %}Inbound Productions{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<div style="font-size:12px; color:var(--muted); margin-bottom:16px;">
+  <a href="/matters" style="color:var(--muted); text-decoration:none;">Matters</a>
+  <span style="margin:0 6px;">›</span>
+  <a href="/matters/{{ matter.id }}" style="color:var(--muted); text-decoration:none;">{{ matter.name }}</a>
+  <span style="margin:0 6px;">›</span>
+  <span style="color:var(--text);">Productions</span>
+</div>
+
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+  <p style="font-size:12px; color:var(--muted);">Documents received from opposing counsel and other producing parties.</p>
+  <button onclick="document.getElementById('new-production-modal').classList.remove('hidden')" class="btn-primary">
+    <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+    New Production
+  </button>
+</div>
+
+<!-- Evidence Workspace link -->
+<div style="margin-bottom:20px;">
+  <a href="/ediscovery/matters/{{ matter.id }}/evidence-workspace"
+     style="font-size:12px; color:var(--primary); text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+    <svg width="13" height="13" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+    Evidence Assembly Workspace →
+  </a>
+</div>
+
+{% if productions %}
+<div style="display:flex; flex-direction:column; gap:12px;">
+  {% for p in productions %}
+  <div class="card">
+    <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:16px;">
+      <div style="flex:1; min-width:0;">
+        <a href="/ediscovery/productions/{{ p.id }}"
+           style="font-size:14px; font-weight:500; color:var(--primary); text-decoration:none;">{{ p.production_name }}</a>
+        {% if p.producing_party %}
+        <p style="font-size:12px; color:var(--muted); margin-top:2px;">From: {{ p.producing_party }}</p>
+        {% endif %}
+      </div>
+      <div style="display:flex; align-items:center; gap:10px; flex-shrink:0;">
+        {% if p.status == 'complete' %}<span class="badge badge-green">Complete</span>
+        {% elif p.status == 'running' %}<span class="badge badge-blue">Running</span>
+        {% elif p.status == 'partial' %}<span class="badge badge-yellow">Partial</span>
+        {% elif p.status == 'failed' %}<span class="badge badge-red">Failed</span>
+        {% else %}<span class="badge badge-gray">{{ p.status }}</span>{% endif %}
+        <span style="font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em;">{{ p.load_file_format }}</span>
+      </div>
+    </div>
+
+    {% if p.row_count_total and p.row_count_total > 0 %}
+    <div style="margin-top:12px;">
+      {% set pct = ((p.row_count_imported or 0) / p.row_count_total * 100) | round(0) | int %}
+      <div style="display:flex; align-items:center; gap:12px; font-size:11px; color:var(--muted); margin-bottom:5px;">
+        <span>{{ p.row_count_imported or 0 }} / {{ p.row_count_total }} imported</span>
+        {% if p.row_count_failed and p.row_count_failed > 0 %}<span style="color:#DC2626;">{{ p.row_count_failed }} failed</span>{% endif %}
+        {% if p.row_count_skipped and p.row_count_skipped > 0 %}<span>{{ p.row_count_skipped }} skipped</span>{% endif %}
+        <span style="margin-left:auto;">{{ pct }}%</span>
+      </div>
+      <div style="height:4px; background:#E5E7EB; border-radius:4px; overflow:hidden;">
+        <div style="height:100%; border-radius:4px; transition:width 0.5s;
+          background:{% if p.status == 'complete' %}#10B981{% elif p.status == 'failed' %}#EF4444{% elif p.status == 'partial' %}#F59E0B{% else %}var(--primary){% endif %};
+          width:{{ pct }}%;"></div>
+      </div>
+    </div>
+    {% endif %}
+
+    <div style="display:flex; align-items:center; gap:16px; margin-top:10px; font-size:11px; color:var(--muted);">
+      {% if p.imported_by_name %}<span>Imported by {{ p.imported_by_name }}</span>{% endif %}
+      <span>{{ p.created_at.strftime('%b %d, %Y') if p.created_at else '' }}</span>
+      <div style="margin-left:auto;">
+        {% if p.status == 'pending' %}
+        <a href="/ediscovery/productions/{{ p.id }}/field-mapping" style="color:var(--primary); text-decoration:none; font-weight:500;">Configure Mapping →</a>
+        {% else %}
+        <a href="/ediscovery/productions/{{ p.id }}" style="color:var(--primary); text-decoration:none; font-weight:500;">View Detail →</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% else %}
+<div class="empty-state card">
+  <svg width="40" height="40" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin:0 auto 12px; display:block; color:#D1D5DB;">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+  </svg>
+  <p style="font-weight:500; color:var(--text); margin-bottom:4px;">No productions yet</p>
+  <p style="font-size:12px;">Upload a Concordance DAT, CSV, or OPT load file to begin.</p>
+  <div style="margin-top:16px;">
+    <button onclick="document.getElementById('new-production-modal').classList.remove('hidden')" class="btn-primary">New Production</button>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts_extra %}
+<!-- New Production Modal -->
+<div id="new-production-modal"
+     style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); display:none; align-items:center; justify-content:center; z-index:50;">
+  <div class="card" style="width:100%; max-width:520px; box-shadow:0 20px 60px rgba(0,0,0,0.15);">
+    <h2 style="font-family:'Lora',serif; font-size:16px; font-weight:600; color:var(--text); margin-bottom:20px;">New Production Import</h2>
+
+    <div style="display:flex; flex-direction:column; gap:14px;">
+      <div>
+        <label style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); display:block; margin-bottom:6px;">Production Name *</label>
+        <input id="prod-name" type="text" placeholder="e.g. Defendant Production Vol. 1"
+          style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:'DM Sans',sans-serif; color:var(--text); outline:none; box-sizing:border-box;">
+      </div>
+      <div>
+        <label style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); display:block; margin-bottom:6px;">Producing Party</label>
+        <input id="prod-party" type="text" placeholder="e.g. Acme Corp."
+          style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:'DM Sans',sans-serif; color:var(--text); outline:none; box-sizing:border-box;">
+      </div>
+      <div>
+        <label style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); display:block; margin-bottom:6px;">Load File</label>
+        <div id="modal-drop-zone"
+             style="border:2px dashed var(--border); border-radius:6px; padding:24px; text-align:center; cursor:pointer; transition:border-color 150ms;"
+             ondragover="event.preventDefault(); this.style.borderColor='var(--primary)'"
+             ondragleave="this.style.borderColor='var(--border)'"
+             ondrop="handleFileDrop(event)"
+             onclick="document.getElementById('load-file-input').click()">
+          <svg width="28" height="28" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin:0 auto 8px; display:block; color:#9CA3AF;">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+          </svg>
+          <p id="drop-label" style="font-size:12px; color:var(--muted);">Drop .dat, .csv, .opt, .lfp here or click to browse</p>
+        </div>
+        <input id="load-file-input" type="file" accept=".dat,.csv,.opt,.lfp,.dii,.txt" style="display:none;" onchange="handleFileSelect(this)">
+      </div>
+      <div id="columns-section" style="display:none;">
+        <p style="font-size:11px; font-weight:600; color:var(--muted); margin-bottom:6px;">Detected columns:</p>
+        <div id="columns-list" style="display:flex; flex-wrap:wrap; gap:4px;"></div>
+        <p style="font-size:11px; color:var(--primary); margin-top:6px;">AI field mapping will be suggested automatically.</p>
+      </div>
+    </div>
+
+    <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
+      <button onclick="closeModal()" class="btn-secondary">Cancel</button>
+      <button id="create-btn" onclick="createProduction()" class="btn-primary">Create &amp; Map Fields</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let selectedFile = null;
+
+function closeModal() {
+  document.getElementById('new-production-modal').style.display = 'none';
+  selectedFile = null;
+  document.getElementById('drop-label').textContent = 'Drop .dat, .csv, .opt, .lfp here or click to browse';
+  document.getElementById('columns-section').style.display = 'none';
+  document.getElementById('prod-name').value = '';
+  document.getElementById('prod-party').value = '';
+}
+
+document.getElementById('new-production-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeModal();
+});
+
+function handleFileDrop(e) {
+  e.preventDefault();
+  document.getElementById('modal-drop-zone').style.borderColor = 'var(--border)';
+  const file = e.dataTransfer.files[0];
+  if (file) setFile(file);
+}
+
+function handleFileSelect(input) {
+  if (input.files[0]) setFile(input.files[0]);
+}
+
+function setFile(file) {
+  selectedFile = file;
+  document.getElementById('drop-label').textContent = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
+}
+
+async function createProduction() {
+  const name = document.getElementById('prod-name').value.trim();
+  if (!name) { alert('Production name is required'); return; }
+  const btn = document.getElementById('create-btn');
+  btn.disabled = true; btn.textContent = 'Creating…';
+
+  const formData = new FormData();
+  formData.append('production_name', name);
+  const party = document.getElementById('prod-party').value.trim();
+  if (party) formData.append('producing_party', party);
+  if (selectedFile) formData.append('file', selectedFile);
+
+  try {
+    const resp = await fetch('/ediscovery/matters/{{ matter.id }}/productions', { method: 'POST', body: formData });
+    if (!resp.ok) {
+      const e = await resp.json();
+      alert('Error: ' + (e.detail || 'Unknown error'));
+      btn.disabled = false; btn.textContent = 'Create & Map Fields';
+      return;
+    }
+    const data = await resp.json();
+    if (data.detected_columns && data.detected_columns.length > 0) {
+      const list = document.getElementById('columns-list');
+      list.innerHTML = data.detected_columns.map(c =>
+        `<span style="padding:2px 8px;background:var(--bg);border:1px solid var(--border);border-radius:4px;font-size:11px;color:var(--text);">${c}</span>`
+      ).join('');
+      document.getElementById('columns-section').style.display = 'block';
+      btn.textContent = 'Redirecting…';
+      await fetch(`/ediscovery/productions/${data.production_id}/suggest-mapping`, { method: 'POST' });
+      setTimeout(() => { window.location.href = `/ediscovery/productions/${data.production_id}/field-mapping`; }, 1200);
+    } else {
+      window.location.href = `/ediscovery/productions/${data.production_id}/field-mapping`;
+    }
+  } catch (err) {
+    alert('Network error: ' + err.message);
+    btn.disabled = false; btn.textContent = 'Create & Map Fields';
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,72 @@
+{#
+  core/templates/tenant_admin/_topnav.html
+  Top tab bar for all tenant admin pages.
+  Matches eDiscovery tab style exactly.
+  Usage: {% include "tenant_admin/_topnav.html" %}
+#}
+<style>
+  .ta-tabs {
+    display: flex;
+    gap: 2px;
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 20px;
+    flex-shrink: 0;
+  }
+  .ta-tab {
+    padding: 8px 18px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    border-radius: 4px 4px 0 0;
+    white-space: nowrap;
+    display: inline-block;
+  }
+  .ta-tab:hover { color: var(--text); background: #f8fafc; }
+  .ta-tab.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 600;
+  }
+</style>
+
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+  <div style="font-size:10px; color:var(--muted);">
+    <a href="https://admin.praesidium-legal.com/" target="_blank"
+       style="color:var(--muted); text-decoration:none; margin-right:16px;">Platform Admin ↗</a>
+    <a href="/tenant-admin/break-glass"
+       style="color:var(--muted); text-decoration:none;">Emergency Access</a>
+  </div>
+</div>
+
+{% set p = request.url.path %}
+
+<div class="ta-tabs">
+
+  <a href="/tenant-admin/" class="ta-tab {% if p == '/tenant-admin/' %}active{% endif %}">
+    Overview
+  </a>
+
+  <a href="/tenant-admin/users" class="ta-tab {% if p.startswith('/tenant-admin/users') %}active{% endif %}">
+    Users
+  </a>
+
+  <a href="/tenant-admin/connectors" class="ta-tab {% if p.startswith('/tenant-admin/connectors') %}active{% endif %}">
+    Connectors
+  </a>
+
+  <a href="/tenant-admin/features" class="ta-tab {% if p.startswith('/tenant-admin/features') %}active{% endif %}">
+    Features
+  </a>
+
+  <a href="/tenant-admin/folder-reconciliation" class="ta-tab {% if p.startswith('/tenant-admin/folder-reconciliation') or p.startswith('/tenant-admin/client-matter-cleanup') or p.startswith('/tenant-admin/client-merge') %}active{% endif %}">
+    Data Quality
+  </a>
+
+  <a href="/tenant-admin/profile" class="ta-tab {% if p.startswith('/tenant-admin/profile') or p.startswith('/tenant-admin/ssl') or p.startswith('/tenant-admin/byok') %}active{% endif %}">
+    Settings
+  </a>
+
+</div>

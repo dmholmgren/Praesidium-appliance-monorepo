@@ -1,0 +1,24 @@
+<!-- partials/license_grid.html — HTMX fragment: tenant license rows -->
+{% for t in tenants %}
+<tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+  <td class="px-4 py-2.5 font-mono text-xs text-white font-medium">{{ t.slug }}</td>
+  <td class="px-4 py-2.5">
+    {% if t.tier %}
+    <span class="badge {% if t.tier == 'intelligence' %}status-ok{% elif t.tier == 'enterprise' %}bg-purple-900 text-purple-200{% elif t.tier == 'litigation' %}bg-blue-900 text-blue-200{% else %}status-unk{% endif %}">{{ t.tier }}</span>
+    {% else %}
+    <span class="badge status-err">unlicensed</span>
+    {% endif %}
+  </td>
+  <td class="px-4 py-2.5 text-xs text-gray-400">{{ t.enabled_count }} enabled</td>
+  <td class="px-4 py-2.5">
+    {% if t.status == 'active' %}<span class="badge status-ok">active</span>
+    {% else %}<span class="badge status-unk">{{ t.status or '—' }}</span>{% endif %}
+  </td>
+  <td class="px-4 py-2.5 text-xs text-gray-500">{{ t.expires_at or 'no expiry' }}</td>
+  <td class="px-4 py-2.5">
+    <a href="/admin/tenant/{{ t.id }}" class="text-xs text-blue-400 hover:text-blue-300">Manage →</a>
+  </td>
+</tr>
+{% else %}
+<tr><td colspan="6" class="px-4 py-4 text-center text-gray-500 text-xs">No tenants</td></tr>
+{% endfor %}

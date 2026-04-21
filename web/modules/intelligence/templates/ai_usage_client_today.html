@@ -1,0 +1,17 @@
+{# widgets/ai_usage_client_today.html
+   Client-scoped AI Today widget.
+   Matches native billing_client_kpi card: label / big-$ / footnote.
+#}
+<div class="card" style="padding:14px;">
+  <div style="font-size:10px; color:var(--muted); text-transform:uppercase;
+              letter-spacing:.05em; margin-bottom:4px;">
+    AI Usage (Today)
+  </div>
+  <div style="font-size:22px; font-weight:600; color:var(--text);
+              font-variant-numeric:tabular-nums;">
+    {% if empty_state %}$0.0000{% else %}${{ "{:,.4f}".format(today.total) }}{% endif %}
+  </div>
+  <div style="font-size:11px; color:var(--muted); margin-top:2px;">
+    {% if empty_state %}0 calls{% else %}{{ today.calls }} call{{ 's' if today.calls != 1 else '' }}{% endif %}
+  </div>
+</div>

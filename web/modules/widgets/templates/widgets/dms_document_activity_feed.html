@@ -1,0 +1,80 @@
+{#
+  dms_document_activity_feed.html
+  Recent file activity across the matter (or firm-wide if no matter_id).
+  data_source: modules.dms.services.widget_service.get_document_activity_feed
+
+  Context:
+    items        list[{filename, file_path, matter_name, client_name,
+                        indexed_at_str, ocr_status, source, matter_id}]
+    matter_id    str|None
+    total        int
+    scope        dict
+#}
+
+<div style="padding: 10px 12px;
+            border-bottom: 1px solid var(--border-color, #f1f5f9);
+            display: flex; align-items: center; justify-content: space-between;">
+  <span style="font-size: 11px; font-weight: 700; color: var(--muted);
+               text-transform: uppercase; letter-spacing: .05em;">Recent Activity</span>
+  {% if total %}
+    <span style="font-size: 10px; color: var(--muted);">{{ total }} files</span>
+  {% endif %}
+</div>
+
+{% if items %}
+  <div style="overflow-y: auto; flex: 1;">
+    {% for item in items %}
+      <div style="padding: 7px 12px;
+                  border-bottom: 1px solid #f8fafc;
+                  display: flex; align-items: flex-start; gap: 8px;">
+
+        {# File type icon #}
+        <span style="font-size: 14px; flex-shrink: 0; margin-top: 1px;">
+          {{ item.icon or '📄' }}
+        </span>
+
+        <div style="flex: 1; min-width: 0;">
+          <div style="font-size: 12px;
+                      color: var(--text);
+                      white-space: nowrap;
+                      overflow: hidden;
+                      text-overflow: ellipsis;"
+               title="{{ item.file_path }}">
+            {{ item.filename }}
+          </div>
+
+          <div style="font-size: 10px; color: var(--muted);
+                      display: flex; gap: 8px; margin-top: 2px; flex-wrap: wrap;">
+            {% if not matter_id and item.matter_name %}
+              <span>{{ item.matter_name }}</span>
+            {% endif %}
+            <span>{{ item.indexed_at_str }}</span>
+
+            {% if item.ocr_status == 'done' %}
+              <span style="color: #166534;">✓ OCR</span>
+            {% elif item.ocr_status == 'pending' %}
+              <span style="color: #92400e;">⏳ OCR</span>
+            {% endif %}
+
+            {% if item.source == 'agent' %}
+              <span style="font-size: 9px;
+                           background: #dbeafe; color: #1d4ed8;
+                           padding: 0 4px; border-radius: 2px;">Legacy</span>
+            {% else %}
+              <span style="font-size: 9px;
+                           background: #1B2A4A; color: #fff;
+                           padding: 0 4px; border-radius: 2px;">P</span>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+{% else %}
+  <div style="padding: 24px 16px; text-align: center;
+              font-size: 12px; color: var(--muted);">
+    <div style="font-size: 28px; margin-bottom: 6px;">📂</div>
+    No recent file activity.
+  </div>
+{% endif %}

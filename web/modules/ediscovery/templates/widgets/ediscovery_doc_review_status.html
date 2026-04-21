@@ -1,0 +1,125 @@
+{#
+  widgets/ediscovery_doc_review_status.html
+  eDiscovery Review — right rail collapsible card: Review Status
+  Context: doc_id, statuses, privilege_statuses, current_status,
+           current_privilege, reviewed_at, reviewer_name, coding_notes, error
+#}
+<div class="edr-card" data-edr-card="review_status" data-edr-default-open="true"
+     style="border:1px solid var(--border-color,#e2e8f0);
+            border-radius:6px; background:var(--surface,#fff);
+            margin-bottom:10px; overflow:hidden;">
+
+  <div class="edr-card-header"
+       onclick="edrToggleCard(this)"
+       style="display:flex; align-items:center; justify-content:space-between;
+              padding:8px 12px; cursor:pointer; user-select:none;
+              border-bottom:1px solid var(--border-color,#f1f5f9);
+              background:#FAFBFC;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span class="edr-card-caret"
+            style="display:inline-block; width:10px; font-size:10px;
+                   color:var(--muted,#64748b); transition:transform 0.15s;">▾</span>
+      <span style="font-size:10px; font-weight:700; color:var(--muted,#64748b);
+                   text-transform:uppercase; letter-spacing:0.06em;">
+        Review Status
+      </span>
+    </div>
+    <span style="font-size:9px; font-weight:600; padding:1px 6px; border-radius:3px;
+                 text-transform:uppercase; letter-spacing:0.03em;
+                 {% set scur = current_status or 'unreviewed' %}
+                 {% if scur == 'responsive' or scur == 'hot' %}color:#047857; background:#D1FAE5;
+                 {% elif scur == 'privileged' %}color:#B91C1C; background:#FEE2E2;
+                 {% elif scur == 'needs_further_review' %}color:#B45309; background:#FEF3C7;
+                 {% else %}color:#4B5563; background:#F3F4F6;{% endif %}">
+      {{ scur|replace('_',' ') }}
+    </span>
+  </div>
+
+  <div class="edr-card-body" style="padding:10px 12px;">
+    {% if error %}
+      <div style="font-size:11px; color:#991b1b; padding:6px 8px;
+                  background:#fef2f2; border-radius:4px;">
+        ⚠ {{ error }}
+      </div>
+    {% elif not doc_id %}
+      <div style="font-size:11px; color:var(--muted,#64748b);">
+        No document selected.
+      </div>
+    {% else %}
+
+      {# Review status — vertical list of clickable options #}
+      <div style="font-size:10px; font-weight:600; color:var(--muted,#64748b);
+                  text-transform:uppercase; letter-spacing:0.04em;
+                  margin-bottom:6px;">
+        Responsiveness
+      </div>
+      <div style="display:flex; flex-direction:column; gap:2px; margin-bottom:12px;">
+        {% for val, label, color in statuses %}
+        <button
+          hx-post="/ediscovery/documents/{{ doc_id }}/review-status"
+          hx-vals='{"review_status": "{{ val }}"}'
+          hx-target="closest .edr-card-body"
+          hx-swap="innerHTML"
+          style="display:flex; align-items:center; gap:8px;
+                 padding:5px 8px; border-radius:4px; cursor:pointer;
+                 border:1px solid {% if current_status == val %}var(--primary,#2563eb){% else %}var(--border-color,#e2e8f0){% endif %};
+                 background:{% if current_status == val %}#EFF6FF{% else %}var(--surface,#fff){% endif %};
+                 font-size:11px; text-align:left; color:var(--text,#1a202c);">
+          <span style="display:inline-block; width:9px; height:9px; border-radius:50%;
+                       {% if color == 'green' %}background:#10B981;
+                       {% elif color == 'red' %}background:#EF4444;
+                       {% elif color == 'yellow' %}background:#F59E0B;
+                       {% else %}background:#9CA3AF;{% endif %}"></span>
+          <span style="flex:1;">{{ label }}</span>
+          {% if current_status == val %}
+          <span style="font-size:10px; color:var(--primary,#2563eb); font-weight:700;">✓</span>
+          {% endif %}
+        </button>
+        {% endfor %}
+      </div>
+
+      {# Privilege status #}
+      <div style="font-size:10px; font-weight:600; color:var(--muted,#64748b);
+                  text-transform:uppercase; letter-spacing:0.04em;
+                  margin-bottom:6px;">
+        Privilege
+      </div>
+      <div style="display:flex; flex-direction:column; gap:2px; margin-bottom:10px;">
+        {% for val, label, color in privilege_statuses %}
+        <button
+          hx-post="/ediscovery/documents/{{ doc_id }}/review-status"
+          hx-vals='{"privilege_status": "{{ val }}"}'
+          hx-target="closest .edr-card-body"
+          hx-swap="innerHTML"
+          style="display:flex; align-items:center; gap:8px;
+                 padding:5px 8px; border-radius:4px; cursor:pointer;
+                 border:1px solid {% if current_privilege == val %}var(--primary,#2563eb){% else %}var(--border-color,#e2e8f0){% endif %};
+                 background:{% if current_privilege == val %}#EFF6FF{% else %}var(--surface,#fff){% endif %};
+                 font-size:11px; text-align:left; color:var(--text,#1a202c);">
+          <span style="display:inline-block; width:9px; height:9px; border-radius:50%;
+                       {% if color == 'red' %}background:#EF4444;
+                       {% elif color == 'yellow' %}background:#F59E0B;
+                       {% else %}background:#9CA3AF;{% endif %}"></span>
+          <span style="flex:1;">{{ label }}</span>
+          {% if current_privilege == val %}
+          <span style="font-size:10px; color:var(--primary,#2563eb); font-weight:700;">✓</span>
+          {% endif %}
+        </button>
+        {% endfor %}
+      </div>
+
+      {# Reviewer trace #}
+      {% if reviewer_name or reviewed_at %}
+      <div style="font-size:10px; color:var(--muted,#64748b); padding-top:8px;
+                  border-top:1px solid var(--border-color,#f1f5f9);">
+        {% if reviewer_name %}Reviewed by <strong style="color:var(--text,#1a202c);">{{ reviewer_name }}</strong>{% endif %}
+        {% if reviewed_at and reviewed_at != '' %}
+          {% if reviewer_name %}<br>{% endif %}
+          {{ reviewed_at }}
+        {% endif %}
+      </div>
+      {% endif %}
+
+    {% endif %}
+  </div>
+</div>

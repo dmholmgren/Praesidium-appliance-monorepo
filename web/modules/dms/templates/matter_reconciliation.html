@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block title %}Import Reconciliation — {{ matter.matter_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Import Reconciliation{% endblock %}
+
+{% block content %}
+
+{# Matter nav tabs — same as matter_documents.html #}
+<div style="display:flex; align-items:center; gap:2px; padding:0 16px;
+            background:var(--surface,#fff); border-bottom:1px solid var(--border-color,#e2e8f0);
+            margin-bottom:16px;">
+  <a href="/dms/"
+     style="padding:8px 14px; font-size:12px; font-weight:500; text-decoration:none;
+            color:var(--muted); border-bottom:2px solid transparent; margin-bottom:-1px;"
+     onmouseenter="this.style.color='var(--primary)'"
+     onmouseleave="this.style.color='var(--muted)'">DMS Home</a>
+  <a href="/dms/matter/{{ matter_id }}"
+     style="padding:8px 14px; font-size:12px; font-weight:500; text-decoration:none;
+            color:var(--muted); border-bottom:2px solid transparent; margin-bottom:-1px;"
+     onmouseenter="this.style.color='var(--primary)'"
+     onmouseleave="this.style.color='var(--muted)'">Documents</a>
+  <a href="/dms/matter/{{ matter_id }}/reconciliation"
+     style="padding:8px 14px; font-size:12px; font-weight:500; text-decoration:none;
+            color:var(--primary); border-bottom:2px solid var(--primary); margin-bottom:-1px;">
+    Import Reconciliation
+  </a>
+  <a href="/ediscovery/matters/{{ matter_id }}/"
+     style="padding:8px 14px; font-size:12px; font-weight:500; text-decoration:none;
+            color:var(--muted); border-bottom:2px solid transparent; margin-bottom:-1px;"
+     onmouseenter="this.style.color='var(--primary)'"
+     onmouseleave="this.style.color='var(--muted)'">eDiscovery</a>
+  <a href="/billing/matter/{{ matter_id }}"
+     style="padding:8px 14px; font-size:12px; font-weight:500; text-decoration:none;
+            color:var(--muted); border-bottom:2px solid transparent; margin-bottom:-1px;"
+     onmouseenter="this.style.color='var(--primary)'"
+     onmouseleave="this.style.color='var(--muted)'">Billing</a>
+</div>
+
+{# Matter header #}
+<div style="margin-bottom:16px;">
+  <div style="font-size:11px; color:var(--muted); margin-bottom:4px;">
+    <a href="/dms/" style="color:var(--muted); text-decoration:none;">Documents</a>
+    › <a href="/dms/matter/{{ matter_id }}" style="color:var(--muted); text-decoration:none;">
+        {{ matter.matter_name }}
+      </a>
+    › Import Reconciliation
+  </div>
+  <div style="display:flex; align-items:center; gap:10px;">
+    <div style="font-size:18px; font-weight:600; color:var(--text);">
+      {{ matter.matter_name }}
+    </div>
+    {% if matter.matter_number %}
+    <span style="font-size:11px; color:var(--muted); font-family:monospace;
+                 background:#f1f5f9; padding:2px 7px; border-radius:3px;">
+      {{ matter.matter_number }}
+    </span>
+    {% endif %}
+    <span style="font-size:11px; color:var(--muted);">
+      {{ matter.client_name or '' }}
+    </span>
+  </div>
+  <div style="font-size:12px; color:var(--muted); margin-top:4px;">
+    Pending scans and recordings awaiting assignment to this matter.
+    Full reconciliation history coming in a future build.
+  </div>
+</div>
+
+{# Two-column grid: scans left, dictation right #}
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+
+  {# Scan Queue #}
+  <div>
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+      <div style="font-size:13px; font-weight:600; color:var(--text);">Scan Queue</div>
+      <span style="font-size:11px; color:var(--muted);">
+        {{ scan_items | length }} item{{ 's' if scan_items | length != 1 else '' }}
+      </span>
+    </div>
+
+    {% if scan_items %}
+    <div class="card" style="padding:0; overflow:hidden;">
+      {% for item in scan_items %}
+      <div id="scan-item-{{ item.id }}"
+           style="padding:10px 14px; border-bottom:1px solid var(--border);">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:12px; font-weight:500; color:var(--text);
+                        white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+              {{ item.filename }}
+            </div>
+            <div style="font-size:10px; color:var(--muted); margin-top:2px;">
+              {{ item.source | title if item.source else '' }}
+              · {{ item.created_at.strftime('%b %d %I:%M %p') if item.created_at and item.created_at.strftime is defined else item.created_at }}
+            </div>
+          </div>
+          <div style="flex-shrink:0;">
+            {% if item.status == 'pending' %}
+              <span class="badge badge-yellow">Pending</span>
+            {% elif item.status == 'ocr_complete' %}
+              <span class="badge badge-blue">OCR Done</span>
+            {% elif item.status == 'ocr_failed' %}
+              <span class="badge badge-red">OCR Failed</span>
+            {% else %}
+              <span class="badge badge-gray">{{ item.status | title }}</span>
+            {% endif %}
+          </div>
+        </div>
+
+        {# Assign to this matter button if not yet assigned #}
+        {% if not item.matter_id %}
+        <div style="margin-top:6px; display:flex; gap:6px;">
+          <button onclick="assignToMatter('{{ item.id }}', '{{ matter_id }}')"
+                  class="btn-primary"
+                  style="font-size:11px; padding:3px 10px;">
+            Assign to {{ matter.matter_name }}
+          </button>
+          <button hx-delete="/scan/{{ item.id }}"
+                  hx-target="#scan-item-{{ item.id }}"
+                  hx-swap="outerHTML"
+                  class="btn-secondary"
+                  style="font-size:11px; padding:3px 8px; color:#EF4444; border-color:#FECACA;">
+            ×
+          </button>
+        </div>
+        {% else %}
+        <div style="margin-top:4px; font-size:10px; color:#166534;">
+          ✓ Assigned to this matter
+        </div>
+        {% endif %}
+
+        {% if item.ocr_text %}
+        <details style="margin-top:6px;">
+          <summary style="font-size:11px; color:var(--muted); cursor:pointer;">OCR preview</summary>
+          <p style="font-size:11px; color:var(--muted); margin:4px 0 0; line-height:1.5;
+                    max-height:60px; overflow:hidden;">
+            {{ item.ocr_text[:300] }}{% if item.ocr_text | length > 300 %}…{% endif %}
+          </p>
+        </details>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="card" style="padding:24px; text-align:center;">
+      <div style="font-size:11px; color:var(--muted);">No pending scans for this matter.</div>
+    </div>
+    {% endif %}
+  </div>
+
+  {# Dictation Queue #}
+  <div>
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+      <div style="font-size:13px; font-weight:600; color:var(--text);">Dictation Queue</div>
+      <span style="font-size:11px; color:var(--muted);">
+        {{ dict_items | length }} item{{ 's' if dict_items | length != 1 else '' }}
+      </span>
+    </div>
+
+    {% if dict_items %}
+    <div class="card" style="padding:0; overflow:hidden;">
+      {% for item in dict_items %}
+      <div style="padding:10px 14px; border-bottom:1px solid var(--border);">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:12px; font-weight:500; color:var(--text);
+                        white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+              {{ item.filename }}
+            </div>
+            <div style="font-size:10px; color:var(--muted); margin-top:2px;">
+              {% if item.user_name %}{{ item.user_name }} · {% endif %}
+              {{ item.created_at.strftime('%b %d %I:%M %p') if item.created_at and item.created_at.strftime is defined else item.created_at }}
+            </div>
+          </div>
+          <div style="flex-shrink:0;">
+            {% if item.status == 'pending' %}
+              <span class="badge badge-yellow">Pending</span>
+            {% elif item.status == 'processing' %}
+              <span class="badge badge-blue">Transcribing</span>
+            {% elif item.status == 'completed' %}
+              <span class="badge badge-green">Transcribed</span>
+            {% elif item.status == 'failed' %}
+              <span class="badge badge-red">Failed</span>
+            {% else %}
+              <span class="badge badge-gray">{{ item.status | title }}</span>
+            {% endif %}
+          </div>
+        </div>
+        {% if item.transcript %}
+        <details style="margin-top:6px;">
+          <summary style="font-size:11px; color:var(--muted); cursor:pointer;">
+            Transcript preview
+          </summary>
+          <p style="font-size:11px; color:var(--muted); margin:4px 0 0; line-height:1.5;
+                    max-height:60px; overflow:hidden;">
+            {{ item.transcript[:300] }}{% if item.transcript | length > 300 %}…{% endif %}
+          </p>
+        </details>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="card" style="padding:24px; text-align:center;">
+      <div style="font-size:11px; color:var(--muted);">No pending dictations for this matter.</div>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+async function assignToMatter(scanId, matterId) {
+  var fd = new FormData();
+  fd.append('matter_id', matterId);
+  try {
+    var resp = await fetch('/scan/' + scanId + '/assign', {method: 'POST', body: fd});
+    if (resp.ok) {
+      var item = document.getElementById('scan-item-' + scanId);
+      if (item) {
+        item.style.opacity = '0.5';
+        var btns = item.querySelectorAll('button');
+        btns.forEach(function(b) { b.disabled = true; });
+        var msg = document.createElement('div');
+        msg.style = 'font-size:10px; color:#166534; margin-top:4px;';
+        msg.textContent = '✓ Assigned';
+        item.appendChild(msg);
+      }
+    }
+  } catch(err) { console.error('Assign failed:', err); }
+}
+</script>
+{% endblock %}

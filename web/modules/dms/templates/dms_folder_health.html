@@ -1,0 +1,58 @@
+{# widgets/dms_folder_health.html
+   Widget partial — DMS Folder Health
+   Context: folders (list), matter_id, total_folders
+   Each folder: {short_name, folder_path, disk_root, file_count, root_label}
+#}
+<div style="display:flex; flex-direction:column; height:100%;">
+
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              padding:8px 12px; border-bottom:1px solid var(--border-color,#f1f5f9);
+              flex-shrink:0;">
+    <span style="font-size:10px; font-weight:700; color:var(--muted,#64748b);
+                 text-transform:uppercase; letter-spacing:0.06em;">
+      Folder Health
+    </span>
+    <span style="font-size:10px; color:var(--muted,#94a3b8);">
+      {{ total_folders }} folder{% if total_folders != 1 %}s{% endif %}
+    </span>
+  </div>
+
+  <div style="flex:1; overflow-y:auto;">
+    {% if folders %}
+    {% for f in folders %}
+    <div style="display:flex; align-items:center; gap:8px;
+                padding:6px 12px; border-bottom:1px solid #f8fafc;">
+      <span style="font-size:13px; flex-shrink:0;">
+        {% if f.root_label == 'Docsend' %}📮{% else %}📁{% endif %}
+      </span>
+      <div style="flex:1; min-width:0;">
+        <div style="font-size:11px; font-weight:500; color:var(--text,#1a202c);
+                    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"
+             title="{{ f.folder_path }}">
+          {{ f.short_name }}
+        </div>
+        <div style="font-size:9px; margin-top:1px;">
+          <span style="background:{{ '#EDE9FE' if f.root_label == 'Docsend' else ('#f0fdf4' if f.root_label == 'Praesidium' else '#dbeafe') }};
+                       color:{{ '#5B21B6' if f.root_label == 'Docsend' else ('#166534' if f.root_label == 'Praesidium' else '#1d4ed8') }};
+                       padding:0 4px; border-radius:2px;">
+            {{ f.root_label }}
+          </span>
+        </div>
+      </div>
+      <div style="flex-shrink:0; text-align:right;">
+        <span style="font-size:11px; font-weight:600; color:var(--primary,#1B2A4A);">
+          {{ f.file_count }}
+        </span>
+        <span style="font-size:10px; color:var(--muted,#94a3b8);"> files</span>
+      </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div style="padding:20px 12px; text-align:center; font-size:11px;
+                color:var(--muted,#94a3b8);">
+      No folders linked to this matter.
+    </div>
+    {% endif %}
+  </div>
+
+</div>

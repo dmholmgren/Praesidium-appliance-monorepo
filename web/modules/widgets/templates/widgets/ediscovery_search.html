@@ -1,0 +1,66 @@
+{# widgets/ediscovery_search.html
+   eDiscovery Search widget — placeholder shell
+   Full-width bottom panel, design deferred
+#}
+<div style="display:flex; flex-direction:column; height:100%; min-height:0;">
+
+  {# Search bar #}
+  <div style="display:flex; gap:8px; padding:10px 14px; border-bottom:1px solid var(--border-color,#f1f5f9); flex-shrink:0; align-items:center;">
+    <div style="position:relative; flex:1;">
+      <svg style="position:absolute;left:9px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--muted);"
+           fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+      </svg>
+      <input type="text" id="ediscovery-search-input"
+             placeholder="Search documents, custodians, issues, productions…"
+             style="width:100%; padding:7px 10px 7px 30px; font-size:12px;
+                    border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                    box-sizing:border-box; background:var(--surface,#fff); color:var(--text);"
+             onkeydown="if(event.key==='Enter') edzDoSearch(this.value)">
+    </div>
+    <label style="display:flex; align-items:center; gap:4px; font-size:11px; color:var(--muted); cursor:pointer; white-space:nowrap;">
+      <input type="checkbox" id="ediscovery-search-all-matters">
+      All matters
+    </label>
+    <label style="display:flex; align-items:center; gap:4px; font-size:11px; color:var(--muted); cursor:pointer; white-space:nowrap;">
+      <input type="checkbox" id="ediscovery-search-productions">
+      Include productions
+    </label>
+    <button onclick="edzDoSearch(document.getElementById('ediscovery-search-input').value)"
+            class="btn-primary" style="padding:7px 16px; font-size:12px; white-space:nowrap;">
+      Search
+    </button>
+  </div>
+
+  {# Results area #}
+  <div id="ediscovery-search-results" style="flex:1; overflow-y:auto; min-height:0;">
+    <div style="padding:20px; text-align:center; color:var(--muted); font-size:12px;">
+      <div style="font-size:24px; margin-bottom:6px;">🔍</div>
+      Search across eDiscovery documents, custodians, issues, and productions.
+      <div style="margin-top:8px; font-size:11px; color:#94a3b8;">
+        AI-powered semantic search — coming soon
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+window.edzDoSearch = async function(q) {
+  if (!q || !q.trim()) return;
+  const resultsEl = document.getElementById('ediscovery-search-results');
+  resultsEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:12px;">Searching…</div>';
+  // Placeholder — full implementation in next session
+  setTimeout(() => {
+    resultsEl.innerHTML = `
+      <div style="padding:16px;text-align:center;color:var(--muted);font-size:12px;">
+        <div style="font-size:20px;margin-bottom:6px;">🚧</div>
+        eDiscovery full-text search is being built.
+        <div style="margin-top:4px;font-size:11px;">
+          Query: <em>${q}</em>
+        </div>
+      </div>`;
+  }, 500);
+};
+</script>

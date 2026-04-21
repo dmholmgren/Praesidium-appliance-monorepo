@@ -1,0 +1,54 @@
+{# widgets/billing_open_invoices.html
+   Open (unpaid) invoices for a client with aging.
+   Context vars (from widget_service.get_billing_open_invoices):
+     invoices — list of {invoice_num, balance, days_outstanding, age_color}
+     total_ar — float
+     error    — str|None
+     client_id — passed through for + Payment link
+
+   Visualization only. age_color precomputed in service.
+#}
+
+{% if error %}
+<div style="padding:12px; font-size:11px; color:#dc2626;">⚠ {{ error }}</div>
+
+{% elif not invoices %}
+<div style="padding:30px; text-align:center; color:var(--muted);">
+  <div style="font-size:22px; margin-bottom:6px;">✓</div>
+  <div style="font-size:12px; font-weight:500;">No open invoices</div>
+</div>
+
+{% else %}
+<table class="data-table" style="margin:0;">
+  <thead>
+    <tr>
+      <th>Invoice #</th>
+      <th style="text-align:right;">Balance</th>
+      <th>Age</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for inv in invoices %}
+    <tr>
+      <td style="font-weight:500;">#{{ inv.invoice_num }}</td>
+      <td style="text-align:right; font-weight:600; color:#7f1d1d;
+                 font-variant-numeric:tabular-nums;">
+        ${{ "{:,.2f}".format(inv.balance) }}
+      </td>
+      <td style="font-size:11px; color:{{ inv.age_color }};">
+        {{ inv.days_outstanding }}d
+      </td>
+    </tr>
+    {% endfor %}
+    <tr style="border-top:2px solid var(--border); font-weight:600;
+               background:#F9FAFB;">
+      <td>Total AR</td>
+      <td style="text-align:right; color:#7f1d1d;
+                 font-variant-numeric:tabular-nums;">
+        ${{ "{:,.2f}".format(total_ar) }}
+      </td>
+      <td></td>
+    </tr>
+  </tbody>
+</table>
+{% endif %}

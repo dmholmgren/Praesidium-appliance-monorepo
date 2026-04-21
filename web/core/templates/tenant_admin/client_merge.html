@@ -1,0 +1,341 @@
+{% extends "base.html" %}
+{% block title %}Client Merge — {{ branding.platform_name if branding else 'Praesidium' }}{% endblock %}
+
+{% block content %}
+<div style="padding:0;">
+
+  {% include "tenant_admin/_topnav.html" %}
+
+
+
+<div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:16px;">
+  <div>
+    <h1 style="font-family:'Lora',serif; font-size:20px; font-weight:600; color:var(--text); margin-bottom:4px;">
+      Client Merge
+    </h1>
+    <p style="font-size:12px; color:var(--muted); margin-top:0;">
+      Consolidate duplicate client records. All matters from merged clients are reassigned to the keep client.
+    </p>
+  </div>
+</div>
+
+{# ── Disclaimer ──────────────────────────────────────────────────────────── #}
+<div style="background:#fffbeb; border:1px solid #f59e0b; border-radius:6px; padding:12px 16px; margin-bottom:20px; font-size:12px; color:#78350f;">
+  <div style="font-weight:600; margin-bottom:4px;">&#9888; This operation cannot be undone through the UI</div>
+  <div style="margin-bottom:4px;">
+    Merged clients are marked inactive and hidden from all dropdowns. All their matters are reassigned to the
+    <strong>Keep</strong> client. Review the matter list carefully before confirming.
+  </div>
+  <div style="color:#dc2626; font-weight:600;">
+    &#9888; Merging clients reassigns ALL linked matters platform-wide — billing, eDiscovery, DMS, and all modules.
+  </div>
+</div>
+
+{# ── Two-column picker ───────────────────────────────────────────────────── #}
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:20px;">
+
+  {# Keep client #}
+  <div class="card" style="padding:16px;">
+    <div style="font-size:13px; font-weight:600; color:#166534; margin-bottom:10px;">
+      &#10003; Keep — this client record will remain active
+    </div>
+    <input type="text" id="keep-search"
+           placeholder="Search by name or number..."
+           style="width:100%; padding:6px 10px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:6px; box-sizing:border-box; margin-bottom:8px;"
+           oninput="renderKeepList(this.value)">
+    <div id="keep-list"
+         style="max-height:320px; overflow-y:auto; border:1px solid var(--border-color,#e2e8f0); border-radius:6px;">
+      <div style="padding:12px; font-size:12px; color:var(--muted);">Loading...</div>
+    </div>
+    <div id="keep-selected" style="margin-top:8px; font-size:12px; color:#166534; font-weight:500; min-height:18px;"></div>
+  </div>
+
+  {# Merge clients #}
+  <div class="card" style="padding:16px;">
+    <div style="font-size:13px; font-weight:600; color:#dc2626; margin-bottom:10px;">
+      &#8594; Merge — these clients will be deactivated
+    </div>
+    <input type="text" id="merge-search"
+           placeholder="Search by name or number..."
+           style="width:100%; padding:6px 10px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:6px; box-sizing:border-box; margin-bottom:8px;"
+           oninput="renderMergeList(this.value)">
+    <div id="merge-list"
+         style="max-height:320px; overflow-y:auto; border:1px solid var(--border-color,#e2e8f0); border-radius:6px;">
+      <div style="padding:12px; font-size:12px; color:var(--muted);">Loading...</div>
+    </div>
+    <div id="merge-selected-summary"
+         style="margin-top:8px; font-size:12px; color:#dc2626; font-weight:500; min-height:18px;"></div>
+  </div>
+
+</div>
+
+{# ── Preview button ──────────────────────────────────────────────────────── #}
+<div style="display:flex; gap:12px; align-items:center; margin-bottom:20px;">
+  <button id="preview-btn" onclick="previewMerge()" class="btn-primary"
+          disabled style="padding:8px 20px; font-size:13px; opacity:0.5; cursor:not-allowed;">
+    Preview Merge
+  </button>
+  <span id="preview-status" style="font-size:12px; color:var(--muted);"></span>
+</div>
+
+{# ── Preview panel ───────────────────────────────────────────────────────── #}
+<div id="preview-panel" style="display:none; margin-bottom:20px;">
+  <div class="card" style="padding:16px; border:2px solid #f59e0b;">
+    <div style="font-size:14px; font-weight:600; color:var(--text); margin-bottom:12px;">
+      Merge Preview — Review Before Confirming
+    </div>
+    <div id="preview-keep-info"
+         style="background:#f0fdf4; border:1px solid #86efac; border-radius:6px; padding:10px 12px; margin-bottom:12px; font-size:12px;">
+    </div>
+    <div id="preview-merge-list" style="margin-bottom:16px;"></div>
+    <div id="preview-total" style="font-size:13px; font-weight:600; color:#78350f; margin-bottom:16px;"></div>
+    <div style="display:flex; gap:12px; align-items:center;">
+      <button id="confirm-btn" onclick="executeMerge()"
+              style="padding:8px 24px; font-size:13px; background:#dc2626; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:600;">
+        Confirm Merge
+      </button>
+      <button onclick="cancelPreview()"
+              style="padding:8px 16px; font-size:13px; background:transparent; color:var(--muted); border:1px solid var(--border-color,#e2e8f0); border-radius:6px; cursor:pointer;">
+        Cancel
+      </button>
+      <span id="confirm-status" style="font-size:12px; color:var(--muted);"></span>
+    </div>
+  </div>
+</div>
+
+{# ── Success panel ───────────────────────────────────────────────────────── #}
+<div id="success-panel" style="display:none; margin-bottom:20px;">
+  <div class="card" style="padding:16px; border:2px solid #86efac; background:#f0fdf4;">
+    <div style="font-size:14px; font-weight:600; color:#166534; margin-bottom:8px;">&#10003; Merge Complete</div>
+    <div id="success-detail" style="font-size:12px; color:#166534;"></div>
+    <div style="margin-top:12px;">
+      <a href="/tenant-admin/client-merge" style="font-size:12px; color:#1d4ed8; text-decoration:none;">
+        &#8592; Merge another client
+      </a>
+      &nbsp;&nbsp;
+      <a href="/tenant-admin/folder-reconciliation" style="font-size:12px; color:#1d4ed8; text-decoration:none;">
+        Go to Import Reconciliation &#8594;
+      </a>
+    </div>
+  </div>
+</div>
+
+<script>
+let allClients   = [];
+let keepClientId = null;
+let mergeClientIds = new Set();
+
+async function loadClients() {
+  try {
+    const resp = await fetch('/tenant-admin/folder-reconciliation/clients');
+    const data = await resp.json();
+    allClients = data.clients || [];
+    renderKeepList('');
+    renderMergeList('');
+  } catch (err) {
+    console.error('loadClients error:', err);
+  }
+}
+
+function filterClients(query) {
+  if (!query) return allClients;
+  const q = query.toLowerCase();
+  return allClients.filter(c =>
+    c.name.toLowerCase().includes(q) || (c.number && c.number.toLowerCase().includes(q))
+  );
+}
+
+// ── Keep list ─────────────────────────────────────────────────────────────
+function renderKeepList(query) {
+  const list     = document.getElementById('keep-list');
+  const filtered = filterClients(query);
+  if (!filtered.length) {
+    list.innerHTML = '<div style="padding:12px; font-size:12px; color:var(--muted);">No clients found</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(c => {
+    const isKeep  = keepClientId === c.id;
+    const isMerge = mergeClientIds.has(c.id);
+    return `
+      <div onclick="selectKeep('${escId(c.id)}', '${escStr(c.name)}')"
+           style="padding:8px 12px; font-size:12px; cursor:pointer; border-bottom:1px solid #f1f5f9;
+                  background:${isKeep ? '#dbeafe' : 'transparent'};
+                  opacity:${isMerge ? '0.4' : '1'};"
+           onmouseover="if(!${isKeep}) this.style.background='#f8fafc'"
+           onmouseout="this.style.background='${isKeep ? '#dbeafe' : 'transparent'}'">
+        <span style="font-weight:${isKeep ? '600' : '500'};">${esc(c.name)}</span>
+        ${c.number ? `<span style="color:#94a3b8; margin-left:6px; font-family:monospace; font-size:10px;">${esc(c.number)}</span>` : ''}
+        ${isKeep ? '<span style="color:#1d4ed8; float:right; font-size:11px;">&#10003; Keep</span>' : ''}
+        ${isMerge ? '<span style="color:#dc2626; float:right; font-size:10px;">in merge list</span>' : ''}
+      </div>`;
+  }).join('');
+}
+
+function selectKeep(id, name) {
+  if (mergeClientIds.has(id)) return;
+  keepClientId = id;
+  document.getElementById('keep-selected').textContent = 'Selected: ' + name;
+  renderKeepList(document.getElementById('keep-search').value);
+  renderMergeList(document.getElementById('merge-search').value);
+  updatePreviewBtn();
+}
+
+// ── Merge list ────────────────────────────────────────────────────────────
+function renderMergeList(query) {
+  const list     = document.getElementById('merge-list');
+  const filtered = filterClients(query);
+  if (!filtered.length) {
+    list.innerHTML = '<div style="padding:12px; font-size:12px; color:var(--muted);">No clients found</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(c => {
+    const isKeep  = keepClientId === c.id;
+    const isMerge = mergeClientIds.has(c.id);
+    return `
+      <div onclick="${isKeep ? '' : `toggleMerge('${escId(c.id)}', '${escStr(c.name)}')`}"
+           style="padding:8px 12px; font-size:12px; cursor:${isKeep ? 'not-allowed' : 'pointer'};
+                  border-bottom:1px solid #f1f5f9;
+                  background:${isMerge ? '#fee2e2' : 'transparent'};
+                  opacity:${isKeep ? '0.35' : '1'};"
+           onmouseover="if(!${isKeep} && !${isMerge}) this.style.background='#f8fafc'"
+           onmouseout="this.style.background='${isMerge ? '#fee2e2' : 'transparent'}'">
+        <input type="checkbox" ${isMerge ? 'checked' : ''} ${isKeep ? 'disabled' : ''}
+               style="margin-right:8px; pointer-events:none;">
+        <span style="font-weight:500;">${esc(c.name)}</span>
+        ${c.number ? `<span style="color:#94a3b8; margin-left:6px; font-family:monospace; font-size:10px;">${esc(c.number)}</span>` : ''}
+        ${isKeep ? '<span style="color:#1d4ed8; float:right; font-size:10px;">KEEP</span>' : ''}
+      </div>`;
+  }).join('');
+
+  const summary = document.getElementById('merge-selected-summary');
+  summary.textContent = mergeClientIds.size > 0
+    ? mergeClientIds.size + ' client' + (mergeClientIds.size === 1 ? '' : 's') + ' selected to merge'
+    : '';
+}
+
+function toggleMerge(id, name) {
+  if (keepClientId === id) return;
+  mergeClientIds.has(id) ? mergeClientIds.delete(id) : mergeClientIds.add(id);
+  renderMergeList(document.getElementById('merge-search').value);
+  updatePreviewBtn();
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function esc(s)    { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escStr(s) { return String(s).replace(/'/g,"\\'").replace(/"/g,'&quot;'); }
+function escId(s)  { return String(s).replace(/[^a-zA-Z0-9\-]/g,''); }
+
+function updatePreviewBtn() {
+  const btn   = document.getElementById('preview-btn');
+  const ready = keepClientId && mergeClientIds.size > 0;
+  btn.disabled       = !ready;
+  btn.style.opacity  = ready ? '1' : '0.5';
+  btn.style.cursor   = ready ? 'pointer' : 'not-allowed';
+}
+
+// ── Preview ───────────────────────────────────────────────────────────────
+async function previewMerge() {
+  if (!keepClientId || mergeClientIds.size === 0) return;
+  const statusEl = document.getElementById('preview-status');
+  statusEl.textContent = 'Loading preview...';
+  statusEl.style.color = 'var(--muted)';
+
+  try {
+    const mergeParam = Array.from(mergeClientIds).join(',');
+    const resp = await fetch(`/tenant-admin/client-merge/preview?keep_id=${keepClientId}&merge_ids=${mergeParam}`);
+    const data = await resp.json();
+    if (!resp.ok) {
+      statusEl.textContent = 'Error: ' + (data.detail || 'Preview failed');
+      statusEl.style.color = '#dc2626';
+      return;
+    }
+    statusEl.textContent = '';
+    renderPreview(data);
+    document.getElementById('preview-panel').style.display = 'block';
+    document.getElementById('preview-panel').scrollIntoView({behavior:'smooth'});
+  } catch (err) {
+    statusEl.textContent = 'Network error';
+    statusEl.style.color = '#dc2626';
+  }
+}
+
+function renderPreview(data) {
+  document.getElementById('preview-keep-info').innerHTML =
+    `<strong>Keep:</strong> ${esc(data.keep.name)}
+     ${data.keep.number ? `<span style="color:#94a3b8; margin-left:8px; font-family:monospace;">${esc(data.keep.number)}</span>` : ''}
+     <span style="color:#166534; margin-left:8px;">— this record stays active</span>`;
+
+  document.getElementById('preview-merge-list').innerHTML = data.merge_clients.map(c => `
+    <div style="margin-bottom:12px; border:1px solid #fca5a5; border-radius:6px; overflow:hidden;">
+      <div style="background:#fee2e2; padding:8px 12px; font-size:12px; font-weight:600; color:#991b1b;">
+        Merge: ${esc(c.name)}
+        ${c.number ? `<span style="font-family:monospace; font-weight:400; margin-left:8px;">${esc(c.number)}</span>` : ''}
+        — <strong>${c.matter_count} matter${c.matter_count === 1 ? '' : 's'} will be reassigned</strong>
+      </div>
+      ${c.matters.length > 0
+        ? `<div style="padding:8px 12px; background:#fff; max-height:160px; overflow-y:auto;">
+             ${c.matters.map(m => `
+               <div style="font-size:11px; padding:2px 0; color:var(--text);">
+                 ${esc(m.matter_name)}
+                 ${m.matter_number ? `<span style="color:#94a3b8; font-family:monospace; margin-left:6px;">${esc(m.matter_number)}</span>` : ''}
+               </div>`).join('')}
+           </div>`
+        : '<div style="padding:8px 12px; font-size:11px; color:var(--muted);">No matters</div>'}
+    </div>`).join('');
+
+  document.getElementById('preview-total').textContent =
+    `Total: ${data.total_matters_to_reassign} matter${data.total_matters_to_reassign === 1 ? '' : 's'} will be reassigned to "${data.keep.name}"`;
+}
+
+function cancelPreview() {
+  document.getElementById('preview-panel').style.display = 'none';
+  document.getElementById('preview-status').textContent = '';
+}
+
+// ── Execute ───────────────────────────────────────────────────────────────
+async function executeMerge() {
+  const btn      = document.getElementById('confirm-btn');
+  const statusEl = document.getElementById('confirm-status');
+  btn.disabled   = true;
+  btn.textContent = 'Merging...';
+  statusEl.textContent = '';
+
+  try {
+    const resp = await fetch('/tenant-admin/client-merge/execute', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify({keep_id: keepClientId, merge_ids: Array.from(mergeClientIds)}),
+    });
+    const data = await resp.json();
+
+    if (resp.ok) {
+      document.getElementById('preview-panel').style.display = 'none';
+      const detail = data.merged.map(r =>
+        `${esc(r.merged_client_name)}: ${r.matters_reassigned} matter${r.matters_reassigned === 1 ? '' : 's'} reassigned`
+      ).join('<br>');
+      document.getElementById('success-detail').innerHTML =
+        `<strong>${data.total_matters_reassigned} matters</strong> reassigned.<br><br>${detail}`;
+      document.getElementById('success-panel').style.display = 'block';
+      document.getElementById('success-panel').scrollIntoView({behavior:'smooth'});
+      keepClientId = null;
+      mergeClientIds = new Set();
+      loadClients();
+    } else {
+      statusEl.style.color  = '#dc2626';
+      statusEl.textContent  = 'Error: ' + (data.detail || 'Merge failed');
+      btn.disabled          = false;
+      btn.textContent       = 'Confirm Merge';
+    }
+  } catch (err) {
+    statusEl.style.color = '#dc2626';
+    statusEl.textContent = 'Network error — please retry';
+    btn.disabled         = false;
+    btn.textContent      = 'Confirm Merge';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', loadClients);
+</script>
+
+</div>
+{% endblock %}

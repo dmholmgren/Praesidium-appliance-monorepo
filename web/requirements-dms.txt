@@ -1,0 +1,56 @@
+# DMS & Auth Module — Python Dependencies
+# Add these to the main requirements.txt on MAIN-PRD-WEB-01
+
+# Core (may already be installed from Chat 0 — safe to re-specify)
+alembic>=1.13.0
+SQLAlchemy>=2.0
+
+# COMP 1: CIFS Storage Adapter
+httpx>=0.27.0
+
+# COMP 2: File Crawler
+redis>=5.0
+rq>=1.16
+
+# COMP 3: OCR Pipeline
+pytesseract>=0.3.10
+pdfplumber>=0.11.0
+Pillow>=10.0
+python-docx>=1.1.0
+openpyxl>=3.1.0
+extract-msg>=0.48.0
+
+# COMP 4: Meilisearch
+# (uses httpx — already listed above)
+
+# COMP 5: Time Tracking
+# (uses FastAPI — already in base requirements)
+
+# COMP 7: WebDAV
+WsgiDAV>=4.3.0
+
+# COMP 8: Document Comparison
+# (uses python-docx and difflib — difflib is stdlib)
+
+# COMP 9: Legal Research
+# (uses httpx — already listed above)
+
+# COMP 12: Citation Suite
+# (uses regex — stdlib)
+
+# COMP 13-14: Office Add-Ins
+PyJWT>=2.8.0
+
+# COMP 15: Scanning Portal
+# (uses existing OCR deps)
+
+# COMP 16: LDAPS Auth
+ldap3>=2.9.1
+python-ldap>=3.4.4
+
+# COMP 17: Azure AD Auth
+# (uses httpx — already listed above)
+
+# File Bridge container (separate requirements-filebridge.txt)
+# fastapi>=0.110.0
+# uvicorn>=0.29.0

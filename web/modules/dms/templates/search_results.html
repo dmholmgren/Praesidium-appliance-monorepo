@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}{{ brand.platform_name }} — Search{% endblock %}
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-6">
+  <h1 class="text-2xl font-bold text-gray-900 mb-6">Document Search</h1>
+
+  <form hx-get="/dms/search" hx-target="#search-results" hx-push-url="true"
+        class="bg-white rounded-lg shadow p-6 mb-6">
+    <div class="flex gap-4">
+      <input type="text" name="q" value="{{ query }}" placeholder="Search documents..."
+             class="flex-1 border rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500">
+      <select name="doc_type" class="border rounded-lg px-3 py-2">
+        <option value="">All types</option>
+        <option value="pdf">PDF</option>
+        <option value="docx">Word</option>
+        <option value="xlsx">Excel</option>
+        <option value="msg">Email</option>
+      </select>
+      <button type="submit" class="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700">Search</button>
+    </div>
+  </form>
+
+  <div id="search-results">
+    {% if results.hits %}
+    <p class="text-sm text-gray-500 mb-4">{{ results.estimatedTotalHits }} results found</p>
+    <div class="space-y-4">
+      {% for hit in results.hits %}
+      <div class="bg-white rounded-lg shadow p-4 hover:shadow-md">
+        <a href="/dms/document/{{ hit.id }}"
+           class="text-lg font-medium text-blue-600 hover:underline">
+          {{ hit._formatted.name|safe if hit._formatted else hit.name }}
+        </a>
+        <div class="text-sm text-gray-500 mt-1">
+          {{ hit.matter_name or '' }} · {{ hit.file_type|upper }} · {{ hit.client_name or '' }}
+        </div>
+        {% if hit._formatted and hit._formatted.ocr_text %}
+        <p class="text-sm text-gray-600 mt-2">...{{ hit._formatted.ocr_text|safe }}...</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% elif query %}
+    <p class="text-gray-500 text-center py-12">No results found for "{{ query }}"</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

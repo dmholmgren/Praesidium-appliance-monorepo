@@ -1,0 +1,32 @@
+{# dms_checkout_tracker — document checkout and version history widget
+   Stub: renders placeholder until checkout/versioning schema is built.
+   AI intervention point (future): conflict detection on concurrent checkout,
+   version diff summary via Anthropic adapter.
+   Schema target: document_checkouts (document_id, checked_out_by, checked_out_at,
+                                       due_back, notes)
+                  document_versions (document_id, version_num, storage_path,
+                                     created_by, created_at, change_summary)
+#}
+<div style="display:flex; flex-direction:column;">
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              padding:8px 12px; border-bottom:1px solid var(--border-color,#f1f5f9);
+              flex-shrink:0;">
+    <span style="font-size:10px; font-weight:700; color:var(--muted);
+                 text-transform:uppercase; letter-spacing:0.06em;">
+      Checkout &amp; Versions
+    </span>
+    <span style="font-size:9px; background:#FEF3C7; color:#92400e;
+                 padding:1px 6px; border-radius:8px; font-weight:500;">
+      Coming Soon
+    </span>
+  </div>
+  <div style="padding:16px 12px; text-align:center; font-size:11px; color:var(--muted);">
+    <svg style="width:22px;height:22px;color:#D1D5DB;margin:0 auto 6px;display:block;"
+         fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293
+               l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+    </svg>
+    Checkout tracking and version history will appear here.
+  </div>
+</div>

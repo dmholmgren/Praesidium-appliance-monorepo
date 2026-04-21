@@ -1,0 +1,19 @@
+{# widgets/launcher_card.html
+   Generic launcher card — rendered for widget_type='launcher'
+   widget.target_route must be a valid full-page URL path.
+   No data service call. No HTMX swap on click — full navigation.
+#}
+<a href="{{ widget.target_route or '#' }}"
+   style="display:block; text-decoration:none; padding:14px 16px;
+          background:var(--surface,#fff); border:1px solid var(--border-color,#e2e8f0);
+          border-radius:8px; transition:box-shadow 0.15s, border-color 0.15s;
+          cursor:pointer;"
+   onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.08)'; this.style.borderColor='var(--primary,#1B2A4A)'"
+   onmouseout="this.style.boxShadow=''; this.style.borderColor='var(--border-color,#e2e8f0)'">
+  <div style="font-size:13px; font-weight:600; color:var(--text,#1a202c); margin-bottom:2px;">
+    {{ widget.widget_name }}
+  </div>
+  <div style="font-size:11px; color:var(--muted,#64748b);">
+    {{ widget.category | capitalize }} module →
+  </div>
+</a>

@@ -1,0 +1,18 @@
+{% for ev in events %}
+  {% set mag = ev.magnitude | float %}
+  <div style="border-left: 3px solid {% if mag > 0.6 %}#ef4444{% elif mag > 0.3 %}#f59e0b{% else %}#22c55e{% endif %};
+              padding: 0.5rem 0.75rem; margin-bottom: 0.4rem; background: #0f172a; border-radius: 0 4px 4px 0;">
+    <div class="flex items-center justify-between">
+      <span class="text-white text-xs font-semibold">{{ ev.dimension }} / {{ ev.drift_type }}</span>
+      <span class="text-xs font-bold {% if mag > 0.6 %}text-red-400{% elif mag > 0.3 %}text-yellow-400{% else %}text-green-400{% endif %}">
+        {{ "%.0f"|format(mag*100) }}%
+      </span>
+    </div>
+    <div class="text-gray-400 text-xs mt-0.5">{{ ev.description[:120] }}{% if ev.description|length > 120 %}…{% endif %}</div>
+    {% if ev.wiam_surfaced %}
+      <span style="background:#4c1d95;color:#ddd6fe;" class="text-xs px-1.5 py-0.5 rounded-full mt-1 inline-block">WIAM ↑</span>
+    {% endif %}
+  </div>
+{% else %}
+  <p class="text-gray-500 text-xs">No drift events recorded.</p>
+{% endfor %}

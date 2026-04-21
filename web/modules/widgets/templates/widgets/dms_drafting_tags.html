@@ -1,0 +1,47 @@
+{# dms_drafting_tags — cross-module document tagging widget
+   Stub: renders placeholder until document_tags schema is built.
+
+   Design intent:
+   - Tag Set 1 (Review Tags): eDiscovery-style relevance/privilege/hot doc flags.
+     These feed eDiscovery search filters and review workflows.
+   - Tag Set 2 (Work Product Tags): identifies documents for motion practice,
+     exhibit sets, drafting references. These feed the DMS and Drafting modules
+     so a tagged set can be assembled into a production or exhibit list without
+     manual download loops.
+
+   AI intervention point (future): suggest tag set membership based on document
+   content and matter context. Auto-populate exhibit sets from tagged corpus.
+
+   Schema target: document_tags (id, tenant_id, document_id, tag_set_id,
+                                  tag_type, tag_value, source_module,
+                                  created_by, created_at)
+                  document_tag_sets (id, tenant_id, matter_id, name,
+                                     tag_set_type [review|work_product],
+                                     created_by, created_at)
+#}
+<div style="display:flex; flex-direction:column;">
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              padding:8px 12px; border-bottom:1px solid var(--border-color,#f1f5f9);
+              flex-shrink:0;">
+    <span style="font-size:10px; font-weight:700; color:var(--muted);
+                 text-transform:uppercase; letter-spacing:0.06em;">
+      Drafting Tags
+    </span>
+    <span style="font-size:9px; background:#FEF3C7; color:#92400e;
+                 padding:1px 6px; border-radius:8px; font-weight:500;">
+      Coming Soon
+    </span>
+  </div>
+  <div style="padding:16px 12px; font-size:11px; color:var(--muted); line-height:1.6;">
+    <svg style="width:22px;height:22px;color:#D1D5DB;margin:0 auto 6px;display:block;"
+         fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828
+               l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/>
+    </svg>
+    <div style="text-align:center;">
+      Tag documents for motions, exhibit sets, and drafting references.
+      Tagged sets feed directly into DMS, Drafting, and eDiscovery.
+    </div>
+  </div>
+</div>

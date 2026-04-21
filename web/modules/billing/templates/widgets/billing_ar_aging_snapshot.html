@@ -1,0 +1,104 @@
+{# widgets/billing_ar_aging_snapshot.html
+   AR Aging Snapshot widget
+   Context vars (from widget_service.get_billing_ar_aging_snapshot):
+     buckets      — list of {label, count, amount, pct}
+     total_ar     — float
+     top_invoices — list of {invoice_number, client_name, balance, days_outstanding}
+     error        — str|None
+
+   Visualization only. Bar widths come from precomputed pct. No logic.
+#}
+
+<div style="display:flex; flex-direction:column; height:100%; min-height:0;">
+
+  {% if error %}
+  <div style="padding:10px 12px; font-size:11px; color:#dc2626;">
+    ⚠ {{ error }}
+  </div>
+
+  {% elif not buckets %}
+  <div style="flex:1; display:flex; align-items:center; justify-content:center;
+              text-align:center; color:var(--muted); padding:20px;">
+    <div>
+      <div style="font-size:22px; margin-bottom:6px;">✓</div>
+      <div style="font-size:12px; font-weight:500;">No outstanding AR</div>
+    </div>
+  </div>
+
+  {% else %}
+
+  {# Total header #}
+  <div style="padding:8px 12px; flex-shrink:0; border-bottom:1px solid #f1f5f9;">
+    <div style="font-size:11px; color:var(--muted);">Total Outstanding</div>
+    <div style="font-size:16px; font-weight:700; color:var(--text);
+                font-variant-numeric:tabular-nums;">
+      ${{ "{:,.0f}".format(total_ar) }}
+    </div>
+  </div>
+
+  {# Aging bars #}
+  <div style="padding:8px 12px; flex-shrink:0;">
+    {% for b in buckets %}
+    {% set is_overdue = b.label in ('61-90','91-120','120+') %}
+    <a href="/billing/invoices?aging={{ b.label }}"
+       style="display:block; margin-bottom:6px; text-decoration:none;"
+       title="{{ b.count }} invoice{{ 's' if b.count != 1 else '' }} · ${{ '{:,.0f}'.format(b.amount) }}">
+
+      <div style="display:flex; justify-content:space-between; margin-bottom:2px;">
+        <span style="font-size:10px; font-weight:600;
+                     color:{{ '#dc2626' if is_overdue and b.amount > 0 else 'var(--muted)' }};">
+          {{ b.label }} days
+        </span>
+        <span style="font-size:10px; color:var(--text); font-variant-numeric:tabular-nums;">
+          ${{ "{:,.0f}".format(b.amount) }}
+          {% if b.count %}
+            <span style="color:var(--muted); font-size:9px;">({{ b.count }})</span>
+          {% endif %}
+        </span>
+      </div>
+
+      {# Visual bar #}
+      <div style="height:5px; background:#f1f5f9; border-radius:3px; overflow:hidden;">
+        {% if b.pct > 0 %}
+        <div style="height:100%; width:{{ b.pct }}%;
+                    background:{{ '#dc2626' if is_overdue and b.amount > 0 else '#1B2A4A' }};
+                    border-radius:3px; transition:width 0.3s;"></div>
+        {% endif %}
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+
+  {# Top overdue invoices #}
+  {% if top_invoices %}
+  <div style="flex:1; min-height:0; overflow-y:auto; border-top:1px solid #f1f5f9;">
+    <div style="padding:5px 12px 3px; font-size:9px; font-weight:700; color:var(--muted);
+                text-transform:uppercase; letter-spacing:0.05em;">Top Outstanding</div>
+    {% for inv in top_invoices %}
+    <a href="/billing/invoices"
+       style="display:flex; align-items:center; justify-content:space-between;
+              padding:5px 12px; text-decoration:none; border-bottom:1px solid #f8fafc;"
+       onmouseover="this.style.background='#f8fafc'"
+       onmouseout="this.style.background=''">
+      <div style="flex:1; min-width:0;">
+        <div style="font-size:11px; font-weight:500; color:var(--text);
+                    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          {{ inv.client_name }}
+        </div>
+        <div style="font-size:9px; color:var(--muted);">
+          #{{ inv.invoice_number }} · {{ inv.days_outstanding }}d
+        </div>
+      </div>
+      <div style="font-size:11px; font-weight:600; flex-shrink:0; margin-left:8px;
+                  color:{{ '#dc2626' if inv.days_outstanding > 60 else 'var(--text)' }};
+                  font-variant-numeric:tabular-nums;">
+        ${{ "{:,.0f}".format(inv.balance) }}
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% endif %}
+
+</div>

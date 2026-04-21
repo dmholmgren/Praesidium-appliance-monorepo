@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block title %}Configure Exchange — Connectors{% endblock %}
+
+{% block content %}
+<div class="p-6 max-w-3xl mx-auto">
+
+  <div class="text-sm text-gray-400 mb-4">
+    <a href="/tenant-admin/connectors" class="hover:text-blue-500">Connectors</a>
+    <span class="mx-2">/</span>
+    <a href="/tenant-admin/connectors/exchange" class="hover:text-blue-500">Exchange Email</a>
+    <span class="mx-2">/</span>
+    <span class="text-gray-300">Configure</span>
+  </div>
+
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold text-white">Configure Exchange Email</h1>
+    <p class="text-sm text-gray-500 mt-1">
+      On-premises Exchange via EWS. Monitors mailboxes, feeds email threading and timesheet reconciliation.
+    </p>
+  </div>
+
+  {% if saved %}
+  <div class="mb-4 p-3 bg-green-900/40 border border-green-700 rounded text-green-300 text-sm">Configuration saved.</div>
+  {% endif %}
+  {% if error %}
+  <div class="mb-4 p-3 bg-red-900/40 border border-red-700 rounded text-red-300 text-sm">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="/tenant-admin/connectors/exchange/configure" class="space-y-6">
+
+    <!-- EWS Connection -->
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+      <h2 class="text-lg font-semibold text-white mb-1">Exchange Server</h2>
+      <p class="text-xs text-gray-400 mb-4">
+        On-premises Exchange via Exchange Web Services (EWS).
+        Use a service account with impersonation rights.
+      </p>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-300 mb-1">EWS URL</label>
+          <input type="text" name="config_ews_url"
+                 value="{{ config.ews_url or '' }}"
+                 placeholder="https://mail.hjmmlegal.com/EWS/Exchange.asmx"
+                 class="w-full border border-gray-600 rounded-lg px-3 py-2 text-sm font-mono bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <p class="text-xs text-gray-400 mt-1">Leave blank to use Autodiscover.</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-300 mb-1">Service Account Email</label>
+          <input type="email" name="config_service_account"
+                 value="{{ config.service_account or '' }}"
+                 placeholder="praesidium-svc@hjmmlegal.com"
+                 class="w-full border border-gray-600 rounded-lg px-3 py-2 text-sm bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-300 mb-1">Service Account Password</label>
+          <input type="password" name="config_service_password"
+                 placeholder="{{ '••••••••' if config.has_password else 'Enter password' }}"
+                 class="w-full border border-gray-600 rounded-lg px-3 py-2 text-sm bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <p class="text-xs text-gray-400 mt-1">Stored encrypted in credential vault. Leave blank to keep existing.</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-300 mb-1">Domain (optional)</label>
+          <input type="text" name="config_domain"
+                 value="{{ config.domain or '' }}"
+                 placeholder="HJMM"
+                 class="w-full border border-gray-600 rounded-lg px-3 py-2 text-sm bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <p class="text-xs text-gray-400 mt-1">Windows domain for NTLM auth. Leave blank for basic auth.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mailboxes -->
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+      <h2 class="text-lg font-semibold text-white mb-1">Mailboxes to Monitor</h2>
+      <p class="text-xs text-gray-400 mb-4">
+        One email address per line. The service account must have impersonation access to each mailbox.
+      </p>
+      <textarea name="config_mailboxes" rows="6"
+                placeholder="dholmgren@hjmmlegal.com&#10;partner2@hjmmlegal.com&#10;partner3@hjmmlegal.com"
+                class="w-full border border-gray-600 rounded-lg px-3 py-2 text-sm font-mono bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">{{ config.mailboxes or '' }}</textarea>
+    </div>
+
+    <!-- Crawl Settings -->
+    <div class="bg-gray-800 rounded-lg border border-gray-700 p-5">
+      <h2 class="text-lg font-semibold text-white mb-1">Crawl Settings</h2>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-300 mb-1">Sync Frequency</label>
+          <select name="sync_frequency"
+                  class="w-full border border-gray-600 rounded-lg px-3 py-2 text-sm bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="15min" {% if connector and connector.sync_frequency == '15min' %}selected{% endif %}>Every 15 minutes</option>
+            <option value="hourly" {% if not connector or connector.sync_frequency == 'hourly' %}selected{% endif %}>Every hour (recommended)</option>
+            <option value="4hour" {% if connector and connector.sync_frequency == '4hour' %}selected{% endif %}>Every 4 hours</option>
+            <option value="nightly" {% if connector and connector.sync_frequency == 'nightly' %}selected{% endif %}>Nightly</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-300 mb-1">Historical Import Start Date</label>
+          <input type="date" name="config_import_from"
+                 value="{{ config.import_from or '' }}"
+                 class="w-full border border-gray-600 rounded-lg px-3 py-2 text-sm bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <p class="text-xs text-gray-400 mt-1">Leave blank to crawl all mail. Recommended: set to firm go-live date.</p>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-300 mb-1">Folders to Monitor</label>
+          <input type="text" name="config_folders"
+                 value="{{ config.folders or 'Inbox,Sent Items,Deleted Items' }}"
+                 class="w-full border border-gray-600 rounded-lg px-3 py-2 text-sm bg-gray-700 text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <p class="text-xs text-gray-400 mt-1">Comma-separated folder names.</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <input type="checkbox" name="config_include_attachments" id="incl_attach"
+                 {% if config.include_attachments != 'false' %}checked{% endif %}
+                 class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-blue-600">
+          <label for="incl_attach" class="text-sm text-gray-300">
+            Index email attachments (PDF, Word, Excel)
+          </label>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-3">
+      <button type="submit"
+              class="px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
+        Save Configuration
+      </button>
+      <a href="/tenant-admin/connectors/exchange" class="px-4 py-2 text-sm text-gray-500 hover:text-gray-300">Cancel</a>
+    </div>
+
+  </form>
+</div>
+{% endblock %}

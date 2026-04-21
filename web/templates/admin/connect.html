@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title_suffix %} — Praesidium Connect{% endblock %}
+{% block page_title %}Praesidium Connect{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+
+  <div class="bg-blue-950/30 border border-blue-800/50 rounded-lg px-4 py-3 text-blue-200 text-xs">
+    <strong>Praesidium Connect</strong> — site registry for deployed instances.
+    Transmits: firmware version, VM health, license check-in. No client data.
+    Off by default — per-site opt-in only.
+  </div>
+
+  <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-800 bg-gray-800/50 flex items-center justify-between">
+      <h2 class="text-gray-300 font-medium text-sm">Registered Sites</h2>
+      <span class="text-gray-500 text-xs">{{ sites | length }} site{% if sites | length != 1 %}s{% endif %}</span>
+    </div>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-800">
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Site Code</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Name</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Firmware</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Last Check-in</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">License</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Connect</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in sites %}
+        <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+          <td class="px-4 py-2.5 font-mono text-xs text-white">{{ s.site_code }}</td>
+          <td class="px-4 py-2.5 text-xs text-gray-300">{{ s.site_name or '—' }}</td>
+          <td class="px-4 py-2.5 font-mono text-xs text-gray-400">{{ s.firmware_version or '—' }}</td>
+          <td class="px-4 py-2.5 text-xs text-gray-500">{{ s.last_checkin or 'never' }}</td>
+          <td class="px-4 py-2.5">
+            <span class="badge {% if s.license_status == 'active' %}status-ok{% else %}status-err{% endif %}">
+              {{ s.license_status or 'unknown' }}
+            </span>
+          </td>
+          <td class="px-4 py-2.5">
+            {% if s.connect_enabled %}
+            <span class="badge status-ok">enabled</span>
+            {% else %}
+            <span class="badge status-unk">disabled</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="px-4 py-8 text-center text-gray-500">
+          No sites registered.<br>
+          <span class="text-gray-600 text-xs">Sites register automatically on first connect check-in.</span>
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</div>
+{% endblock %}

@@ -1,0 +1,998 @@
+{% extends "base.html" %}
+{% block title %}Client Matter Cleanup — {{ branding.platform_name if branding else 'Praesidium' }}{% endblock %}
+
+{% block content %}
+<div style="padding:0;">
+
+  {% include "tenant_admin/_topnav.html" %}
+  {% include "tenant_admin/_dataquality_subnav.html" %}
+
+
+<style>
+  .ts-client-row {
+    background: var(--surface, #fff);
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 6px;
+    margin-bottom: 6px;
+    overflow: visible;
+  }
+  .ts-client-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: #f8fafc;
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+    cursor: pointer;
+    user-select: none;
+  }
+  .ts-client-header:hover { background: #f1f5f9; }
+  .ts-matter-list { display: none; }
+  .ts-matter-list.open { display: block; }
+  .ts-matter-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px 6px 32px;
+    border-bottom: 1px solid #f8fafc;
+    font-size: 12px;
+  }
+  .ts-matter-row:last-child { border-bottom: none; }
+  .ts-matter-row:hover { background: #fafafa; }
+  .inline-edit {
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 12px;
+    background: transparent;
+    color: var(--text);
+    width: 100%;
+  }
+  .inline-edit:focus {
+    border-color: #3b82f6;
+    background: #fff;
+    outline: none;
+  }
+  .inline-edit.modified { border-color: #f59e0b; background: #fffbeb; }
+  .type-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .type-lit  { background: #dbeafe; color: #1d4ed8; }
+  .type-txn  { background: #d1fae5; color: #065f46; }
+  .type-none { background: #f1f5f9; color: var(--muted); }
+  .matter-row-unclassified { background: #fff1f2 !important; border-left: 3px solid #f87171; }
+  .matter-row-classified   { background: #fefce8 !important; border-left: 3px solid #fde047; }
+  .matter-row-committed    { background: #dcfce7 !important; border-left: 3px solid #22c55e; opacity: 1 !important; }
+  .client-row-committed    { background: #f0fdf4 !important; opacity: 1 !important; }
+</style>
+
+{# ── Header ─────────────────────────────────────────────────────────────── #}
+<div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:12px;">
+  <div>
+    <h1 style="font-family:'Lora',serif; font-size:20px; font-weight:600; color:var(--text); margin-bottom:4px;">
+      Client Matter Cleanup
+    </h1>
+    <p style="font-size:12px; color:var(--muted); margin:0;">
+      {{ total_clients }} clients · {{ total_matters }} matters · {{ typed_count }} classified
+      &nbsp;|&nbsp;
+      <a href="/tenant-admin/client-merge" style="color:var(--primary,#1B2A4A); font-size:11px;">Client Merge →</a>
+    </p>
+  </div>
+  <div style="display:flex; gap:8px; align-items:center;">
+    <button onclick="classifyWithAI()"
+            style="padding:6px 14px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; cursor:pointer; background:var(--surface,#fff); color:var(--text);">
+      🤖 AI Classify Untyped
+    </button>
+    <button id="committed-toggle" onclick="toggleCommitted()"
+            style="padding:6px 14px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; cursor:pointer; background:var(--surface,#fff); color:var(--muted);">
+      Hide committed (0)
+    </button>
+    <button onclick="clearSessionCommits()"
+            style="padding:6px 10px; font-size:11px; border:none; background:none; cursor:pointer; color:var(--muted); text-decoration:underline;">
+      Clear session
+    </button>
+    <button onclick="commitSelected()" id="commit-btn"
+            class="btn-primary" style="padding:6px 16px; font-size:12px;" disabled>
+      Commit Selected
+    </button>
+  </div>
+</div>
+
+{# ── Filters + search ─────────────────────────────────────────────────────── #}
+<div style="display:flex; gap:8px; margin-bottom:12px; align-items:center; flex-wrap:wrap;">
+  <input type="text" id="filter-search" placeholder="Search client or matter name..."
+         oninput="filterRows(this.value)"
+         style="flex:1; min-width:200px; padding:6px 10px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; background:var(--surface,#fff); color:var(--text);">
+  <select id="filter-type" onchange="filterRows(document.getElementById('filter-search').value)"
+          style="padding:6px 10px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; background:var(--surface,#fff); color:var(--text);">
+    <option value="">All types</option>
+    <option value="unclassified" selected>Unclassified only</option>
+    <option value="litigation">Litigation</option>
+    <option value="transactional">Transactional</option>
+  </select>
+
+  <select id="filter-status" onchange="filterRows(document.getElementById('filter-search').value)"
+          style="padding:6px 10px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; background:var(--surface,#fff); color:var(--text);">
+    <option value="active">Active only</option>
+    <option value="all">All statuses</option>
+    <option value="closed">Closed only</option>
+  </select>
+
+  <label style="display:flex; align-items:center; gap:4px; font-size:12px; cursor:pointer; white-space:nowrap;">
+    <input type="checkbox" id="select-all-visible" onchange="selectAllVisible(this.checked)">
+    Select all visible
+  </label>
+
+  {# Bulk type assign #}
+  <select id="bulk-type" style="padding:6px 8px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; background:var(--surface,#fff); color:var(--text);">
+    <option value="">Bulk assign type...</option>
+    <option value="litigation">Litigation</option>
+    <option value="transactional">Transactional</option>
+  </select>
+  <button onclick="bulkAssignType()"
+          style="padding:6px 12px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; cursor:pointer; background:var(--surface,#fff);">
+    Apply
+  </button>
+</div>
+
+{# Pagination #}
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; font-size:12px; color:var(--muted);">
+  <span>Page {{ page }} of {{ total_pages }} ({{ total_clients }} clients, 50/page)</span>
+  <div style="display:flex; gap:6px;">
+    {% if page > 1 %}
+    <a href="?page={{ page-1 }}&status={{ status_filter }}" class="btn-secondary" style="padding:4px 10px; font-size:11px;">← Prev</a>
+    {% endif %}
+    {% if page < total_pages %}
+    <a href="?page={{ page+1 }}&status={{ status_filter }}" class="btn-secondary" style="padding:4px 10px; font-size:11px;">Next →</a>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Client list ─────────────────────────────────────────────────────────── #}
+<div id="client-list" style="margin-bottom:80px;">
+  {% for client in clients %}
+  <div class="ts-client-row" id="client-{{ client.id }}"
+       data-client-name="{{ client.client_name | lower }}"
+       data-has-unclassified="{{ 'true' if client.unclassified_count > 0 else 'false' }}">
+
+    {# Client header #}
+    <div class="ts-client-header" onclick="toggleClient('{{ client.id }}')">
+
+      {# Checkbox #}
+      <input type="checkbox" class="client-check" data-client-id="{{ client.id }}"
+             onclick="event.stopPropagation()"
+             onchange="onClientCheck(this)"
+             style="width:14px; height:14px; cursor:pointer; flex-shrink:0;">
+
+      {# Expand arrow #}
+      <span class="expand-arrow" id="arrow-{{ client.id }}"
+            style="font-size:10px; color:var(--muted); flex-shrink:0; transition:transform 0.15s;">▶</span>
+
+      {# Client name (inline edit) #}
+      <input type="text"
+             class="inline-edit client-name-input"
+             id="cname-{{ client.id }}"
+             value="{{ client.client_name }}"
+             data-original="{{ client.client_name }}"
+             onclick="event.stopPropagation()"
+             oninput="markModified(this)"
+             style="flex:1; font-weight:500; font-size:13px;"
+             title="Click to edit client name">
+
+      {# Matter count badges #}
+      <span style="font-size:10px; color:var(--muted); flex-shrink:0; white-space:nowrap;">
+        {{ client.matter_count }} matter{{ 's' if client.matter_count != 1 else '' }}
+        {% if client.unclassified_count > 0 %}
+        <span style="background:#fef9c3; color:#854d0e; padding:1px 5px; border-radius:8px; margin-left:4px;">
+          {{ client.unclassified_count }} untyped
+        </span>
+        {% endif %}
+      </span>
+
+      {# Client-level bulk type assign #}
+      <select class="client-type-select"
+              onclick="event.stopPropagation()"
+              onchange="bulkAssignClientType(this, '{{ client.id }}')"
+              style="padding:3px 6px; font-size:11px; border:1px solid var(--border-color,#e2e8f0); border-radius:4px; background:var(--surface,#fff); color:var(--text); flex-shrink:0;">
+        <option value="">All as...</option>
+        <option value="litigation">All Litigation</option>
+        <option value="transactional">All Transactional</option>
+      </select>
+      {# Add matter button #}
+      <button onclick="event.stopPropagation(); showAddMatter('{{ client.id }}', '{{ client.client_name | replace("'", "\'") }}')"
+              style="padding:3px 8px; font-size:11px; border:1px solid var(--border-color,#e2e8f0); border-radius:4px; background:var(--surface,#fff); color:var(--primary,#1B2A4A); cursor:pointer; flex-shrink:0; white-space:nowrap;">
+        + Matter
+      </button>
+      {# Merge into typeahead #}
+      <div style="position:relative; flex-shrink:0;" onclick="event.stopPropagation()">
+        <input type="text"
+               class="merge-search"
+               id="merge-search-{{ client.id }}"
+               placeholder="Merge into..."
+               autocomplete="off"
+               data-client-id="{{ client.id }}"
+               oninput="searchMergeClients(this, '{{ client.id }}')"
+               onfocus="searchMergeClients(this, '{{ client.id }}')"
+               onblur="hideMergeDropdown('{{ client.id }}')"
+               style="padding:3px 6px; font-size:11px; border:1px solid var(--border-color,#e2e8f0); border-radius:4px; width:140px; background:var(--surface,#fff); color:var(--text);">
+        <input type="hidden" id="merge-val-{{ client.id }}" value="">
+        <div id="merge-drop-{{ client.id }}"
+             style="display:none; position:absolute; right:0; top:100%; z-index:300;
+                    background:var(--surface,#fff); border:1px solid var(--border-color,#e2e8f0);
+                    border-radius:4px; box-shadow:0 4px 12px rgba(0,0,0,0.1);
+                    min-width:200px; max-height:180px; overflow-y:auto; font-size:11px; pointer-events:all; z-index:9999;">
+        </div>
+      </div>
+
+    </div>
+
+    {# Matter list #}
+    <div class="ts-matter-list" id="matters-{{ client.id }}">
+      {% for matter in client.matters %}
+      <div class="ts-matter-row"
+           id="matter-{{ matter.id }}"
+           data-matter-name="{{ matter.matter_name | lower }}"
+           data-matter-type="{{ matter.matter_type or '' }}">
+
+        {# Checkbox #}
+        <input type="checkbox" class="matter-check" data-matter-id="{{ matter.id }}"
+               onchange="onMatterCheck(this)"
+               style="width:13px; height:13px; cursor:pointer; flex-shrink:0;">
+
+        {# Matter name (inline edit) #}
+        <input type="text"
+               class="inline-edit matter-name-input"
+               id="mname-{{ matter.id }}"
+               value="{{ matter.matter_name }}"
+               data-original="{{ matter.matter_name }}"
+               oninput="markModified(this)"
+               style="flex:1;">
+
+        {# Matter number #}
+        <span style="font-size:10px; color:var(--muted); font-family:monospace; flex-shrink:0; white-space:nowrap;">
+          {{ matter.matter_number or '—' }}
+        </span>
+
+        {# Status badge #}
+        <span style="font-size:10px; color:var(--muted); flex-shrink:0;">{{ matter.status or 'active' }}</span>
+
+        {# Matter type selector #}
+        <select class="matter-type-select"
+                id="mtype-{{ matter.id }}"
+                data-matter-id="{{ matter.id }}"
+                onchange="onTypeChange(this)"
+                style="padding:2px 6px; font-size:11px; border:1px solid var(--border-color,#e2e8f0); border-radius:4px; background:var(--surface,#fff); color:var(--text); flex-shrink:0;">
+          <option value="" {% if not matter.matter_type %}selected{% endif %}>— type —</option>
+          <option value="litigation" {% if matter.matter_type == 'litigation' %}selected{% endif %}>Litigation</option>
+          <option value="transactional" {% if matter.matter_type == 'transactional' %}selected{% endif %}>Transactional</option>
+        </select>
+
+      </div>
+      {% endfor %}
+    </div>
+
+  </div>
+  {% endfor %}
+</div>
+
+{# ── Bottom pagination ──────────────────────────────────────────────────── #}
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:60px; font-size:12px; color:var(--muted); padding:0 4px;">
+  <span>Page {{ page }} of {{ total_pages }}</span>
+  <div style="display:flex; gap:6px;">
+    {% if page > 1 %}
+    <a href="?page={{ page-1 }}&status={{ status_filter }}" class="btn-secondary" style="padding:4px 10px; font-size:11px;">← Prev</a>
+    {% endif %}
+    {% if page < total_pages %}
+    <a href="?page={{ page+1 }}&status={{ status_filter }}" class="btn-secondary" style="padding:4px 10px; font-size:11px;">Next →</a>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Fixed bottom action bar ─────────────────────────────────────────────── #}
+<div style="position:fixed; bottom:0; left:0; right:0; background:var(--surface,#fff);
+            border-top:2px solid var(--border-color,#e2e8f0); padding:10px 24px;
+            display:flex; align-items:center; gap:16px; z-index:100;
+            box-shadow:0 -2px 8px rgba(0,0,0,0.06);">
+  <span id="selected-summary" style="font-size:13px; color:var(--muted);">
+    0 clients · 0 matters selected
+  </span>
+  <span style="flex:1;"></span>
+  <span id="commit-status" style="font-size:12px; color:var(--muted);"></span>
+  <button onclick="commitSelected()" id="commit-btn-bottom"
+          class="btn-primary" style="padding:8px 24px; font-size:13px;" disabled>
+    Commit Selected
+  </button>
+</div>
+
+{# ── Add Matter modal ──────────────────────────────────────────────────── #}
+<div id="add-matter-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); align-items:center; justify-content:center; z-index:200;">
+  <div style="background:var(--surface,#fff); border-radius:8px; padding:20px; width:400px; box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+    <h3 style="font-size:14px; font-weight:600; margin-bottom:4px;">Add Matter</h3>
+    <p style="font-size:12px; color:var(--muted); margin-bottom:14px;">
+      Adding to: <strong id="add-matter-client-name"></strong>
+    </p>
+    <input type="hidden" id="add-matter-client-id" value="">
+    <div style="margin-bottom:10px;">
+      <label style="display:block; font-size:12px; font-weight:500; margin-bottom:4px;">Matter Name</label>
+      <input type="text" id="add-matter-name"
+             placeholder="e.g. Smith v. Jones"
+             style="width:100%; padding:6px 8px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; box-sizing:border-box;">
+    </div>
+    <div style="margin-bottom:10px;">
+      <label style="display:block; font-size:12px; font-weight:500; margin-bottom:4px;">Matter Number (optional)</label>
+      <input type="text" id="add-matter-number"
+             placeholder="e.g. 2026-001"
+             style="width:100%; padding:6px 8px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; box-sizing:border-box;">
+    </div>
+    <div style="margin-bottom:14px;">
+      <label style="display:block; font-size:12px; font-weight:500; margin-bottom:4px;">Matter Type</label>
+      <select id="add-matter-type"
+              style="width:100%; padding:6px 8px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; background:var(--surface,#fff);">
+        <option value="">— select type —</option>
+        <option value="litigation">Litigation</option>
+        <option value="transactional">Transactional</option>
+      </select>
+    </div>
+    <div id="add-matter-status" style="font-size:12px; min-height:16px; margin-bottom:8px;"></div>
+    <div style="display:flex; justify-content:flex-end; gap:8px;">
+      <button onclick="closeAddMatter()"
+              style="padding:6px 14px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; cursor:pointer; background:var(--surface,#fff);">
+        Cancel
+      </button>
+      <button onclick="submitAddMatter()" class="btn-primary" style="padding:6px 16px; font-size:12px;">
+        Add Matter
+      </button>
+    </div>
+  </div>
+</div>
+
+{# ── AI Classification result modal ─────────────────────────────────────── #}
+<div id="ai-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); align-items:center; justify-content:center; z-index:200;">
+  <div style="background:var(--surface,#fff); border-radius:8px; padding:20px; width:560px; max-height:80vh; display:flex; flex-direction:column; box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+    <h3 style="font-size:14px; font-weight:600; margin-bottom:4px;">AI Classification Results</h3>
+    <p style="font-size:12px; color:var(--muted); margin-bottom:12px;">
+      Review AI suggestions. Accept all or adjust individually before committing.
+    </p>
+    <div id="ai-results" style="flex:1; overflow-y:auto; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; margin-bottom:12px;"></div>
+    <div id="ai-status" style="font-size:12px; color:var(--muted); margin-bottom:8px; min-height:16px;"></div>
+    <div style="display:flex; justify-content:flex-end; gap:8px;">
+      <button onclick="closeAIModal()"
+              style="padding:6px 14px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; cursor:pointer; background:var(--surface,#fff);">
+        Cancel
+      </button>
+      <button onclick="commitAISuggestions()" class="btn-primary" style="padding:6px 16px; font-size:12px;">
+        Accept &amp; Commit All
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── State ────────────────────────────────────────────────────────────────
+const pendingClients  = {};  // clientId -> {name, mergeInto}
+const pendingMatters  = {};  // matterId -> {name, type}
+const selectedClients = new Set();
+const selectedMatters = new Set();
+
+// ── Client expand/collapse ────────────────────────────────────────────────
+function toggleClient(clientId) {
+  const list  = document.getElementById('matters-' + clientId);
+  const arrow = document.getElementById('arrow-' + clientId);
+  const open  = list.classList.toggle('open');
+  arrow.style.transform = open ? 'rotate(90deg)' : '';
+}
+
+// ── Inline edit tracking ─────────────────────────────────────────────────
+function markModified(input) {
+  if (input.value !== input.dataset.original) {
+    input.classList.add('modified');
+  } else {
+    input.classList.remove('modified');
+  }
+  updateSelectionCount();
+}
+
+// ── Checkbox handling ────────────────────────────────────────────────────
+function onClientCheck(cb) {
+  const clientId = cb.dataset.clientId;
+  if (cb.checked) {
+    selectedClients.add(clientId);
+    // Auto-check all matters under this client
+    document.querySelectorAll(`#matters-${clientId} .matter-check`).forEach(m => {
+      m.checked = true;
+      selectedMatters.add(m.dataset.matterId);
+    });
+  } else {
+    selectedClients.delete(clientId);
+    document.querySelectorAll(`#matters-${clientId} .matter-check`).forEach(m => {
+      m.checked = false;
+      selectedMatters.delete(m.dataset.matterId);
+    });
+  }
+  updateSelectionCount();
+}
+
+function onMatterCheck(cb) {
+  const matterId = cb.dataset.matterId;
+  if (cb.checked) selectedMatters.add(matterId);
+  else selectedMatters.delete(matterId);
+  updateSelectionCount();
+}
+
+function onTypeChange(select) {
+  const matterId = select.dataset.matterId;
+  selectedMatters.add(matterId);
+  // Check the matter checkbox
+  const cb = document.querySelector(`#matter-${matterId} .matter-check`);
+  if (cb) cb.checked = true;
+  updateSelectionCount();
+}
+
+
+// ── Client-level bulk type assign ────────────────────────────────────────
+function bulkAssignClientType(select, clientId) {
+  const type = select.value;
+  if (!type) return;
+
+  // Select all untyped matters under this client and assign type
+  const matters = document.querySelectorAll(`#matters-${clientId} .ts-matter-row`);
+  matters.forEach(row => {
+    const matterId = row.id.replace('matter-', '');
+    const typeSelect = document.getElementById('mtype-' + matterId);
+    if (typeSelect) {
+      typeSelect.value = type;
+      selectedMatters.add(matterId);
+      const cb = row.querySelector('.matter-check');
+      if (cb) cb.checked = true;
+    }
+  });
+
+  // Also select the client checkbox
+  selectedClients.add(clientId);
+  const cb = document.querySelector(`#client-${clientId} .client-check`);
+  if (cb) cb.checked = true;
+
+  // Reset the selector
+  select.value = '';
+  updateSelectionCount();
+
+  // Auto-expand to show the assigned matters
+  const list = document.getElementById('matters-' + clientId);
+  const arrow = document.getElementById('arrow-' + clientId);
+  if (list && !list.classList.contains('open')) {
+    list.classList.add('open');
+    if (arrow) arrow.style.transform = 'rotate(90deg)';
+  }
+}
+
+
+// ── Add Matter ────────────────────────────────────────────────────────────
+function showAddMatter(clientId, clientName) {
+  document.getElementById('add-matter-client-id').value = clientId;
+  document.getElementById('add-matter-client-name').textContent = clientName;
+  document.getElementById('add-matter-name').value = '';
+  document.getElementById('add-matter-number').value = '';
+  document.getElementById('add-matter-type').value = '';
+  document.getElementById('add-matter-status').textContent = '';
+  const modal = document.getElementById('add-matter-modal');
+  modal.style.display = 'flex';
+  setTimeout(() => document.getElementById('add-matter-name').focus(), 50);
+}
+
+function closeAddMatter() {
+  document.getElementById('add-matter-modal').style.display = 'none';
+}
+
+async function submitAddMatter() {
+  const clientId   = document.getElementById('add-matter-client-id').value;
+  const name       = document.getElementById('add-matter-name').value.trim();
+  const number     = document.getElementById('add-matter-number').value.trim();
+  const type       = document.getElementById('add-matter-type').value;
+  const statusEl   = document.getElementById('add-matter-status');
+
+  if (!name) { statusEl.style.color='#dc2626'; statusEl.textContent='Matter name is required.'; return; }
+
+  statusEl.style.color = 'var(--muted)';
+  statusEl.textContent = 'Creating...';
+
+  try {
+    const resp = await fetch('/tenant-admin/client-matter-cleanup/add-matter', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({client_id: clientId, matter_name: name, matter_number: number, matter_type: type || null}),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      statusEl.style.color = '#166534';
+      statusEl.textContent = '✓ Matter created';
+      setTimeout(() => {
+        closeAddMatter();
+        // Add matter row to the client's matter list
+        addMatterRowToClient(clientId, data.matter_id, name, number, type);
+      }, 800);
+    } else {
+      statusEl.style.color = '#dc2626';
+      statusEl.textContent = 'Error: ' + (data.detail || 'failed');
+    }
+  } catch(e) {
+    statusEl.style.color = '#dc2626';
+    statusEl.textContent = 'Network error';
+  }
+}
+
+function addMatterRowToClient(clientId, matterId, name, number, type) {
+  const list = document.getElementById('matters-' + clientId);
+  if (!list) return;
+
+  // Expand the client row
+  if (!list.classList.contains('open')) {
+    list.classList.add('open');
+    const arrow = document.getElementById('arrow-' + clientId);
+    if (arrow) arrow.style.transform = 'rotate(90deg)';
+  }
+
+  const typeClass = type === 'litigation' ? 'matter-row-classified' : type === 'transactional' ? 'matter-row-classified' : 'matter-row-unclassified';
+  const div = document.createElement('div');
+  div.className = `ts-matter-row ${typeClass}`;
+  div.id = 'matter-' + matterId;
+  div.dataset.matterName = name.toLowerCase();
+  div.dataset.matterType = type || '';
+  div.innerHTML = `
+    <input type="checkbox" class="matter-check" data-matter-id="${matterId}"
+           onchange="onMatterCheck(this)"
+           style="width:13px; height:13px; cursor:pointer; flex-shrink:0;">
+    <input type="text" class="inline-edit matter-name-input" id="mname-${matterId}"
+           value="${name}" data-original="${name}"
+           oninput="markModified(this)"
+           onblur="autoSaveMatterName(this)"
+           style="flex:1;">
+    <span style="font-size:10px; color:var(--muted); font-family:monospace; flex-shrink:0; white-space:nowrap;">${number || '—'}</span>
+    <span style="font-size:10px; color:var(--muted); flex-shrink:0;">active</span>
+    <select class="matter-type-select" id="mtype-${matterId}" data-matter-id="${matterId}"
+            onchange="onTypeChange(this)"
+            style="padding:2px 6px; font-size:11px; border:1px solid var(--border-color,#e2e8f0); border-radius:4px; background:var(--surface,#fff); flex-shrink:0;">
+      <option value="" ${!type ? 'selected' : ''}>— type —</option>
+      <option value="litigation" ${type==='litigation' ? 'selected' : ''}>Litigation</option>
+      <option value="transactional" ${type==='transactional' ? 'selected' : ''}>Transactional</option>
+    </select>`;
+  list.appendChild(div);
+}
+
+// ── Merge typeahead ──────────────────────────────────────────────────────
+const mergeTimers = {};
+
+async function searchMergeClients(input, clientId) {
+  const q = input.value.trim();
+  const drop = document.getElementById('merge-drop-' + clientId);
+
+  clearTimeout(mergeTimers[clientId]);
+  if (!q || q.length < 1) {
+    drop.style.display = 'none';
+    document.getElementById('merge-val-' + clientId).value = '';
+    return;
+  }
+
+  mergeTimers[clientId] = setTimeout(async () => {
+    try {
+      const resp = await fetch(`/tenant-admin/client-matter-cleanup/search-clients?q=${encodeURIComponent(q)}&exclude=${clientId}`);
+      const data = await resp.json();
+      if (!data.clients || !data.clients.length) {
+        drop.innerHTML = '<div style="padding:8px 10px; color:var(--muted);">No matches</div>';
+        drop.style.display = 'block';
+        return;
+      }
+      drop.innerHTML = data.clients.map(c => `
+        <div style="padding:6px 10px; cursor:pointer; border-bottom:1px solid #f8fafc;"
+             onmouseover="this.style.background='#f1f5f9'"
+             onmouseout="this.style.background=''"
+             onmousedown="selectMergeTarget('${clientId}', '${c.id}', this.dataset.name)" data-name="${c.name.replace(/"/g, '&quot;')}">
+          <div style="font-weight:500; color:var(--text);">${escHtml(c.name)}</div>
+          <div style="font-size:10px; color:var(--muted);">${c.matter_count} matter${c.matter_count !== 1 ? 's' : ''}</div>
+        </div>`).join('');
+      drop.style.display = 'block';
+    } catch(e) {
+      drop.style.display = 'none';
+    }
+  }, 300);
+}
+
+function selectMergeTarget(clientId, targetId, targetName) {
+  if (typeof targetName === "object") targetName = targetName.getAttribute("data-name") || "";
+  document.getElementById('merge-search-' + clientId).value = targetName;
+  document.getElementById('merge-val-' + clientId).value = targetId;
+  document.getElementById('merge-drop-' + clientId).style.display = 'none';
+  // Mark client as selected
+  selectedClients.add(clientId);
+  const cb = document.querySelector(`#client-${clientId} .client-check`);
+  if (cb) cb.checked = true;
+  updateSelectionCount();
+}
+
+function hideMergeDropdown(clientId) {
+  setTimeout(() => {
+    const drop = document.getElementById('merge-drop-' + clientId);
+    if (drop) drop.style.display = 'none';
+  }, 300);
+}
+
+function escHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+            .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+function onMergeSelect(select, clientId) {
+  // Legacy - kept for compatibility
+  if (select.value) {
+    selectedClients.add(clientId);
+    const cb = document.querySelector(`#client-${clientId} .client-check`);
+    if (cb) cb.checked = true;
+  }
+  updateSelectionCount();
+}
+
+function selectAllVisible(checked) {
+  document.querySelectorAll('.ts-client-row:not([style*="display: none"]) .client-check').forEach(cb => {
+    cb.checked = checked;
+    const clientId = cb.dataset.clientId;
+    if (checked) selectedClients.add(clientId);
+    else selectedClients.delete(clientId);
+  });
+  document.querySelectorAll('.ts-matter-row:not([style*="display: none"]) .matter-check').forEach(cb => {
+    cb.checked = checked;
+    const matterId = cb.dataset.matterId;
+    if (checked) selectedMatters.add(matterId);
+    else selectedMatters.delete(matterId);
+  });
+  updateSelectionCount();
+}
+
+function updateSelectionCount() {
+  // Count modified items
+  const modifiedMatters = document.querySelectorAll('.matter-name-input.modified, .matter-type-select').length;
+  const checkedMatters  = selectedMatters.size;
+  const checkedClients  = selectedClients.size;
+
+  const summary = `${checkedClients} client${checkedClients !== 1 ? 's' : ''} · ${checkedMatters} matter${checkedMatters !== 1 ? 's' : ''} selected`;
+  document.getElementById('selected-summary').textContent = summary;
+
+  const hasWork = checkedClients > 0 || checkedMatters > 0;
+  ['commit-btn', 'commit-btn-bottom'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    btn.disabled = !hasWork;
+    btn.style.opacity = hasWork ? '1' : '0.5';
+    btn.style.cursor  = hasWork ? 'pointer' : 'not-allowed';
+    btn.textContent   = hasWork ? `Commit Selected` : 'Commit Selected';
+  });
+}
+
+// ── Bulk type assign ─────────────────────────────────────────────────────
+function bulkAssignType() {
+  const type = document.getElementById('bulk-type').value;
+  if (!type) return;
+
+  document.querySelectorAll('.matter-check:checked').forEach(cb => {
+    const matterId = cb.dataset.matterId;
+    const select = document.getElementById('mtype-' + matterId);
+    if (select) {
+      select.value = type;
+      selectedMatters.add(matterId);
+    }
+  });
+  updateSelectionCount();
+}
+
+// ── Filter ────────────────────────────────────────────────────────────────
+function filterRows(q) {
+  q = (q || '').toLowerCase().trim();
+  const typeFilter   = document.getElementById('filter-type').value;
+  const statusFilter = document.getElementById('filter-status').value;
+
+  document.querySelectorAll('.ts-client-row').forEach(clientRow => {
+    const clientName = clientRow.dataset.clientName || '';
+    let anyMatterVisible = false;
+
+    clientRow.querySelectorAll('.ts-matter-row').forEach(mRow => {
+      const mName = mRow.dataset.matterName || '';
+      const mType = mRow.dataset.matterType || '';
+
+      let show = true;
+      if (q && !clientName.includes(q) && !mName.includes(q)) show = false;
+      if (typeFilter === 'unclassified' && mType) show = false;
+      if (typeFilter === 'litigation'    && mType !== 'litigation') show = false;
+      if (typeFilter === 'transactional' && mType !== 'transactional') show = false;
+
+      mRow.style.display = show ? '' : 'none';
+      if (show) anyMatterVisible = true;
+    });
+
+    const clientVisible = !q || clientName.includes(q) || anyMatterVisible;
+    clientRow.style.display = clientVisible ? '' : 'none';
+
+    // Auto-expand if filtered
+    if (q && anyMatterVisible) {
+      document.getElementById('matters-' + clientRow.id.replace('client-','')).classList.add('open');
+      const arrow = clientRow.querySelector('.expand-arrow');
+      if (arrow) arrow.style.transform = 'rotate(90deg)';
+    }
+  });
+}
+
+// ── Commit ────────────────────────────────────────────────────────────────
+async function commitSelected() {
+  const statusEl = document.getElementById('commit-status');
+  statusEl.textContent = 'Saving...';
+  statusEl.style.color = 'var(--muted)';
+
+  // Collect all changes from selected matters
+  const matterUpdates = [];
+  selectedMatters.forEach(matterId => {
+    const nameInput = document.getElementById('mname-' + matterId);
+    const typeSelect = document.getElementById('mtype-' + matterId);
+    const update = {matter_id: matterId};
+    if (nameInput && nameInput.value !== nameInput.dataset.original) {
+      update.matter_name = nameInput.value.trim();
+    }
+    if (typeSelect && typeSelect.value) {
+      update.matter_type = typeSelect.value;
+    }
+    if (Object.keys(update).length > 1) matterUpdates.push(update);
+  });
+
+  // Collect client updates
+  const clientUpdates = [];
+  selectedClients.forEach(clientId => {
+    const nameInput = document.getElementById('cname-' + clientId);
+    const mergeVal = document.getElementById("merge-val-" + clientId);
+    const update = {client_id: clientId};
+    if (nameInput && nameInput.value !== nameInput.dataset.original) {
+      update.client_name = nameInput.value.trim();
+    }
+    if (mergeVal && mergeVal.value) {
+      update.merge_into = mergeVal.value;
+    }
+    if (Object.keys(update).length > 1) clientUpdates.push(update);
+  });
+
+  if (!matterUpdates.length && !clientUpdates.length) {
+    statusEl.style.color = '#dc2626';
+    statusEl.textContent = 'No changes to commit — edit names or assign types first.';
+    return;
+  }
+
+  try {
+    const resp = await fetch('/tenant-admin/client-matter-cleanup/commit', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({matter_updates: matterUpdates, client_updates: clientUpdates}),
+    });
+    const data = await resp.json();
+
+    if (resp.ok) {
+      statusEl.style.color = '#166534';
+      statusEl.textContent = `✓ ${data.matters_updated} matters · ${data.clients_updated} clients updated`;
+
+      // Session-aware dimming
+      const SK = 'cmc_committed';
+      const committed = JSON.parse(sessionStorage.getItem(SK) || '{}');
+
+      matterUpdates.forEach(u => {
+        const inp = document.getElementById('mname-' + u.matter_id);
+        if (inp && u.matter_name) { inp.dataset.original = u.matter_name; inp.classList.remove('modified'); }
+        const row = document.getElementById('matter-' + u.matter_id);
+        if (row) {
+          if (u.matter_type) row.dataset.matterType = u.matter_type;
+          row.classList.remove('matter-row-unclassified', 'matter-row-classified');
+          row.classList.add('matter-row-committed');
+          row.style.opacity = '';
+          row.title = 'Committed this session';
+          committed['m_' + u.matter_id] = true;
+        }
+      });
+      clientUpdates.forEach(u => {
+        if (u.merge_into) {
+          const row = document.getElementById('client-' + u.client_id);
+          if (row) { row.classList.add('client-row-committed'); row.style.opacity = ''; row.title = 'Merged this session'; committed['c_' + u.client_id] = true; }
+          const ms = document.getElementById('merge-search-' + u.client_id);
+          const mv = document.getElementById('merge-val-' + u.client_id);
+          if (ms) ms.value = ''; if (mv) mv.value = '';
+        } else {
+          const inp = document.getElementById('cname-' + u.client_id);
+          if (inp && u.client_name) { inp.dataset.original = u.client_name; inp.classList.remove('modified'); }
+          if (u.client_name) { committed['c_' + u.client_id] = true; }
+        }
+      });
+      sessionStorage.setItem(SK, JSON.stringify(committed));
+      // Show all types after commit so committed rows stay visible
+      const ft = document.getElementById('filter-type');
+      if (ft) { ft.value = ''; filterRows(document.getElementById('filter-search').value || ''); }
+
+      // Update toggle count
+      const tog = document.getElementById('committed-toggle');
+      if (tog) tog.textContent = `Hide committed (${Object.keys(committed).length})`;
+
+      // Clear selections
+      selectedClients.clear();
+      selectedMatters.clear();
+      document.querySelectorAll('.client-check, .matter-check').forEach(cb => cb.checked = false);
+      updateSelectionCount();
+
+    } else {
+      statusEl.style.color = '#dc2626';
+      statusEl.textContent = 'Error: ' + (data.detail || 'Commit failed');
+    }
+  } catch(e) {
+    statusEl.style.color = '#dc2626';
+    statusEl.textContent = 'Network error — retry';
+  }
+}
+
+// ── AI Classification ────────────────────────────────────────────────────
+let aiSuggestions = [];
+
+async function classifyWithAI() {
+  const modal = document.getElementById('ai-modal');
+  const resultsEl = document.getElementById('ai-results');
+  const statusEl = document.getElementById('ai-status');
+
+  modal.style.display = 'flex';
+  resultsEl.innerHTML = '<div style="padding:16px; font-size:12px; color:var(--muted);">Analyzing matter names with AI...</div>';
+  statusEl.textContent = '';
+
+  try {
+    const resp = await fetch('/tenant-admin/client-matter-cleanup/ai-classify', {method: 'POST'});
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      resultsEl.innerHTML = `<div style="padding:16px; font-size:12px; color:#dc2626;">Classification failed: ${data.detail || 'unknown error'}</div>`;
+      return;
+    }
+
+    aiSuggestions = data.suggestions || [];
+    statusEl.textContent = `${aiSuggestions.length} matters classified`;
+
+    if (!aiSuggestions.length) {
+      resultsEl.innerHTML = '<div style="padding:16px; font-size:12px; color:var(--muted);">No unclassified matters found.</div>';
+      return;
+    }
+
+    resultsEl.innerHTML = `
+      <div style="display:grid; grid-template-columns:1fr auto auto auto; gap:0; font-size:11px;">
+        <div style="padding:6px 10px; font-weight:600; color:var(--muted); background:#f8fafc; border-bottom:1px solid #e2e8f0;">Matter</div>
+        <div style="padding:6px 10px; font-weight:600; color:var(--muted); background:#f8fafc; border-bottom:1px solid #e2e8f0;">Client</div>
+        <div style="padding:6px 10px; font-weight:600; color:var(--muted); background:#f8fafc; border-bottom:1px solid #e2e8f0; text-align:center;">AI Suggests</div>
+        <div style="padding:6px 10px; font-weight:600; color:var(--muted); background:#f8fafc; border-bottom:1px solid #e2e8f0;">Confirm</div>
+        ${aiSuggestions.map((s, i) => `
+          <div style="padding:5px 10px; border-bottom:1px solid #f8fafc; font-size:11px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${s.matter_name}">${s.matter_name}</div>
+          <div style="padding:5px 10px; border-bottom:1px solid #f8fafc; font-size:10px; color:var(--muted);">${s.client_name || '—'}</div>
+          <div style="padding:5px 10px; border-bottom:1px solid #f8fafc; text-align:center;">
+            <span class="type-badge ${s.suggested_type === 'litigation' ? 'type-lit' : 'type-txn'}" style="font-size:10px;">
+              ${s.suggested_type} ${s.confidence ? '(' + Math.round(s.confidence * 100) + '%)' : ''}
+            </span>
+          </div>
+          <div style="padding:5px 10px; border-bottom:1px solid #f8fafc;">
+            <select id="ai-type-${i}" style="padding:2px 4px; font-size:10px; border:1px solid var(--border-color,#e2e8f0); border-radius:3px;">
+              <option value="litigation" ${s.suggested_type === 'litigation' ? 'selected' : ''}>Litigation</option>
+              <option value="transactional" ${s.suggested_type === 'transactional' ? 'selected' : ''}>Transactional</option>
+              <option value="skip">Skip</option>
+            </select>
+          </div>
+        `).join('')}
+      </div>`;
+
+  } catch(e) {
+    resultsEl.innerHTML = '<div style="padding:16px; font-size:12px; color:#dc2626;">Network error.</div>';
+  }
+}
+
+function closeAIModal() {
+  document.getElementById('ai-modal').style.display = 'none';
+  aiSuggestions = [];
+}
+
+async function commitAISuggestions() {
+  const statusEl = document.getElementById('ai-status');
+  const updates = aiSuggestions
+    .map((s, i) => {
+      const sel = document.getElementById('ai-type-' + i);
+      const type = sel ? sel.value : s.suggested_type;
+      return type !== 'skip' ? {matter_id: s.matter_id, matter_type: type} : null;
+    })
+    .filter(Boolean);
+
+  if (!updates.length) { closeAIModal(); return; }
+
+  statusEl.textContent = 'Committing...';
+  try {
+    const resp = await fetch('/tenant-admin/client-matter-cleanup/commit', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({matter_updates: updates, client_updates: []}),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      statusEl.style.color = '#166534';
+      statusEl.textContent = `✓ ${data.matters_updated} matters classified`;
+      setTimeout(() => { closeAIModal(); window.location.reload(); }, 1500);
+    } else {
+      statusEl.style.color = '#dc2626';
+      statusEl.textContent = 'Error: ' + (data.detail || 'failed');
+    }
+  } catch(e) {
+    statusEl.style.color = '#dc2626';
+    statusEl.textContent = 'Network error';
+  }
+}
+
+
+// ── Session committed toggle ──────────────────────────────────────────────
+let _showCommitted = true;
+function toggleCommitted() {
+  _showCommitted = !_showCommitted;
+  const SK = 'cmc_committed';
+  const committed = JSON.parse(sessionStorage.getItem(SK) || '{}');
+  Object.keys(committed).forEach(key => {
+    const id = key.slice(2);
+    const row = document.getElementById((key.startsWith('m_') ? 'matter-' : 'client-') + id);
+    if (row) row.style.display = _showCommitted ? '' : 'none';
+  });
+  const tog = document.getElementById('committed-toggle');
+  if (tog) tog.textContent = `${_showCommitted ? 'Hide' : 'Show'} committed (${Object.keys(committed).length})`;
+}
+function clearSessionCommits() {
+  sessionStorage.removeItem('cmc_committed');
+  document.querySelectorAll('.ts-client-row, .ts-matter-row').forEach(r => {
+    r.style.opacity = ''; r.style.display = ''; r.title = '';
+  });
+  const tog = document.getElementById('committed-toggle');
+  if (tog) tog.textContent = 'Hide committed (0)';
+}
+// ── Init ──────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  updateSelectionCount();
+
+  // Color rows by classification status
+  document.querySelectorAll('.ts-matter-row').forEach(row => {
+    const mtype = row.dataset.matterType || '';
+    if (!mtype) row.classList.add('matter-row-unclassified');
+    else row.classList.add('matter-row-classified');
+  });
+
+  // Restore session committed highlights
+  const SK = 'cmc_committed';
+  const committed = JSON.parse(sessionStorage.getItem(SK) || '{}');
+  Object.keys(committed).forEach(key => {
+    const id = key.slice(2);
+    const row = document.getElementById((key.startsWith('m_') ? 'matter-' : 'client-') + id);
+    if (row) {
+      if (key.startsWith('m_')) {
+        row.classList.remove('matter-row-unclassified', 'matter-row-classified');
+        row.classList.add('matter-row-committed');
+      } else {
+        row.classList.add('client-row-committed');
+      }
+      row.style.opacity = '';
+      row.title = 'Committed this session';
+    }
+  });
+  const tog = document.getElementById('committed-toggle');
+  if (tog) tog.textContent = `Hide committed (${Object.keys(committed).length})`;
+
+  // Auto-expand clients with few matters
+  document.querySelectorAll('.ts-client-row').forEach(row => {
+    const clientId = row.id.replace('client-','');
+    const matterCount = row.querySelectorAll('.ts-matter-row').length;
+    if (matterCount <= 3) {
+      document.getElementById('matters-' + clientId)?.classList.add('open');
+      document.getElementById('arrow-' + clientId).style.transform = 'rotate(90deg)';
+    }
+  });
+});
+</script>
+</div>
+{% endblock %}

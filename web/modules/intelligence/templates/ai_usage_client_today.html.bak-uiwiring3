@@ -1,0 +1,27 @@
+{# widgets/ai_usage_client_today.html
+   Compact client-scoped AI Today widget — fits KPI card slot.
+#}
+<div class="card" style="padding:14px; min-height:80px;
+                         border-radius:8px; background:var(--surface,#fff);
+                         border:1px solid var(--border,#e2e8f0);
+                         display:flex; flex-direction:column;
+                         justify-content:space-between;">
+  <div>
+    <div style="font-size:10px; font-weight:600; color:var(--muted);
+                text-transform:uppercase; letter-spacing:0.05em;">
+      AI Usage (Today)
+    </div>
+    <div style="font-size:9px; color:var(--muted); margin-top:1px;">
+      Today
+    </div>
+  </div>
+  <div style="display:flex; align-items:baseline; gap:10px;">
+    <div style="font-size:17px; font-weight:700; color:var(--text);
+                font-variant-numeric:tabular-nums; line-height:1;">
+      {% if empty_state %}$0.0000{% else %}${{ "{:,.4f}".format(today.total) }}{% endif %}
+    </div>
+    <div style="font-size:10px; color:var(--muted);">
+      {% if empty_state %}0 calls{% else %}{{ today.calls }} call{{ 's' if today.calls != 1 else '' }}{% endif %}
+    </div>
+  </div>
+</div>

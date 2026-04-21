@@ -1,0 +1,71 @@
+{# widgets/billing_client_kpi.html
+   Client KPI row — 4 tiles: WIP, AR, Total Billed, Collected
+   Context vars (from widget_service.get_billing_client_kpi):
+     wip_value, wip_hours
+     ar_balance, open_invoice_count
+     total_billed, total_slip_count
+     total_collected, payment_count
+     error — str|None
+
+   Visualization only. All values precomputed in service.
+#}
+
+{% if error %}
+<div style="padding:10px; font-size:11px; color:#dc2626;">⚠ {{ error }}</div>
+{% else %}
+<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px;">
+
+  {# WIP Unbilled #}
+  <div class="card" style="padding:14px;">
+    <div style="font-size:10px; color:var(--muted); text-transform:uppercase;
+                letter-spacing:.05em; margin-bottom:4px;">WIP Unbilled</div>
+    <div style="font-size:22px; font-weight:600; color:#b45309;
+                font-variant-numeric:tabular-nums;">
+      ${{ "{:,.0f}".format(wip_value) }}
+    </div>
+    <div style="font-size:11px; color:var(--muted); margin-top:2px;">
+      {{ "{:.1f}".format(wip_hours) }}h unbilled
+    </div>
+  </div>
+
+  {# AR Outstanding #}
+  <div class="card" style="padding:14px;">
+    <div style="font-size:10px; color:var(--muted); text-transform:uppercase;
+                letter-spacing:.05em; margin-bottom:4px;">AR Outstanding</div>
+    <div style="font-size:22px; font-weight:600; color:#7f1d1d;
+                font-variant-numeric:tabular-nums;">
+      ${{ "{:,.0f}".format(ar_balance) }}
+    </div>
+    <div style="font-size:11px; color:var(--muted); margin-top:2px;">
+      {{ open_invoice_count }} open invoice{{ 's' if open_invoice_count != 1 else '' }}
+    </div>
+  </div>
+
+  {# Total Billed #}
+  <div class="card" style="padding:14px;">
+    <div style="font-size:10px; color:var(--muted); text-transform:uppercase;
+                letter-spacing:.05em; margin-bottom:4px;">Total Billed (All Time)</div>
+    <div style="font-size:22px; font-weight:600; color:var(--text);
+                font-variant-numeric:tabular-nums;">
+      ${{ "{:,.0f}".format(total_billed) }}
+    </div>
+    <div style="font-size:11px; color:var(--muted); margin-top:2px;">
+      {{ total_slip_count }} slip{{ 's' if total_slip_count != 1 else '' }}
+    </div>
+  </div>
+
+  {# Collected #}
+  <div class="card" style="padding:14px;">
+    <div style="font-size:10px; color:var(--muted); text-transform:uppercase;
+                letter-spacing:.05em; margin-bottom:4px;">Collected (All Time)</div>
+    <div style="font-size:22px; font-weight:600; color:#166534;
+                font-variant-numeric:tabular-nums;">
+      ${{ "{:,.0f}".format(total_collected) }}
+    </div>
+    <div style="font-size:11px; color:var(--muted); margin-top:2px;">
+      {{ payment_count }} payment{{ 's' if payment_count != 1 else '' }}
+    </div>
+  </div>
+
+</div>
+{% endif %}

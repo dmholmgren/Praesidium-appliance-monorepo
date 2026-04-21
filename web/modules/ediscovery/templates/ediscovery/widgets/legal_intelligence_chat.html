@@ -1,0 +1,529 @@
+{# widgets/legal_intelligence_chat.html
+   Legal Intelligence Chat — AI-assisted eDiscovery workflow
+   Global widget. Context-aware via ?context= param.
+
+   Contexts:
+     collection  — builds search terms, seeds TAR, creates collections
+     matter      — answers questions about ingested documents
+     drafting    — drafts motions, letters from discovery record
+     review      — explains document responsiveness
+
+   Features:
+     - Natural language → structured search terms with Boolean logic
+     - Drag documents into chat for pleading-assisted TAR seeding
+     - Logs approved terms to search_term_proposals
+     - Streams Claude responses via /api/v1/ediscovery/chat/stream
+#}
+
+<style>
+  .lic-wrap {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    background: var(--surface, #fff);
+  }
+  .lic-messages {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .lic-msg {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    max-width: 92%;
+  }
+  .lic-msg.user { align-self: flex-end; flex-direction: row-reverse; }
+  .lic-msg.assistant { align-self: flex-start; }
+  .lic-bubble {
+    padding: 8px 12px;
+    border-radius: 10px;
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+  }
+  .lic-msg.user .lic-bubble {
+    background: var(--primary, #0D1F3C);
+    color: #fff;
+    border-radius: 10px 10px 2px 10px;
+  }
+  .lic-msg.assistant .lic-bubble {
+    background: #F1F5F9;
+    color: var(--text, #111);
+    border-radius: 10px 10px 10px 2px;
+  }
+  .lic-avatar {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    margin-top: 1px;
+  }
+  .lic-avatar.user { background: var(--primary, #0D1F3C); color: #fff; }
+  .lic-avatar.ai   { background: #E0E7FF; color: #3730A3; }
+  .lic-input-area {
+    flex-shrink: 0;
+    border-top: 1px solid var(--border-color, #e2e8f0);
+    padding: 8px 12px;
+    background: #FAFAFA;
+  }
+  .lic-drop-zone {
+    border: 1.5px dashed #CBD5E1;
+    border-radius: 6px;
+    padding: 6px 10px;
+    margin-bottom: 6px;
+    font-size: 11px;
+    color: var(--muted, #64748b);
+    text-align: center;
+    transition: all 0.15s;
+    cursor: pointer;
+    display: none;
+  }
+  .lic-drop-zone.visible { display: block; }
+  .lic-drop-zone.dragover {
+    border-color: var(--primary, #0D1F3C);
+    background: #EFF6FF;
+    color: var(--primary, #0D1F3C);
+  }
+  .lic-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 6px;
+  }
+  .lic-attachment {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: #EFF6FF;
+    border: 1px solid #BFDBFE;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 11px;
+    color: #1E40AF;
+  }
+  .lic-attachment button {
+    background: none; border: none; cursor: pointer;
+    color: #93C5FD; font-size: 12px; padding: 0; line-height: 1;
+  }
+  .lic-input-row {
+    display: flex;
+    gap: 6px;
+    align-items: flex-end;
+  }
+  .lic-textarea {
+    flex: 1;
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-size: 12px;
+    font-family: inherit;
+    resize: none;
+    min-height: 36px;
+    max-height: 120px;
+    outline: none;
+    line-height: 1.5;
+    background: var(--surface, #fff);
+    color: var(--text, #111);
+    transition: border-color 0.15s;
+  }
+  .lic-textarea:focus { border-color: var(--primary, #0D1F3C); }
+  .lic-send {
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    background: var(--primary, #0D1F3C);
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.15s;
+  }
+  .lic-send:hover { opacity: 0.85; }
+  .lic-send:disabled { opacity: 0.4; cursor: not-allowed; }
+  .lic-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+  }
+  .lic-action-btn {
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid #CBD5E1;
+    background: #fff;
+    cursor: pointer;
+    color: var(--muted, #64748b);
+    transition: all 0.12s;
+  }
+  .lic-action-btn:hover { background: #F1F5F9; color: var(--text, #111); }
+  .lic-terms-card {
+    background: #F0FDF4;
+    border: 1px solid #BBF7D0;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-top: 4px;
+    font-size: 11px;
+  }
+  .lic-terms-card .term {
+    display: inline-block;
+    background: #DCFCE7;
+    border: 1px solid #86EFAC;
+    border-radius: 3px;
+    padding: 1px 6px;
+    margin: 2px;
+    font-family: monospace;
+    color: #166534;
+    font-size: 11px;
+  }
+  .lic-typing {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 8px 12px;
+    background: #F1F5F9;
+    border-radius: 10px 10px 10px 2px;
+  }
+  .lic-typing span {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: #94A3B8; animation: licbounce 1.2s infinite;
+  }
+  .lic-typing span:nth-child(2) { animation-delay: 0.2s; }
+  .lic-typing span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes licbounce {
+    0%, 60%, 100% { transform: translateY(0); }
+    30% { transform: translateY(-4px); }
+  }
+</style>
+
+<div class="lic-wrap" id="lic-{{ context or 'collection' }}">
+
+  {# Message thread #}
+  <div class="lic-messages" id="lic-messages-{{ context or 'collection' }}">
+    {# Welcome message #}
+    <div class="lic-msg assistant">
+      <div class="lic-avatar ai">AI</div>
+      <div class="lic-bubble">
+        {% if context == 'collection' %}
+        Describe what you're looking for and I'll build a search strategy. You can also drop pleadings or key documents here to seed search terms automatically.
+        {% elif context == 'review' %}
+        Ask me about any document in this collection — responsiveness, privilege, key issues.
+        {% elif context == 'drafting' %}
+        Describe what you need to draft. I can use documents from this matter as source material.
+        {% else %}
+        How can I help with this matter?
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# Input area #}
+  <div class="lic-input-area">
+
+    {# Drop zone (shown when files can be dragged) #}
+    <div class="lic-drop-zone {% if context == 'collection' %}visible{% endif %}"
+         id="lic-dropzone-{{ context or 'collection' }}"
+         ondragover="licDragOver(event, '{{ context or 'collection' }}')"
+         ondragleave="licDragLeave(event, '{{ context or 'collection' }}')"
+         ondrop="licDrop(event, '{{ context or 'collection' }}')">
+      📎 Drop pleadings or documents to seed search terms
+    </div>
+
+    {# Attached files #}
+    <div class="lic-attachments" id="lic-attachments-{{ context or 'collection' }}"></div>
+
+    {# Text input + send #}
+    <div class="lic-input-row">
+      <textarea
+        class="lic-textarea"
+        id="lic-input-{{ context or 'collection' }}"
+        placeholder="{% if context == 'collection' %}Describe what you're looking for... (e.g. 'Find Skilling emails about SPE transactions Q3 2001'){% else %}Ask a question...{% endif %}"
+        rows="1"
+        onkeydown="licKeyDown(event, '{{ context or 'collection' }}')"
+        oninput="licAutoResize(this)"
+      ></textarea>
+      <button class="lic-send"
+              id="lic-send-{{ context or 'collection' }}"
+              onclick="licSend('{{ context or 'collection' }}', '{{ matter_id or '' }}')"
+              title="Send">
+        <svg width="14" height="14" fill="none" stroke="#fff" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"
+                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+        </svg>
+      </button>
+    </div>
+
+    {# Quick action chips #}
+    {% if context == 'collection' %}
+    <div class="lic-actions">
+      <button class="lic-action-btn"
+              onclick="licPrompt('{{ context or 'collection' }}', 'Suggest search terms for key custodians and date ranges in this matter')">
+        Suggest custodians
+      </button>
+      <button class="lic-action-btn"
+              onclick="licPrompt('{{ context or 'collection' }}', 'Build a Boolean search string for the most critical issues in this case')">
+        Build search string
+      </button>
+      <button class="lic-action-btn"
+              onclick="licPrompt('{{ context or 'collection' }}', 'What are the proportionality considerations for this collection under FRCP 26(b)(1)?')">
+        Proportionality analysis
+      </button>
+      <button class="lic-action-btn"
+              onclick="licPrompt('{{ context or 'collection' }}', 'Draft a search methodology summary for opposing counsel')">
+        Draft methodology
+      </button>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+
+<script>
+// State per context
+const licState = {};
+
+function licGetState(ctx) {
+  if (!licState[ctx]) {
+    licState[ctx] = { messages: [], attachments: [], streaming: false };
+  }
+  return licState[ctx];
+}
+
+function licAutoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+}
+
+function licKeyDown(e, ctx) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    const mId = document.querySelector('[data-matter-id]')?.dataset.matterId || '';
+    licSend(ctx, mId);
+  }
+}
+
+function licPrompt(ctx, text) {
+  const input = document.getElementById('lic-input-' + ctx);
+  if (input) { input.value = text; licAutoResize(input); input.focus(); }
+}
+
+// ── Drag and drop ──────────────────────────────────────────────
+function licDragOver(e, ctx) {
+  e.preventDefault();
+  document.getElementById('lic-dropzone-' + ctx)?.classList.add('dragover');
+}
+function licDragLeave(e, ctx) {
+  document.getElementById('lic-dropzone-' + ctx)?.classList.remove('dragover');
+}
+function licDrop(e, ctx) {
+  e.preventDefault();
+  document.getElementById('lic-dropzone-' + ctx)?.classList.remove('dragover');
+  const files = Array.from(e.dataTransfer.files);
+  if (!files.length) return;
+  const state = licGetState(ctx);
+  files.forEach(f => {
+    state.attachments.push(f);
+    licRenderAttachment(ctx, f.name, state.attachments.length - 1);
+  });
+  licAppendMessage(ctx, 'user',
+    `📎 Attached: ${files.map(f => f.name).join(', ')}\nExtracting entities and seeding search terms...`
+  );
+  licProcessAttachments(ctx, files);
+}
+
+function licRenderAttachment(ctx, name, idx) {
+  const container = document.getElementById('lic-attachments-' + ctx);
+  if (!container) return;
+  const el = document.createElement('div');
+  el.className = 'lic-attachment';
+  el.id = 'lic-att-' + ctx + '-' + idx;
+  el.innerHTML = `📄 ${name} <button onclick="licRemoveAttachment('${ctx}', ${idx})">×</button>`;
+  container.appendChild(el);
+}
+
+function licRemoveAttachment(ctx, idx) {
+  const state = licGetState(ctx);
+  state.attachments[idx] = null;
+  document.getElementById('lic-att-' + ctx + '-' + idx)?.remove();
+}
+
+// ── Send message ───────────────────────────────────────────────
+async function licSend(ctx, matterId) {
+  const input = document.getElementById('lic-input-' + ctx);
+  const sendBtn = document.getElementById('lic-send-' + ctx);
+  const state = licGetState(ctx);
+  const text = (input?.value || '').trim();
+  if (!text || state.streaming) return;
+
+  input.value = '';
+  licAutoResize(input);
+  licAppendMessage(ctx, 'user', text);
+  state.messages.push({ role: 'user', content: text });
+
+  // Show typing indicator
+  const typingId = licShowTyping(ctx);
+  state.streaming = true;
+  if (sendBtn) sendBtn.disabled = true;
+
+  try {
+    const resp = await fetch('/api/v1/ediscovery/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: state.messages,
+        context: ctx,
+        matter_id: matterId || null,
+      })
+    });
+
+    const data = await resp.json();
+    licRemoveTyping(ctx, typingId);
+
+    if (data.reply) {
+      licAppendMessage(ctx, 'assistant', data.reply);
+      state.messages.push({ role: 'assistant', content: data.reply });
+    }
+
+    // If search terms were returned, render them as a card
+    if (data.search_terms && data.search_terms.length) {
+      licRenderTermsCard(ctx, data.search_terms, data.boolean_query, matterId);
+    }
+
+  } catch (err) {
+    licRemoveTyping(ctx, typingId);
+    licAppendMessage(ctx, 'assistant', '⚠ Connection error. Please try again.');
+  } finally {
+    state.streaming = false;
+    if (sendBtn) sendBtn.disabled = false;
+  }
+}
+
+// ── Process dropped documents ──────────────────────────────────
+async function licProcessAttachments(ctx, files) {
+  const state = licGetState(ctx);
+  const formData = new FormData();
+  files.forEach(f => formData.append('files', f));
+  formData.append('context', ctx);
+
+  try {
+    const resp = await fetch('/api/v1/ediscovery/chat/extract-terms', {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await resp.json();
+    if (data.terms && data.terms.length) {
+      const msg = `Extracted from your document${files.length > 1 ? 's' : ''}:\n\n` +
+        data.terms.map(t => `• ${t}`).join('\n') +
+        (data.summary ? '\n\n' + data.summary : '');
+      licAppendMessage(ctx, 'assistant', msg);
+      state.messages.push({ role: 'assistant', content: msg });
+      if (data.search_terms) {
+        licRenderTermsCard(ctx, data.search_terms, data.boolean_query, '');
+      }
+    }
+  } catch (err) {
+    licAppendMessage(ctx, 'assistant', '⚠ Could not extract terms from that document.');
+  }
+}
+
+// ── DOM helpers ────────────────────────────────────────────────
+function licAppendMessage(ctx, role, text) {
+  const thread = document.getElementById('lic-messages-' + ctx);
+  if (!thread) return;
+  const msgEl = document.createElement('div');
+  msgEl.className = 'lic-msg ' + role;
+  const initials = role === 'user' ? 'You' : 'AI';
+  msgEl.innerHTML = `
+    <div class="lic-avatar ${role}">${initials}</div>
+    <div class="lic-bubble">${licEscape(text)}</div>
+  `;
+  thread.appendChild(msgEl);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+function licShowTyping(ctx) {
+  const thread = document.getElementById('lic-messages-' + ctx);
+  if (!thread) return null;
+  const id = 'lic-typing-' + Date.now();
+  const el = document.createElement('div');
+  el.className = 'lic-msg assistant';
+  el.id = id;
+  el.innerHTML = `
+    <div class="lic-avatar ai">AI</div>
+    <div class="lic-typing"><span></span><span></span><span></span></div>
+  `;
+  thread.appendChild(el);
+  thread.scrollTop = thread.scrollHeight;
+  return id;
+}
+
+function licRemoveTyping(ctx, id) {
+  if (id) document.getElementById(id)?.remove();
+}
+
+function licRenderTermsCard(ctx, terms, booleanQuery, matterId) {
+  const thread = document.getElementById('lic-messages-' + ctx);
+  if (!thread) return;
+  const el = document.createElement('div');
+  el.style.cssText = 'max-width:92%; align-self:flex-start;';
+  el.innerHTML = `
+    <div class="lic-terms-card">
+      <div style="font-weight:600; color:#166534; margin-bottom:6px; font-size:11px;">
+        Proposed Search Terms
+      </div>
+      <div style="margin-bottom:8px;">
+        ${terms.map(t => `<span class="term">${licEscape(t)}</span>`).join('')}
+      </div>
+      ${booleanQuery ? `<div style="font-family:monospace; font-size:10px; color:#166534; background:#DCFCE7; padding:4px 8px; border-radius:4px; margin-bottom:8px; word-break:break-all;">${licEscape(booleanQuery)}</div>` : ''}
+      <div style="display:flex; gap:6px; margin-top:6px;">
+        <button onclick="licApproveTerms(${JSON.stringify(terms)}, '${matterId}')"
+                style="font-size:10px; padding:3px 10px; background:#166534; color:#fff; border:none; border-radius:4px; cursor:pointer;">
+          Approve &amp; Log Terms
+        </button>
+        <button onclick="this.closest('.lic-terms-card').remove()"
+                style="font-size:10px; padding:3px 10px; background:#fff; border:1px solid #CBD5E1; border-radius:4px; cursor:pointer; color:#64748b;">
+          Discard
+        </button>
+      </div>
+    </div>
+  `;
+  thread.appendChild(el);
+  thread.scrollTop = thread.scrollHeight;
+}
+
+async function licApproveTerms(terms, matterId) {
+  try {
+    await fetch('/api/v1/ediscovery/search-terms/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ terms, matter_id: matterId, source: 'ai_chat' })
+    });
+    event.target.closest('.lic-terms-card').style.borderColor = '#86EFAC';
+    event.target.textContent = '✓ Logged';
+    event.target.disabled = true;
+  } catch (err) {
+    event.target.textContent = 'Error — retry';
+  }
+}
+
+function licEscape(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\n/g, '<br>');
+}
+</script>

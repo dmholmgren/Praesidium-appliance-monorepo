@@ -1,0 +1,276 @@
+{# widgets/firm_matter_tree.html
+   Widget partial — Firm Matter Tree
+   Context: clients, total_matters, total_clients, config (dict)
+   config.context: 'dms' (default) | 'ediscovery' | 'billing' | 'pi'
+   - dms:         clicking matter navigates to /dms/matter/{id}
+   - ediscovery:  clicking matter expands inline to show collections + New Collection
+   - billing:     clicking matter navigates to /billing/clients/{client_id}/matters/{matter_id}
+   - pi:          clicking matter navigates to /dashboard/matter/{matter_id}
+                  and calls window.bilScopeMatter(matterId, clientId) to scope center/right panels
+#}
+{% set ctx = config.context if config and config.context else 'dms' %}
+
+<div style="display:flex; flex-direction:column; height:100%; min-height:0;">
+
+  {# Header #}
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              padding:8px 12px; border-bottom:1px solid var(--border-color,#f1f5f9);
+              flex-shrink:0;">
+    <span style="font-size:10px; font-weight:700; color:var(--muted,#64748b);
+                 text-transform:uppercase; letter-spacing:0.06em;">
+      {% if ctx == 'ediscovery' %}Select Matter{% elif ctx == 'billing' %}Clients &amp; Matters{% elif ctx == 'pi' %}Clients &amp; Matters{% else %}Matters{% endif %}
+    </span>
+    <span style="font-size:10px; color:var(--muted,#94a3b8);">
+      {{ total_clients }} client{% if total_clients != 1 %}s{% endif %}
+      · {{ total_matters }} matter{% if total_matters != 1 %}s{% endif %}
+    </span>
+  </div>
+
+  {# Filter input #}
+  <div style="padding:6px 8px; flex-shrink:0; border-bottom:1px solid #f1f5f9;">
+    <input type="text"
+           placeholder="Filter matters..."
+           oninput="filterMatterTree(this)"
+           style="width:100%; padding:4px 8px; font-size:11px;
+                  border:1px solid var(--border-color,#e2e8f0); border-radius:4px;
+                  box-sizing:border-box; background:var(--surface,#fff); color:var(--text);">
+  </div>
+
+  {# Client/matter tree #}
+  <div style="flex:1; overflow-y:auto; min-height:0;" id="fmt-tree">
+    {% if clients %}
+      {% for client in clients %}
+      <div class="fmt-client-group"
+           data-client="{{ client.client_name | lower }}"
+           style="border-bottom:1px solid #f1f5f9;">
+
+        {# Client header #}
+        <div onclick="toggleFmtClient(this){% if ctx == 'billing' %}; if(window.bilScopeClient) bilScopeClient('{{ client.client_id }}'){% endif %}"
+             data-client-id="{{ client.client_id }}"
+             style="padding:7px 10px; font-size:12px; font-weight:600;
+                    color:var(--text); cursor:pointer; display:flex;
+                    align-items:center; gap:6px; user-select:none;"
+             onmouseover="this.style.background='#f8fafc'"
+             onmouseout="this.style.background=''">
+          <span class="fmt-arrow"
+                style="font-size:10px; color:var(--muted); transition:transform 0.15s;
+                       flex-shrink:0;">▶</span>
+          <span style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+            {{ client.client_name }}
+          </span>
+          <span style="font-size:10px; color:var(--muted,#94a3b8); flex-shrink:0;">
+            {{ client.matters | length }}
+          </span>
+        </div>
+
+        {# Matter list #}
+        <div class="fmt-matter-list" style="display:none; padding-left:8px;">
+          {% for matter in client.matters %}
+          <div class="fmt-matter-item" data-matter-id="{{ matter.id }}"
+               data-matter="{{ matter.matter_name | lower }} {{ matter.matter_number | lower }}">
+
+            {# Matter row — behavior differs by context #}
+            {% if ctx == 'ediscovery' %}
+            <div onclick="toggleFmtEdiscovery(this, '{{ matter.id }}')"
+                 style="display:flex; align-items:center; justify-content:space-between;
+                        padding:5px 10px 5px 20px; font-size:11px; color:var(--muted);
+                        cursor:pointer; border-radius:4px; margin:1px 4px;"
+                 onmouseover="this.style.background='#eff6ff'; this.style.color='var(--primary,#1B2A4A)'"
+                 onmouseout="this.style.background=''; this.style.color='var(--muted)'">
+              <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+                           flex:1;" title="{{ matter.matter_name }}">
+                {{ matter.matter_name }}
+              </span>
+              <span class="fmt-edisco-arrow"
+                    style="font-size:10px; color:var(--muted); flex-shrink:0;
+                           transition:transform 0.15s;">▶</span>
+            </div>
+
+            {# eDiscovery expansion panel — hidden by default #}
+            <div class="fmt-edisco-panel" style="display:none; margin:0 4px 4px 24px;">
+              <div style="background:#f8fafc; border:1px solid var(--border-color,#e2e8f0);
+                          border-radius:6px; overflow:hidden;">
+                {# Collections load here via fetch #}
+                <div class="fmt-collections-body"
+                     style="max-height:200px; overflow-y:auto;">
+                  <div style="padding:8px 10px; font-size:11px; color:var(--muted);">
+                    Loading collections…
+                  </div>
+                </div>
+                {# New Collection action #}
+                <div style="padding:6px 10px; border-top:1px solid var(--border-color,#f1f5f9);
+                            display:flex; justify-content:space-between; align-items:center;">
+                  <a href="/ediscovery/collections/new?matter_id={{ matter.id }}"
+                     style="font-size:11px; font-weight:600; color:var(--primary,#1B2A4A);
+                            text-decoration:none;">
+                    + New Collection
+                  </a>
+                  <a href="/ediscovery/collections?matter_id={{ matter.id }}"
+                     style="font-size:10px; color:var(--muted); text-decoration:none;">
+                    View all →
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            {% elif ctx == 'billing' %}
+            {# Billing context — onclick only, no anchor tag to avoid HTMX interception #}
+            <div onclick="
+                   if(window.bilScopeMatter) {
+                     window.bilScopeMatter(event, '{{ matter.id }}', '{{ matter.client_id }}');
+                   } else {
+                     window.location.href='/billing/clients/{{ matter.client_id }}/matters/{{ matter.id }}';
+                   }"""
+
+            {% elif ctx == 'pi' %}
+            {# Practice Intelligence context — navigate to matter dashboard #}
+            <div onclick="window.location.href='/dashboard/matter/{{ matter.id }}';"
+               style="display:flex; align-items:center; justify-content:space-between;
+                      padding:5px 10px 5px 20px; font-size:11px; color:var(--muted);
+                      cursor:pointer; border-radius:4px; margin:1px 4px;"
+               onmouseover="this.style.background='#eff6ff'; this.style.color='var(--primary,#1B2A4A)'"
+               onmouseout="this.style.background=''; this.style.color='var(--muted)'">
+              <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+                           flex:1;" title="{{ matter.matter_name }}">
+                {{ matter.matter_name }}
+              </span>
+              {% if matter.wip_value %}
+              <span style="font-size:9px; background:#EFF6FF; color:#1d4ed8; padding:1px 5px;
+                           border-radius:8px; margin-left:4px; flex-shrink:0;
+                           font-variant-numeric:tabular-nums;">
+                ${{ "{:,.0f}".format(matter.wip_value) }}
+              </span>
+              {% endif %}
+            </div>
+
+            {% else %}
+            {# DMS context — navigate directly #}
+            <a href="/dms/matter/{{ matter.id }}"
+               style="display:flex; align-items:center; justify-content:space-between;
+                      padding:5px 10px 5px 20px; font-size:11px; color:var(--muted);
+                      cursor:pointer; border-radius:4px; margin:1px 4px;
+                      text-decoration:none;"
+               onmouseover="this.style.background='#eff6ff'; this.style.color='var(--primary,#1B2A4A)'"
+               onmouseout="this.style.background=''; this.style.color='var(--muted)'">
+              <span style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+                           flex:1;" title="{{ matter.matter_name }}">
+                {{ matter.matter_name }}
+              </span>
+              {% if matter.doc_count %}
+              <span style="font-size:9px; background:#f1f5f9; padding:1px 5px;
+                           border-radius:8px; margin-left:4px; flex-shrink:0;">
+                {{ matter.doc_count }}
+              </span>
+              {% endif %}
+            </a>
+            {% endif %}
+
+          </div>
+          {% endfor %}
+        </div>
+
+      </div>
+      {% endfor %}
+    {% else %}
+    <div style="padding:20px 12px; text-align:center; font-size:11px;
+                color:var(--muted,#94a3b8);">
+      No active matters.
+    </div>
+    {% endif %}
+  </div>
+
+  {# Footer link #}
+  <div style="padding:6px 12px; border-top:1px solid #f1f5f9; flex-shrink:0;">
+    {% if ctx == 'ediscovery' %}
+    <a href="/ediscovery/collections"
+       style="font-size:10px; color:var(--primary,#1B2A4A); text-decoration:none;">
+      All collections →
+    </a>
+    {% elif ctx == 'pi' %}
+    <a href="/dashboard/"
+       style="font-size:10px; color:var(--primary,#1B2A4A); text-decoration:none;">
+      All matters →
+    </a>
+    {% elif ctx == 'billing' %}
+    <a href="/billing/clients"
+       style="font-size:10px; color:var(--primary,#1B2A4A); text-decoration:none;">
+      All clients →
+    </a>
+    {% else %}
+    <a href="/dms/"
+       style="font-size:10px; color:var(--primary,#1B2A4A); text-decoration:none;">
+      Open DMS →
+    </a>
+    {% endif %}
+  </div>
+
+</div>
+
+<script>
+(function() {
+  // Auto-expand clients with 3 or fewer matters
+  document.querySelectorAll('.fmt-client-group').forEach(function(group) {
+    if (group.querySelectorAll('.fmt-matter-item').length <= 3) {
+      var hdr = group.querySelector('[onclick*="toggleFmtClient"]');
+      if (hdr) toggleFmtClient(hdr);
+    }
+  });
+})();
+
+function toggleFmtClient(header) {
+  var arrow = header.querySelector('.fmt-arrow');
+  var list  = header.nextElementSibling;
+  if (!list) return;
+  var open = list.style.display === 'none';
+  list.style.display = open ? 'block' : 'none';
+  if (arrow) arrow.style.transform = open ? 'rotate(90deg)' : '';
+}
+
+function toggleFmtEdiscovery(row, matterId) {
+  var item   = row.parentElement;
+  var panel  = item.querySelector('.fmt-edisco-panel');
+  var arrow  = row.querySelector('.fmt-edisco-arrow');
+  if (!panel) return;
+
+  var opening = panel.style.display === 'none';
+  panel.style.display = opening ? 'block' : 'none';
+  if (arrow) arrow.style.transform = opening ? 'rotate(90deg)' : '';
+
+  if (opening) {
+    var body = panel.querySelector('.fmt-collections-body');
+    if (body && body.dataset.loaded !== '1') {
+      fetch('/ediscovery/collections?matter_id=' + matterId, {
+        headers: {'X-Requested-With': 'fetch'}
+      })
+      .then(function(r) { return r.text(); })
+      .then(function(html) {
+        body.innerHTML = html;
+        body.dataset.loaded = '1';
+      })
+      .catch(function() {
+        body.innerHTML = '<div style="padding:8px 10px; font-size:11px; color:#dc2626;">Failed to load collections.</div>';
+      });
+    }
+  }
+}
+
+function filterMatterTree(input) {
+  var q = (input.value || '').toLowerCase().trim();
+  document.querySelectorAll('.fmt-client-group').forEach(function(group) {
+    var clientName = (group.dataset.client || '');
+    var anyVisible = false;
+    group.querySelectorAll('.fmt-matter-item').forEach(function(item) {
+      var match = !q || clientName.includes(q) || (item.dataset.matter || '').includes(q);
+      item.style.display = match ? '' : 'none';
+      if (match) anyVisible = true;
+    });
+    group.style.display = (!q || anyVisible || clientName.includes(q)) ? '' : 'none';
+    if (q && anyVisible) {
+      var list  = group.querySelector('.fmt-matter-list');
+      var arrow = group.querySelector('.fmt-arrow');
+      if (list)  list.style.display  = 'block';
+      if (arrow) arrow.style.transform = 'rotate(90deg)';
+    }
+  });
+}
+</script>

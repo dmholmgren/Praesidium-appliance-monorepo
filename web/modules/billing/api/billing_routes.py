@@ -1,0 +1,890 @@
+"""
+modules/billing/api/routes.py
+Billing module API — data endpoints only (no HTML).
+All routes registered via register_billing_module() in __init__.py.
+"""
+import logging
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from sqlalchemy import text
+
+from core.db.base import AsyncSessionLocal
+from modules.dashboard.services.auth_helper import get_current_user
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/billing", tags=["billing"])
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
+def _tid(user) -> str:
+    return (getattr(user, "tenant_id", None) or "").strip()
+
+
+async def _populate_matters(tenant_id: str):
+    """
+    One-time (idempotent) populate billing_matters from ts_clients.
+    Splits NICKNAME1 on / or \\ to derive client_code / matter_code.
+    Records with no separator are treated as single-matter clients.
+    """
+    async with AsyncSessionLocal() as db:
+        existing = await db.execute(
+            text("SELECT COUNT(*) FROM billing_matters WHERE tenant_id = :tid"),
+            {"tid": tenant_id}
+        )
+        if existing.scalar() > 0:
+            return  # already populated
+
+        clients = await db.execute(
+            text("""
+                SELECT ts_client_id, ts_name, ts_raw,
+                       client_code, matter_code, case_type,
+                       sup_attorney, billing_atty, opened, closed
+                FROM ts_clients
+                WHERE tenant_id = :tid
+            """),
+            {"tid": tenant_id}
+        )
+        rows = clients.fetchall()
+        inserted = 0
+        for r in rows:
+            raw = r.ts_raw or {}
+            nickname2 = ""
+            attorney_prefix = None
+            if isinstance(raw, dict):
+                nickname2 = raw.get("nickname2") or ""
+            if nickname2 and len(nickname2) >= 2:
+                attorney_prefix = nickname2[:2]
+
+            client_code = (r.client_code or "").strip()
+            matter_code = (r.matter_code or "").strip() or None
+
+            # Build display name
+            if matter_code:
+                display = f"{client_code} / {matter_code}"
+            else:
+                display = client_code
+
+            if not client_code:
+                continue
+
+            await db.execute(
+                text("""
+                    INSERT INTO billing_matters
+                        (tenant_id, ts_client_id, client_code, matter_code,
+                         display_name, nickname2, attorney_prefix, status,
+                         opened, closed, case_type, sup_attorney, billing_atty, raw_data)
+                    VALUES
+                        (:tid, :ts_id, :cc, :mc, :dn, :nn2, :ap, 'active',
+                         :opened, :closed, :case_type, :sup_atty, :bill_atty, :raw)
+                    ON CONFLICT (tenant_id, client_code, matter_code)
+                    DO UPDATE SET
+                        display_name    = EXCLUDED.display_name,
+                        nickname2       = EXCLUDED.nickname2,
+                        attorney_prefix = EXCLUDED.attorney_prefix,
+                        case_type       = EXCLUDED.case_type,
+                        sup_attorney    = EXCLUDED.sup_attorney,
+                        billing_atty    = EXCLUDED.billing_atty,
+                        updated_at      = now()
+                """),
+                {
+                    "tid":       tenant_id,
+                    "ts_id":     str(r.ts_client_id or ""),
+                    "cc":        client_code,
+                    "mc":        matter_code,
+                    "dn":        display,
+                    "nn2":       nickname2 or None,
+                    "ap":        attorney_prefix,
+                    "opened":    str(r.opened or "") or None,
+                    "closed":    str(r.closed or "") or None,
+                    "case_type": str(r.case_type or "") or None,
+                    "sup_atty":  str(r.sup_attorney or "") or None,
+                    "bill_atty": str(r.billing_atty or "") or None,
+                    "raw":       {},
+                }
+            )
+            inserted += 1
+        await db.commit()
+        logger.info(f"[billing] populated {inserted} matters for tenant {tenant_id}")
+
+
+# ── Matters ────────────────────────────────────────────────────────────────────
+
+@router.get("/matters")
+async def list_matters(
+    request: Request,
+    q: Optional[str] = None,
+    attorney: Optional[str] = None,
+    status: Optional[str] = "active",
+    user=Depends(get_current_user)
+):
+    tid = _tid(user)
+    await _populate_matters(tid)
+
+    filters = ["tenant_id = :tid"]
+    params  = {"tid": tid}
+    if status:
+        filters.append("status = :status")
+        params["status"] = status
+    if attorney:
+        filters.append("attorney_prefix = :ap")
+        params["ap"] = attorney
+    if q:
+        filters.append("(client_code ILIKE :q OR matter_code ILIKE :q OR display_name ILIKE :q)")
+        params["q"] = f"%{q}%"
+
+    where = " AND ".join(filters)
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(
+            text(f"""
+                SELECT m.id, m.client_code, m.matter_code, m.display_name,
+                       m.case_type, m.sup_attorney, m.billing_atty,
+                       m.attorney_prefix, m.status, m.opened, m.closed,
+                       COUNT(s.id)            AS slip_count,
+                       SUM(s.hours)           AS total_hours,
+                       SUM(CASE WHEN s.billed = false THEN s.value ELSE 0 END) AS wip_value
+                FROM billing_matters m
+                LEFT JOIN billing_slips s
+                    ON s.matter_id = m.id AND s.tenant_id = m.tenant_id
+                WHERE {where}
+                GROUP BY m.id
+                ORDER BY m.client_code, m.matter_code
+            """),
+            params
+        )
+        matters = [dict(r._mapping) for r in rows.fetchall()]
+
+    return JSONResponse({"matters": matters, "total": len(matters)})
+
+
+@router.get("/matters/{matter_id}")
+async def get_matter(matter_id: str, user=Depends(get_current_user)):
+    tid = _tid(user)
+    async with AsyncSessionLocal() as db:
+        row = await db.execute(
+            text("""
+                SELECT m.*,
+                    SUM(CASE WHEN s.billed=false THEN s.value ELSE 0 END) AS wip_value,
+                    SUM(CASE WHEN s.billed=true  THEN s.value ELSE 0 END) AS billed_value,
+                    SUM(s.hours) AS total_hours,
+                    COUNT(s.id)  AS slip_count
+                FROM billing_matters m
+                LEFT JOIN billing_slips s ON s.matter_id = m.id AND s.tenant_id = m.tenant_id
+                WHERE m.id = :mid AND m.tenant_id = :tid
+                GROUP BY m.id
+            """),
+            {"mid": matter_id, "tid": tid}
+        )
+        matter = row.fetchone()
+    if not matter:
+        raise HTTPException(404, "Matter not found")
+    return JSONResponse(dict(matter._mapping))
+
+
+# ── Slips ──────────────────────────────────────────────────────────────────────
+
+@router.get("/matters/{matter_id}/slips")
+async def list_slips(
+    matter_id: str,
+    billed: Optional[bool] = None,
+    user=Depends(get_current_user)
+):
+    tid = _tid(user)
+    filters = ["s.matter_id = :mid", "s.tenant_id = :tid"]
+    params  = {"mid": matter_id, "tid": tid}
+    if billed is not None:
+        filters.append("s.billed = :billed")
+        params["billed"] = billed
+
+    where = " AND ".join(filters)
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(
+            text(f"""
+                SELECT s.id, s.slip_date, s.timekeeper, s.hours, s.rate,
+                       s.value, s.narrative, s.billed, s.invoice_id,
+                       s.source, s.created_at
+                FROM billing_slips s
+                WHERE {where}
+                ORDER BY s.slip_date DESC
+            """),
+            params
+        )
+        slips = [dict(r._mapping) for r in rows.fetchall()]
+
+    # Also pull Timeslips slips for this matter
+    async with AsyncSessionLocal() as db:
+        # Match via ts_clients.ts_client_id
+        matter_row = await db.execute(
+            text("SELECT ts_client_id FROM billing_matters WHERE id = :mid AND tenant_id = :tid"),
+            {"mid": matter_id, "tid": tid}
+        )
+        matter = matter_row.fetchone()
+        if matter and matter.ts_client_id:
+            ts_rows = await db.execute(
+                text("""
+                    SELECT source_slip_id as id, slip_date, source_tk_id as timekeeper,
+                           hours, rate, billed_value as value, narrative,
+                           billed, invoice_num, 'timeslips' as source
+                    FROM ts_slips
+                    WHERE tenant_id = :tid AND source_client_id = :cid
+                    ORDER BY slip_date DESC
+                """),
+                {"tid": tid, "cid": str(matter.ts_client_id)}
+            )
+            ts_slips = [dict(r._mapping) for r in ts_rows.fetchall()]
+            # Merge — native slips first, then Timeslips
+            slips = slips + [s for s in ts_slips
+                             if s["id"] not in {x["id"] for x in slips}]
+
+    return JSONResponse({"slips": slips, "total": len(slips)})
+
+
+class SlipIn(BaseModel):
+    matter_id:  str
+    slip_date:  str
+    timekeeper: str
+    hours:      float
+    rate:       float
+    narrative:  str
+
+
+@router.post("/slips")
+async def create_slip(body: SlipIn, user=Depends(get_current_user)):
+    tid = _tid(user)
+    value = round(body.hours * body.rate, 2)
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            text("""
+                INSERT INTO billing_slips
+                    (tenant_id, matter_id, slip_date, timekeeper,
+                     hours, rate, value, narrative, source, created_by)
+                VALUES
+                    (:tid, :mid, :dt, :tk, :h, :r, :v, :narr, 'manual', :by)
+                RETURNING id
+            """),
+            {
+                "tid":  tid,
+                "mid":  body.matter_id,
+                "dt":   body.slip_date,
+                "tk":   body.timekeeper,
+                "h":    body.hours,
+                "r":    body.rate,
+                "v":    value,
+                "narr": body.narrative,
+                "by":   getattr(user, "id", None),
+            }
+        )
+        slip_id = result.scalar()
+        await db.commit()
+    return JSONResponse({"id": slip_id, "value": value}, status_code=201)
+
+
+@router.put("/slips/{slip_id}")
+async def update_slip(slip_id: str, body: dict, user=Depends(get_current_user)):
+    tid = _tid(user)
+    allowed = {"slip_date", "timekeeper", "hours", "rate", "narrative"}
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if "hours" in updates and "rate" in updates:
+        updates["value"] = round(float(updates["hours"]) * float(updates["rate"]), 2)
+    if not updates:
+        raise HTTPException(400, "No valid fields to update")
+    set_clause = ", ".join(f"{k} = :{k}" for k in updates)
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            text(f"UPDATE billing_slips SET {set_clause}, updated_at=now() WHERE id=:id AND tenant_id=:tid"),
+            {**updates, "id": slip_id, "tid": tid}
+        )
+        await db.commit()
+    return JSONResponse({"status": "updated"})
+
+
+# ── Prebill / Invoice ──────────────────────────────────────────────────────────
+
+@router.get("/matters/{matter_id}/prebill")
+async def get_prebill(matter_id: str, user=Depends(get_current_user)):
+    """Generate a prebill from unbilled slips for a matter."""
+    tid = _tid(user)
+    async with AsyncSessionLocal() as db:
+        matter_row = await db.execute(
+            text("SELECT * FROM billing_matters WHERE id=:mid AND tenant_id=:tid"),
+            {"mid": matter_id, "tid": tid}
+        )
+        matter = matter_row.fetchone()
+        if not matter:
+            raise HTTPException(404, "Matter not found")
+
+        # Native unbilled slips
+        slips_row = await db.execute(
+            text("""
+                SELECT id, slip_date, timekeeper, hours, rate, value, narrative
+                FROM billing_slips
+                WHERE matter_id=:mid AND tenant_id=:tid AND billed=false
+                ORDER BY slip_date
+            """),
+            {"mid": matter_id, "tid": tid}
+        )
+        slips = [dict(r._mapping) for r in slips_row.fetchall()]
+
+        # Also pull unbilled Timeslips slips
+        if matter.ts_client_id:
+            ts_rows = await db.execute(
+                text("""
+                    SELECT source_slip_id as id, slip_date, source_tk_id as timekeeper,
+                           hours, rate, wip_value as value, narrative
+                    FROM ts_slips
+                    WHERE tenant_id=:tid AND source_client_id=:cid AND billed=false
+                    ORDER BY slip_date
+                """),
+                {"tid": tid, "cid": str(matter.ts_client_id)}
+            )
+            slips += [dict(r._mapping) for r in ts_rows.fetchall()]
+
+        # Prior balance from open invoices
+        prior_row = await db.execute(
+            text("""
+                SELECT COALESCE(SUM(balance_due), 0) as prior_balance
+                FROM billing_invoices
+                WHERE matter_id=:mid AND tenant_id=:tid AND status NOT IN ('paid','void')
+            """),
+            {"mid": matter_id, "tid": tid}
+        )
+        prior_balance = float(prior_row.scalar() or 0)
+
+    total_hours = sum(float(s.get("hours") or 0) for s in slips)
+    total_fees  = sum(float(s.get("value") or 0) for s in slips)
+
+    return JSONResponse({
+        "matter":        dict(matter._mapping),
+        "slips":         slips,
+        "total_hours":   round(total_hours, 2),
+        "total_fees":    round(total_fees, 2),
+        "prior_balance": round(prior_balance, 2),
+        "total_due":     round(total_fees + prior_balance, 2),
+        "generated_at":  datetime.utcnow().isoformat(),
+    })
+
+
+@router.post("/matters/{matter_id}/invoice")
+async def generate_invoice(matter_id: str, body: dict, user=Depends(get_current_user)):
+    """Finalize a prebill into an invoice."""
+    tid = _tid(user)
+    async with AsyncSessionLocal() as db:
+        matter_row = await db.execute(
+            text("SELECT * FROM billing_matters WHERE id=:mid AND tenant_id=:tid"),
+            {"mid": matter_id, "tid": tid}
+        )
+        matter = matter_row.fetchone()
+        if not matter:
+            raise HTTPException(404, "Matter not found")
+
+        # Get next invoice number
+        inv_num_row = await db.execute(
+            text("SELECT MAX(CAST(invoice_number AS INTEGER)) FROM billing_invoices WHERE tenant_id=:tid"),
+            {"tid": tid}
+        )
+        max_num = inv_num_row.scalar() or 14000
+        invoice_number = str(int(max_num) + 1)
+
+        fee_total   = float(body.get("fee_total", 0))
+        invoice_date = body.get("invoice_date", date.today().isoformat())
+        due_date     = body.get("due_date")
+
+        inv_result = await db.execute(
+            text("""
+                INSERT INTO billing_invoices
+                    (tenant_id, matter_id, invoice_number, invoice_date, due_date,
+                     fee_total, total_due, balance_due, status)
+                VALUES
+                    (:tid, :mid, :num, :dt, :dd, :fees, :total, :balance, 'open')
+                RETURNING id
+            """),
+            {
+                "tid":     tid,
+                "mid":     matter_id,
+                "num":     invoice_number,
+                "dt":      invoice_date,
+                "dd":      due_date,
+                "fees":    fee_total,
+                "total":   fee_total,
+                "balance": fee_total,
+            }
+        )
+        invoice_id = inv_result.scalar()
+
+        # Mark native slips as billed
+        await db.execute(
+            text("""
+                UPDATE billing_slips SET billed=true, invoice_id=:inv
+                WHERE matter_id=:mid AND tenant_id=:tid AND billed=false
+            """),
+            {"inv": invoice_id, "mid": matter_id, "tid": tid}
+        )
+        await db.commit()
+
+    return JSONResponse({"invoice_id": invoice_id, "invoice_number": invoice_number}, status_code=201)
+
+
+@router.get("/invoices")
+async def list_invoices(
+    status: Optional[str] = None,
+    user=Depends(get_current_user)
+):
+    tid = _tid(user)
+    filters = ["i.tenant_id = :tid"]
+    params  = {"tid": tid}
+    if status:
+        filters.append("i.status = :status")
+        params["status"] = status
+
+    where = " AND ".join(filters)
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(
+            text(f"""
+                SELECT i.id, i.invoice_number, i.invoice_date, i.due_date,
+                       i.fee_total, i.total_due, i.amount_paid, i.balance_due,
+                       i.status, m.display_name as matter_name,
+                       m.client_code, m.matter_code
+                FROM billing_invoices i
+                LEFT JOIN billing_matters m ON m.id = i.matter_id
+                WHERE {where}
+                ORDER BY i.invoice_date DESC
+            """),
+            params
+        )
+        invoices = [dict(r._mapping) for r in rows.fetchall()]
+
+    # Also pull open Timeslips invoices not yet in billing_invoices
+    async with AsyncSessionLocal() as db:
+        ts_rows = await db.execute(
+            text("""
+                SELECT ti.source_invoice_id as id, ti.invoice_num as invoice_number,
+                       ti.net_due as balance_due, ti.paid_in_full,
+                       'timeslips' as source
+                FROM ts_invoices ti
+                WHERE ti.tenant_id = :tid
+                  AND ti.paid_in_full = false
+                  AND ti.source_invoice_id NOT IN (
+                      SELECT COALESCE(ts_invoice_id,'') FROM billing_invoices WHERE tenant_id=:tid
+                  )
+                ORDER BY ti.invoice_num DESC
+                LIMIT 200
+            """),
+            {"tid": tid}
+        )
+        ts_invoices = [dict(r._mapping) for r in ts_rows.fetchall()]
+
+    return JSONResponse({
+        "invoices":    invoices,
+        "ts_invoices": ts_invoices,
+        "total":       len(invoices),
+    })
+
+
+# ── Payments ───────────────────────────────────────────────────────────────────
+
+class PaymentIn(BaseModel):
+    client_code:    str
+    payment_date:   str
+    amount:         float
+    payment_method: Optional[str] = None
+    reference:      Optional[str] = None
+    notes:          Optional[str] = None
+
+
+@router.post("/payments")
+async def create_payment(body: PaymentIn, user=Depends(get_current_user)):
+    """Create a client-level payment. Allocate separately via /payments/{id}/allocate."""
+    tid = _tid(user)
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            text("""
+                INSERT INTO billing_payments
+                    (tenant_id, client_code, payment_date, amount,
+                     unallocated, payment_method, reference, notes)
+                VALUES
+                    (:tid, :cc, :dt, :amt, :amt, :method, :ref, :notes)
+                RETURNING id
+            """),
+            {
+                "tid":    tid,
+                "cc":     body.client_code,
+                "dt":     body.payment_date,
+                "amt":    body.amount,
+                "method": body.payment_method,
+                "ref":    body.reference,
+                "notes":  body.notes,
+            }
+        )
+        payment_id = result.scalar()
+        await db.commit()
+    return JSONResponse({"payment_id": payment_id}, status_code=201)
+
+
+@router.get("/payments/{payment_id}/open-invoices")
+async def get_open_invoices_for_payment(payment_id: str, user=Depends(get_current_user)):
+    """Return open invoices for the client associated with a payment."""
+    tid = _tid(user)
+    async with AsyncSessionLocal() as db:
+        pmt_row = await db.execute(
+            text("SELECT client_code, amount, unallocated FROM billing_payments WHERE id=:pid AND tenant_id=:tid"),
+            {"pid": payment_id, "tid": tid}
+        )
+        pmt = pmt_row.fetchone()
+        if not pmt:
+            raise HTTPException(404, "Payment not found")
+
+        # Open invoices for this client across all matters
+        inv_rows = await db.execute(
+            text("""
+                SELECT i.id, i.invoice_number, i.invoice_date, i.total_due,
+                       i.amount_paid, i.balance_due, m.display_name as matter_name
+                FROM billing_invoices i
+                LEFT JOIN billing_matters m ON m.id = i.matter_id
+                WHERE i.tenant_id=:tid AND m.client_code=:cc
+                  AND i.status NOT IN ('paid','void') AND i.balance_due > 0
+                ORDER BY i.invoice_date
+            """),
+            {"tid": tid, "cc": pmt.client_code}
+        )
+        invoices = [dict(r._mapping) for r in inv_rows.fetchall()]
+
+        # Also Timeslips open invoices for this client
+        ts_rows = await db.execute(
+            text("""
+                SELECT ti.source_invoice_id as id, ti.invoice_num as invoice_number,
+                       ti.net_due as balance_due, tc.ts_name as matter_name
+                FROM ts_invoices ti
+                JOIN ts_clients tc ON tc.ts_client_id = ti.source_client_id
+                    AND tc.tenant_id = ti.tenant_id
+                WHERE ti.tenant_id=:tid AND tc.client_code=:cc
+                  AND ti.paid_in_full = false
+                ORDER BY ti.invoice_num
+            """),
+            {"tid": tid, "cc": pmt.client_code}
+        )
+        ts_invoices = [dict(r._mapping) for r in ts_rows.fetchall()]
+
+    return JSONResponse({
+        "payment_id":    payment_id,
+        "client_code":   pmt.client_code,
+        "amount":        float(pmt.amount),
+        "unallocated":   float(pmt.unallocated),
+        "invoices":      invoices,
+        "ts_invoices":   ts_invoices,
+    })
+
+
+class AllocationIn(BaseModel):
+    allocations: list  # [{invoice_id, amount, notes}]
+
+
+@router.post("/payments/{payment_id}/allocate")
+async def allocate_payment(payment_id: str, body: AllocationIn, user=Depends(get_current_user)):
+    """Allocate a payment across one or more invoices."""
+    tid = _tid(user)
+    total_alloc = sum(float(a.get("amount", 0)) for a in body.allocations)
+
+    async with AsyncSessionLocal() as db:
+        pmt_row = await db.execute(
+            text("SELECT amount, unallocated FROM billing_payments WHERE id=:pid AND tenant_id=:tid"),
+            {"pid": payment_id, "tid": tid}
+        )
+        pmt = pmt_row.fetchone()
+        if not pmt:
+            raise HTTPException(404, "Payment not found")
+        if total_alloc > float(pmt.amount):
+            raise HTTPException(400, f"Allocation ${total_alloc:.2f} exceeds payment ${float(pmt.amount):.2f}")
+
+        for alloc in body.allocations:
+            inv_id = alloc.get("invoice_id")
+            amt    = float(alloc.get("amount", 0))
+            if amt <= 0:
+                continue
+            await db.execute(
+                text("""
+                    INSERT INTO billing_payment_allocations
+                        (tenant_id, payment_id, invoice_id, amount, notes)
+                    VALUES (:tid, :pid, :inv, :amt, :notes)
+                """),
+                {"tid": tid, "pid": payment_id, "inv": inv_id,
+                 "amt": amt, "notes": alloc.get("notes")}
+            )
+            # Update invoice
+            await db.execute(
+                text("""
+                    UPDATE billing_invoices
+                    SET amount_paid  = amount_paid + :amt,
+                        balance_due  = balance_due - :amt,
+                        status       = CASE WHEN balance_due - :amt <= 0 THEN 'paid' ELSE status END,
+                        updated_at   = now()
+                    WHERE id=:inv AND tenant_id=:tid
+                """),
+                {"amt": amt, "inv": inv_id, "tid": tid}
+            )
+
+        # Update payment unallocated balance
+        await db.execute(
+            text("""
+                UPDATE billing_payments
+                SET allocated_total = allocated_total + :total,
+                    unallocated     = unallocated - :total
+                WHERE id=:pid AND tenant_id=:tid
+            """),
+            {"total": total_alloc, "pid": payment_id, "tid": tid}
+        )
+        await db.commit()
+
+    return JSONResponse({"status": "allocated", "total_allocated": total_alloc})
+
+
+@router.get("/timekeepers")
+async def list_timekeepers(user=Depends(get_current_user)):
+    tid = _tid(user)
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(
+            text("""
+                SELECT ts_tk_id, ts_name, ts_initials
+                FROM ts_timekeepers WHERE tenant_id=:tid
+                ORDER BY ts_name
+            """),
+            {"tid": tid}
+        )
+        tks = [dict(r._mapping) for r in rows.fetchall()]
+    return JSONResponse({"timekeepers": tks})
+
+
+@router.post("/matters/sync")
+async def sync_matters(user=Depends(get_current_user)):
+    """Force re-sync of billing_matters from ts_clients."""
+    tid = _tid(user)
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            text("DELETE FROM billing_matters WHERE tenant_id=:tid"),
+            {"tid": tid}
+        )
+        await db.commit()
+    await _populate_matters(tid)
+    return JSONResponse({"status": "synced"})
+
+
+# ── Client Edit ────────────────────────────────────────────────────────────────
+
+@router.put("/clients/{client_id}")
+async def update_client(client_id: str, request: Request, user=Depends(get_current_user)):
+    """Update a Praesidium client record."""
+    tid = _tid(user)
+    body = await request.json()
+    allowed = {
+        "client_name", "client_type", "address1", "address2",
+        "city", "state", "zip_code", "phone", "email",
+        "notes", "client_number", "primary_contact", "is_active",
+    }
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(400, "No valid fields to update")
+    set_clause = ", ".join(f"{k} = :{k}" for k in updates)
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            text(f"""
+                UPDATE clients
+                SET {set_clause}, updated_at = now()
+                WHERE id = CAST(:cid AS uuid)
+                  AND trim(tenant_id) = trim(:tid)
+            """),
+            {**updates, "cid": client_id, "tid": tid}
+        )
+        await db.commit()
+        if result.rowcount == 0:
+            raise HTTPException(404, "Client not found")
+    return JSONResponse({"status": "updated"})
+
+
+# ── Matter Edit ────────────────────────────────────────────────────────────────
+
+@router.put("/matters/{matter_id}")
+async def update_matter(matter_id: str, request: Request, user=Depends(get_current_user)):
+    """Update a Praesidium matter record."""
+    tid = _tid(user)
+    body = await request.json()
+    allowed = {
+        "matter_name", "matter_number", "practice_area", "status",
+        "billing_type", "hourly_rate", "flat_fee_amount", "contingency_pct",
+        "retainer_amount", "cause_number", "court", "judge",
+        "jurisdiction", "open_date", "close_date", "notes",
+        "responsible_attorney_id",
+    }
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(400, "No valid fields to update")
+    set_clause = ", ".join(f"{k} = :{k}" for k in updates)
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            text(f"""
+                UPDATE matters
+                SET {set_clause}, updated_at = now()
+                WHERE id = CAST(:mid AS uuid)
+                  AND trim(tenant_id) = trim(:tid)
+            """),
+            {**updates, "mid": matter_id, "tid": tid}
+        )
+        await db.commit()
+        if result.rowcount == 0:
+            raise HTTPException(404, "Matter not found")
+    return JSONResponse({"status": "updated"})
+
+
+# ── Timeslips Slip Edit ────────────────────────────────────────────────────────
+
+@router.put("/ts-slips/{slip_id}")
+async def update_ts_slip(slip_id: str, request: Request, user=Depends(get_current_user)):
+    """
+    Update a ts_slips record.
+    Writes to Praesidium's ts_slips mirror only — source Timeslips DB unchanged.
+    Recalculates wip_value / billed_value from hours * rate.
+    """
+    tid = _tid(user)
+    body = await request.json()
+    allowed = {"slip_date", "source_tk_id", "hours", "rate", "narrative", "billed"}
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        raise HTTPException(400, "No valid fields to update")
+
+    # Recompute wip/billed values if hours or rate or billed changes
+    hours  = float(updates.get("hours", 0) or 0)
+    rate   = float(updates.get("rate",  0) or 0)
+    billed = updates.get("billed", None)
+
+    if hours and rate:
+        value = round(hours * rate, 2)
+        if billed is True or billed == "true":
+            updates["billed_value"] = value
+            updates["wip_value"]    = 0
+        elif billed is False or billed == "false":
+            updates["wip_value"]    = value
+            updates["billed_value"] = 0
+
+    set_clause = ", ".join(f"{k} = :{k}" for k in updates)
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            text(f"""
+                UPDATE ts_slips
+                SET {set_clause}
+                WHERE source_slip_id = :sid
+                  AND trim(tenant_id) = trim(:tid)
+            """),
+            {**updates, "sid": slip_id, "tid": tid}
+        )
+        await db.commit()
+        if result.rowcount == 0:
+            raise HTTPException(404, "Slip not found")
+    return JSONResponse({"status": "updated"})
+
+
+# ---------------------------------------------------------------------------
+# Billing Chat — adapter-backed SSE endpoint
+# ---------------------------------------------------------------------------
+
+from fastapi.responses import StreamingResponse
+
+billing_chat_router = APIRouter(tags=["billing-chat"])
+
+
+@billing_chat_router.post("/api/v1/billing/chat/stream")
+async def billing_chat_stream(request: Request):
+    import asyncio as _asyncio
+    from modules.intelligence import (
+        call as ai_call,
+        AICallContext,
+        AIKeyMissingError,
+        AICapBreach,
+        AIRoutingMissingError,
+    )
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    messages = body.get("messages") or []
+    last_user = next(
+        (m for m in reversed(messages) if m.get("role") == "user"),
+        None,
+    )
+    if not last_user or not last_user.get("content"):
+        async def _empty():
+            yield "data: (empty message)\n\n"
+            yield "data: [DONE]\n\n"
+        return StreamingResponse(_empty(), media_type="text/event-stream")
+
+    user_prompt = last_user["content"]
+
+    history_lines = []
+    for m in messages[:-1]:
+        content = m.get("content") or ""
+        if not content or content.startswith("⚠"):
+            continue
+        who = "User" if m.get("role") == "user" else "Assistant"
+        history_lines.append(f"{who}: {content}")
+    history_block = "\n\n".join(history_lines)
+
+    system_prompt = (
+        "You are Praesidium's Billing Intelligence assistant. You help the "
+        "user analyze WIP, classify time entries under UTBMS, interpret AR "
+        "aging, strategize collections, and evaluate timekeeper utilization. "
+        "Respond concisely in plain text (no markdown). Ask clarifying "
+        "questions when the user's intent is ambiguous."
+    )
+
+    if history_block:
+        combined = (
+            f"{system_prompt}\n\nPrior conversation:\n{history_block}"
+            f"\n\nUser: {user_prompt}\n\nAssistant:"
+        )
+    else:
+        combined = f"{system_prompt}\n\nUser: {user_prompt}\n\nAssistant:"
+
+    tenant_id = getattr(request.state, "tenant_id", "").strip()
+    user = getattr(request.state, "current_user", None)
+    user_id = getattr(user, "id", None) if user else None
+
+    ctx = AICallContext(
+        tenant_id=tenant_id,
+        module="billing",
+        purpose="chat",
+        user_id=user_id,
+        matter_id=None,
+    )
+
+    try:
+        result = await ai_call(ctx, raw_user_prompt=combined)
+        text_response = result.text or "(empty response)"
+    except AIKeyMissingError:
+        text_response = (
+            "⚠ Anthropic API key is not configured for this tenant. "
+            "Wire the key in Firm Settings → API Keys to enable chat."
+        )
+    except AICapBreach as exc:
+        text_response = (
+            f"⚠ Daily AI budget reached: {exc}. Contact a partner to "
+            "increase limits or try again tomorrow."
+        )
+    except AIRoutingMissingError as exc:
+        text_response = (
+            f"⚠ AI routing not configured for this module: {exc}. "
+            "Contact admin."
+        )
+    except Exception as exc:
+        text_response = f"⚠ Unexpected error: {type(exc).__name__}: {exc}"
+
+    async def _stream():
+        for word in text_response.split(" "):
+            yield f"data: {word} \n\n"
+            await _asyncio.sleep(0.015)
+        yield "data: [DONE]\n\n"
+
+    return StreamingResponse(_stream(), media_type="text/event-stream")

@@ -1,0 +1,75 @@
+{# dms_dictation_drop — audio file drop zone widget
+   POST target: /scan/dictation/upload (scanning_portal route, unchanged)
+   AI intervention point (future): whisper transcription status push via HTMX polling,
+   matter auto-suggestion from transcript content.
+#}
+<div class="card" style="padding:14px 16px; height:100%;">
+  <div style="font-size:12px; font-weight:600; color:var(--text); margin-bottom:10px;">
+    Upload Dictation
+  </div>
+
+  <div id="dict-drop-zone"
+       ondragover="event.preventDefault(); this.style.borderColor='var(--primary)'; this.style.background='#EFF6FF';"
+       ondragleave="this.style.borderColor='var(--border)'; this.style.background='';"
+       ondrop="handleDictDrop(event)"
+       onclick="document.getElementById('dict-file-input').click()"
+       style="border:2px dashed var(--border); border-radius:6px; padding:20px 12px;
+              text-align:center; cursor:pointer; transition:all 150ms;">
+    <svg style="width:24px;height:24px;color:#9CA3AF;margin:0 auto 6px;display:block;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/>
+    </svg>
+    <div style="font-size:12px; font-weight:500; color:var(--text);">Drop audio file here</div>
+    <div style="font-size:11px; color:var(--muted); margin-top:2px;">MP3, M4A, WAV · Transcribed via Whisper</div>
+  </div>
+  <input id="dict-file-input" type="file"
+         accept=".mp3,.m4a,.wav,.ogg,.webm"
+         style="display:none;" onchange="dmsWidgetDictForm(this)">
+
+  <select id="dict-matter"
+          style="width:100%; margin-top:10px; font-size:11px; padding:5px 8px;
+                 border:1px solid var(--border); border-radius:5px;
+                 background:var(--surface); font-family:inherit;">
+    <option value="">— Assign to matter (optional) —</option>
+    {% for m in matters %}
+    <option value="{{ m.id }}">
+      {%- if m.client_name %}{{ m.client_name }} · {% endif -%}
+      {{ m.matter_number or '' }} {{ m.matter_name }}
+    </option>
+    {% endfor %}
+  </select>
+  <input id="dict-notes" type="text" placeholder="Notes (optional)"
+         style="width:100%; margin-top:6px; font-size:11px; padding:5px 8px;
+                border:1px solid var(--border); border-radius:5px;
+                font-family:inherit; box-sizing:border-box;">
+  <div id="dict-upload-result" style="margin-top:6px; min-height:14px;"></div>
+</div>
+
+<script>
+function handleDictDrop(e) {
+  e.preventDefault();
+  var zone = document.getElementById('dict-drop-zone');
+  zone.style.borderColor = 'var(--border)';
+  zone.style.background = '';
+  var file = e.dataTransfer.files[0];
+  if (file) dmsWidgetDictUpload(file);
+}
+function dmsWidgetDictForm(input) {
+  if (input.files[0]) dmsWidgetDictUpload(input.files[0]);
+}
+async function dmsWidgetDictUpload(file) {
+  var fd = new FormData();
+  fd.append('file',      file);
+  fd.append('matter_id', document.getElementById('dict-matter').value);
+  fd.append('notes',     document.getElementById('dict-notes').value);
+  var result = document.getElementById('dict-upload-result');
+  result.innerHTML = '<span style="font-size:11px;color:var(--muted);">Uploading…</span>';
+  try {
+    var resp = await fetch('/scan/dictation/upload', {method: 'POST', body: fd});
+    result.innerHTML = await resp.text();
+    if (resp.ok) setTimeout(function() { location.reload(); }, 1500);
+  } catch(err) {
+    result.innerHTML = '<span style="color:#EF4444;font-size:11px;">Upload failed</span>';
+  }
+}
+</script>

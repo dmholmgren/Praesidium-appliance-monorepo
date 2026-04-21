@@ -1,0 +1,182 @@
+{# ediscovery/review_workspace.html
+   Three-pane review workspace shell. Loaded at
+   GET /ediscovery/collections/{collection_id}/review.
+
+   Grid areas:
+     header  | header     (top — breadcrumb + collection metadata)
+     left    | center right | center right  (body)
+
+   The left pane loads the doc_list widget via HTMX on initial render.
+   The center + right start empty (prompt to select a doc). Clicking a
+   row in left fetches /ediscovery/documents/{id}/panes which returns
+   both #doc-viewer and #doc-right simultaneously.
+#}
+{% extends "base.html" %}
+{% block title %}Review — {{ collection.display_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block content %}
+<div style="display:flex; flex-direction:column; height:calc(100vh - 120px); min-height:600px;">
+
+  {# Header / breadcrumb #}
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              padding:10px 14px; margin-bottom:10px;
+              border:1px solid var(--border-color,#e2e8f0);
+              background:var(--surface,#fff); border-radius:6px;
+              flex-shrink:0;">
+    <div style="display:flex; align-items:center; gap:12px; min-width:0;">
+      <a href="/ediscovery/matters/{{ collection.matter_id }}/collections"
+         style="font-size:12px; color:var(--muted,#64748b); text-decoration:none;">
+        ← {{ collection.matter_name or 'Matter' }}
+      </a>
+      <div style="width:1px; height:20px; background:var(--border-color,#e2e8f0);"></div>
+      <div style="min-width:0;">
+        <div style="font-size:14px; font-weight:600; color:var(--text,#1a202c);
+                    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+          {{ collection.display_name }}
+        </div>
+        <div style="font-size:11px; color:var(--muted,#64748b); display:flex; gap:10px; margin-top:1px;">
+          {% if collection.source_party %}<span>From: {{ collection.source_party }}</span>{% endif %}
+          <span>{{ collection.total_docs or 0 }} docs</span>
+          <span>{{ collection.reviewed_docs or 0 }} reviewed</span>
+        </div>
+      </div>
+    </div>
+    <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+      <span style="font-size:10px; color:var(--muted,#64748b);
+                   font-weight:600; text-transform:uppercase;
+                   letter-spacing:0.04em;">
+        {{ collection.status or 'active' }}
+      </span>
+    </div>
+  </div>
+
+  {# 3-pane workspace #}
+  <div style="flex:1; min-height:0;
+              display:grid;
+              grid-template-columns: 320px 1fr 360px;
+              grid-template-rows: 1fr;
+              grid-template-areas: 'left center right';
+              gap:10px;">
+
+    {# Left — doc list widget (loads via HTMX on initial render) #}
+    <div id="edr-doc-list"
+         style="grid-area:left; min-height:0; overflow:hidden;"
+         hx-get="/widgets/ediscovery_doc_list?collection_id={{ collection_id }}"
+         hx-trigger="load"
+         hx-swap="outerHTML">
+      <div style="padding:20px; text-align:center; font-size:11px;
+                  color:var(--muted,#64748b);
+                  border:1px solid var(--border-color,#e2e8f0);
+                  border-radius:6px; background:var(--surface,#fff);
+                  height:100%;">
+        Loading documents…
+      </div>
+    </div>
+
+    {# Center + right — container for panes; populated on row click #}
+    <div id="doc-panes" style="grid-area:center / center / right / right;
+                               min-height:0;
+                               display:grid;
+                               grid-template-columns: 1fr 360px;
+                               grid-template-areas: 'center right';
+                               gap:10px;">
+      {# Initial empty state — viewer placeholder + right-rail hints #}
+      <div id="doc-viewer" style="grid-area:center; min-height:0;">
+        <div style="display:flex; align-items:center; justify-content:center;
+                    height:100%; background:#FAFBFC;
+                    border:1px solid var(--border-color,#e2e8f0);
+                    border-radius:6px;
+                    color:var(--muted,#64748b); font-size:12px;">
+          Select a document from the list to begin review.
+        </div>
+      </div>
+      <div id="doc-right" style="grid-area:right; min-height:0;
+                                 overflow-y:auto; padding-right:2px;">
+        <div style="padding:16px; font-size:11px; color:var(--muted,#64748b);
+                    text-align:center;
+                    border:1px dashed var(--border-color,#e2e8f0);
+                    border-radius:6px;">
+          Tags · Review Status · Family · Metadata
+          will appear here after selection.
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <div id="edr-loading"
+       class="htmx-indicator"
+       style="position:fixed; top:8px; right:8px; z-index:9999;
+              padding:6px 12px; font-size:11px; font-weight:600;
+              color:#fff; background:rgba(0,0,0,0.75); border-radius:4px;">
+    Loading…
+  </div>
+</div>
+
+<script>
+  // Shared card collapse/expand behavior for right-rail cards.
+  // Bound once — survives HTMX swaps because we re-bind on htmx:afterSwap too.
+  (function() {
+    function applyDefaultOpen(root) {
+      (root || document).querySelectorAll('.edr-card').forEach(function(card) {
+        var open = card.getAttribute('data-edr-default-open') !== 'false';
+        var body = card.querySelector('.edr-card-body');
+        var caret = card.querySelector('.edr-card-caret');
+        if (!body) return;
+        if (!open) {
+          body.style.display = 'none';
+          if (caret) caret.style.transform = 'rotate(-90deg)';
+        }
+      });
+    }
+    window.edrToggleCard = function(headerEl) {
+      var card = headerEl.closest('.edr-card');
+      if (!card) return;
+      var body = card.querySelector('.edr-card-body');
+      var caret = card.querySelector('.edr-card-caret');
+      if (!body) return;
+      var hidden = body.style.display === 'none';
+      body.style.display = hidden ? '' : 'none';
+      if (caret) caret.style.transform = hidden ? '' : 'rotate(-90deg)';
+    };
+
+    applyDefaultOpen(document);
+
+    // Re-apply on HTMX swaps (new cards arrive after selecting a doc)
+    document.body.addEventListener('htmx:afterSwap', function(evt) {
+      applyDefaultOpen(evt.detail.target);
+    });
+
+    // Keyboard navigation — j/k to step through docs in the list.
+    // Skipped when user is typing in an input.
+    document.addEventListener('keydown', function(evt) {
+      if (evt.target.tagName === 'INPUT' || evt.target.tagName === 'TEXTAREA'
+          || evt.target.tagName === 'SELECT') return;
+      if (evt.metaKey || evt.ctrlKey || evt.altKey) return;
+      if (evt.key !== 'j' && evt.key !== 'k') return;
+
+      var rows = document.querySelectorAll('.edr-doc-row');
+      if (!rows.length) return;
+
+      // Find currently-highlighted row by border-left style marker
+      var idx = -1;
+      for (var i = 0; i < rows.length; i++) {
+        if (rows[i].style.borderLeft && rows[i].style.borderLeft.indexOf('transparent') === -1) {
+          idx = i;
+          break;
+        }
+      }
+
+      var nextIdx;
+      if (evt.key === 'j') nextIdx = (idx < 0) ? 0 : Math.min(idx + 1, rows.length - 1);
+      else                 nextIdx = (idx < 0) ? 0 : Math.max(idx - 1, 0);
+
+      if (nextIdx !== idx) {
+        rows[nextIdx].click();
+        rows[nextIdx].scrollIntoView({block: 'nearest'});
+        evt.preventDefault();
+      }
+    });
+  })();
+</script>
+{% endblock %}

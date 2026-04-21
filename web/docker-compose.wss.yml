@@ -1,0 +1,34 @@
+# Praesidium Platform — Whisper Speech Service
+# VM: MAIN-PRD-WSS-01 (10.10.60.14)
+# Container: faster-whisper (self-hosted speech-to-text)
+# Audio never leaves firm infrastructure.
+services:
+  whisper:
+    image: ghcr.io/speaches-ai/speaches:latest-cpu
+    container_name: praesidium-whisper
+    restart: unless-stopped
+    environment:
+      - WHISPER_MODEL=${WHISPER_MODEL:-large-v3}
+      - WHISPER_DEVICE=${WHISPER_DEVICE:-cpu}
+      - WHISPER_COMPUTE_TYPE=${WHISPER_COMPUTE_TYPE:-int8}
+    volumes:
+      - whisper-models:/root/.cache/huggingface
+    ports:
+      - "9000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - praesidium-wss-net
+
+volumes:
+  whisper-models:
+
+networks:
+  praesidium-wss-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.200.4.0/24

@@ -1,0 +1,60 @@
+{#
+  widgets/matter_documents_launcher.html
+  Documents tab content — launcher card to DMS matter workspace.
+  Clean, simple, no confusion about what clicking does.
+
+  Context:
+    matter_id      str
+    matter_name    str|None
+    doc_count      int
+    folder_count   int
+    scope          dict
+#}
+
+<div style="display: flex; flex-direction: column; align-items: center;
+            justify-content: center; height: 100%; padding: 24px; text-align: center;">
+
+  <div style="font-size: 48px; margin-bottom: 16px;">📁</div>
+
+  <div style="font-size: 15px; font-weight: 600; color: var(--text); margin-bottom: 6px;">
+    Document Workspace
+  </div>
+
+  {% if doc_count or folder_count %}
+    <div style="font-size: 12px; color: var(--muted); margin-bottom: 16px;">
+      {% if doc_count %}{{ "{:,}".format(doc_count) }} document{{ 's' if doc_count != 1 }}{% endif %}
+      {% if folder_count %} · {{ folder_count }} folder{{ 's' if folder_count != 1 }}{% endif %}
+    </div>
+  {% else %}
+    <div style="font-size: 12px; color: var(--muted); margin-bottom: 16px;">
+      Full document workspace with folder tree, search, and preview
+    </div>
+  {% endif %}
+
+  <a href="/dms/matter/{{ matter_id }}"
+     style="display: inline-flex; align-items: center; gap: 8px;
+            padding: 10px 24px; font-size: 13px; font-weight: 500;
+            background: var(--primary, #1B2A4A); color: #fff;
+            border-radius: 6px; text-decoration: none;
+            transition: opacity 0.15s;">
+    Open Document Workspace →
+  </a>
+
+  <div style="margin-top: 16px; display: flex; gap: 12px;">
+    <a href="/dms/matter/{{ matter_id }}"
+       style="font-size: 11px; color: var(--muted); text-decoration: none;">
+      Upload documents
+    </a>
+    <span style="font-size: 11px; color: var(--border-color, #cbd5e1);">·</span>
+    <a href="/dms/matter/{{ matter_id }}"
+       style="font-size: 11px; color: var(--muted); text-decoration: none;">
+      Search files
+    </a>
+    <span style="font-size: 11px; color: var(--border-color, #cbd5e1);">·</span>
+    <a href="/ediscovery/matters/{{ matter_id }}/issue-map"
+       style="font-size: 11px; color: var(--muted); text-decoration: none;">
+      Issue map
+    </a>
+  </div>
+
+</div>

@@ -1,0 +1,21 @@
+{% for v in versions %}
+  <a href="/ediscovery/matters/{{ matter_id }}/issue-map/versions/{{ v.version_num }}"
+     class="version-item block hover:bg-gray-800 rounded"
+     style="border-left: 3px solid {% if loop.first %}#D4A843{% else %}#334155{% endif %}; padding: 0.5rem 0.75rem; margin-bottom: 0.4rem; text-decoration: none;">
+    <div class="flex items-center justify-between">
+      <span class="text-white text-xs font-semibold">v{{ v.version_num }}</span>
+      {% set mag = v.magnitude | float %}
+      {% if mag < 0.05 %}
+        <span style="background:#166534;color:#bbf7d0;" class="text-xs px-1.5 py-0.5 rounded-full">{{ "%.0f"|format(mag*100) }}%</span>
+      {% elif mag < 0.15 %}
+        <span style="background:#854d0e;color:#fef3c7;" class="text-xs px-1.5 py-0.5 rounded-full">{{ "%.0f"|format(mag*100) }}%</span>
+      {% else %}
+        <span style="background:#991b1b;color:#fee2e2;" class="text-xs px-1.5 py-0.5 rounded-full">{{ "%.0f"|format(mag*100) }}%</span>
+      {% endif %}
+    </div>
+    <div class="text-gray-500 text-xs mt-0.5">{{ v.trigger_type | replace('_', ' ') }}</div>
+    <div class="text-gray-600 text-xs">{{ v.created_at.strftime('%b %d %H:%M') if v.created_at else '' }}</div>
+  </a>
+{% else %}
+  <p class="text-gray-500 text-xs">No versions.</p>
+{% endfor %}

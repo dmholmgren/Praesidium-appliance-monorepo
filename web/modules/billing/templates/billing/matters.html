@@ -1,0 +1,107 @@
+{% extends "base_tenant.html" %}
+{% block title %}Matters — {{ brand.platform_name }}{% endblock %}
+{% block content %}
+<div class="px-6 py-4">
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="text-xl font-semibold text-gray-900">Matters</h1>
+    <div class="flex gap-2">
+      <input id="q" type="text" placeholder="Search matters…"
+             class="border rounded px-3 py-1.5 text-sm w-64"
+             oninput="loadMatters()">
+      <select id="attorney_filter" class="border rounded px-3 py-1.5 text-sm"
+              onchange="loadMatters()">
+        <option value="">All attorneys</option>
+        <option value="90">Dennis (90)</option>
+        <option value="70">Mitchell (70)</option>
+      </select>
+      <button onclick="syncMatters()"
+              class="bg-blue-600 text-white px-3 py-1.5 rounded text-sm hover:bg-blue-700">
+        ↻ Sync
+      </button>
+    </div>
+  </div>
+
+  <div id="matters-table" class="bg-white rounded border overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 border-b">
+        <tr>
+          <th class="px-4 py-2 text-left font-medium text-gray-600">Client / Matter</th>
+          <th class="px-4 py-2 text-left font-medium text-gray-600">Case Type</th>
+          <th class="px-4 py-2 text-left font-medium text-gray-600">Attorney</th>
+          <th class="px-4 py-2 text-right font-medium text-gray-600">Hours</th>
+          <th class="px-4 py-2 text-right font-medium text-gray-600">WIP</th>
+          <th class="px-4 py-2 text-left font-medium text-gray-600">Status</th>
+          <th class="px-4 py-2"></th>
+        </tr>
+      </thead>
+      <tbody id="matters-body">
+        <tr><td colspan="7" class="px-4 py-8 text-center text-gray-400">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div id="matters-count" class="mt-2 text-xs text-gray-400"></div>
+</div>
+
+<script>
+async function loadMatters() {
+  const q  = document.getElementById('q').value;
+  const ap = document.getElementById('attorney_filter').value;
+  const params = new URLSearchParams({status:'active'});
+  if (q)  params.set('q', q);
+  if (ap) params.set('attorney', ap);
+
+  const res  = await fetch('/api/billing/matters?' + params);
+  const data = await res.json();
+  const tbody = document.getElementById('matters-body');
+
+  if (!data.matters.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-gray-400">No matters found</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = data.matters.map(m => `
+    <tr class="border-b hover:bg-gray-50 cursor-pointer" onclick="location.href='/billing/matters/${m.id}'">
+      <td class="px-4 py-2.5 font-medium text-gray-900">
+        ${m.client_code}${m.matter_code ? ' <span class="text-gray-400">/</span> ' + m.matter_code : ''}
+      </td>
+      <td class="px-4 py-2.5 text-gray-600">${m.case_type || '—'}</td>
+      <td class="px-4 py-2.5 text-gray-600">${m.sup_attorney || m.billing_atty || '—'}</td>
+      <td class="px-4 py-2.5 text-right text-gray-700">${fmtHours(m.total_hours)}</td>
+      <td class="px-4 py-2.5 text-right font-medium ${parseFloat(m.wip_value||0) > 0 ? 'text-amber-700' : 'text-gray-400'}">
+        ${fmtMoney(m.wip_value)}
+      </td>
+      <td class="px-4 py-2.5">
+        <span class="px-2 py-0.5 rounded-full text-xs ${m.status==='active' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}">
+          ${m.status}
+        </span>
+      </td>
+      <td class="px-4 py-2.5 text-right">
+        <a href="/billing/slips/new?matter_id=${m.id}" onclick="event.stopPropagation()"
+           class="text-blue-600 hover:underline text-xs">+ Slip</a>
+        &nbsp;
+        <a href="/billing/prebills/${m.id}" onclick="event.stopPropagation()"
+           class="text-amber-600 hover:underline text-xs">Prebill</a>
+      </td>
+    </tr>
+  `).join('');
+  document.getElementById('matters-count').textContent = `${data.total} matters`;
+}
+
+async function syncMatters() {
+  if (!confirm('Re-sync matters from Timeslips? This may take a moment.')) return;
+  const res = await fetch('/api/billing/matters/sync', {method:'POST'});
+  if (res.ok) { alert('Sync complete'); loadMatters(); }
+}
+
+function fmtHours(h) {
+  const n = parseFloat(h||0);
+  return n > 0 ? n.toFixed(1) + 'h' : '—';
+}
+function fmtMoney(v) {
+  const n = parseFloat(v||0);
+  return n > 0 ? '$' + n.toLocaleString('en-US', {minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
+}
+
+loadMatters();
+</script>
+{% endblock %}

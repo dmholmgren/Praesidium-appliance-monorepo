@@ -1,0 +1,330 @@
+{# billing/billing_home.html
+   Billing Home — full-page shell (HTMX partial, embedded in billing layout)
+   Structural mirror of ediscovery/ediscovery_overview.html
+
+   Left   ~280px  — firm_matter_tree (billing context, WIP per matter)
+   Center flex:1  — billing_revenue_chart (top) + billing_bill_state_summary (bottom strip)
+   Right  ~280px  — billing_ar_aging_snapshot (top) + billing_timekeeper_kpi (bottom)
+   Bottom 200px   — billing_ai_chat
+
+   NO DATA in this template. All data arrives via hx-get widget slots.
+   Scripts: resize handle + chart reload routing only. No business logic.
+#}
+
+<div style="display:flex; flex-direction:column; gap:0;
+            height:calc(100vh - 210px); min-height:0; overflow:hidden;">
+
+  {# ── Top three-column row ────────────────────────────────────────────────── #}
+  <div style="display:flex; flex:1; min-height:0; gap:10px; overflow:hidden;">
+
+    {# ── LEFT: Client / Matter tree ──────────────────────────────────────── #}
+    <div id="bil-left-panel"
+         style="width:280px; min-width:180px; max-width:420px; flex-shrink:0;
+                display:flex; flex-direction:column; overflow:hidden;
+                border:1px solid var(--border-color,#e2e8f0); border-radius:8px;
+                background:var(--surface,#fff);">
+
+      <div style="padding:6px 12px; border-bottom:1px solid #f1f5f9; background:#f8fafc;
+                  display:flex; align-items:center; justify-content:space-between; flex-shrink:0;">
+        <span style="font-size:10px; font-weight:700; color:var(--muted);
+                     font-size:11px; font-weight:600;">
+          Clients &amp; Matters
+        </span>
+        <a href="/billing/clients"
+           style="font-size:9px; color:var(--primary,#1B2A4A); text-decoration:none; font-weight:600;">
+          All clients →
+        </a>
+      </div>
+
+      <div hx-get="/widgets/firm_matter_tree_billing?config=%7B%22context%22%3A%22billing%22%7D"
+           hx-trigger="load"
+           hx-swap="innerHTML"
+           id="widget-billing-matter-tree"
+           style="flex:1; min-height:0; display:flex; flex-direction:column;">
+        <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+      </div>
+
+    </div>
+
+    {# Resize handle #}
+    <div id="bil-rh"
+         onmousedown="bilStartResize(event)"
+         style="width:4px; background:transparent; cursor:col-resize; flex-shrink:0;"
+         onmouseover="this.style.background='rgba(27,42,74,0.2)'"
+         onmouseout="this.style.background='transparent'">
+    </div>
+
+    {# ── CENTER: Revenue chart + Bill state strip ─────────────────────────── #}
+    <div style="flex:1; min-width:0; display:flex; flex-direction:column;
+                gap:10px; overflow:hidden;">
+
+      {# Revenue Intelligence chart #}
+      <div style="flex:1; min-height:0;
+                  border:1px solid var(--border-color,#e2e8f0); border-radius:8px;
+                  background:var(--surface,#fff); overflow:hidden;
+                  display:flex; flex-direction:column;">
+
+        <div style="padding:7px 12px; border-bottom:1px solid #f1f5f9; background:#f8fafc;
+                    display:flex; align-items:center; justify-content:space-between; flex-shrink:0;">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-size:11px; font-weight:600; color:var(--muted);">
+              Revenue Intelligence
+            </span>
+            <span id="bil-scope-crumb"
+                  style="display:none; align-items:center; gap:4px; font-size:10px;
+                         background:#EFF6FF; color:#1d4ed8; padding:2px 8px;
+                         border-radius:10px; border:1px solid #BFDBFE;">
+              <span class="bil-crumb-label"></span>
+              <button onclick="bilResetScope()"
+                      style="background:none; border:none; color:#1d4ed8; cursor:pointer;
+                             font-size:11px; padding:0 0 0 4px; line-height:1;"
+                      title="Reset to firm-wide">✕</button>
+            </span>
+          </div>
+          <div style="display:flex; align-items:center; gap:6px;">
+            <select id="bil-chart-period"
+                    onchange="bilReloadChart()"
+                    style="font-size:10px; border:1px solid var(--border-color,#e2e8f0);
+                           border-radius:4px; padding:2px 6px; background:var(--surface,#fff);
+                           color:var(--text); cursor:pointer;">
+              <option value="month">This Month</option>
+              <option value="last_month">Last Month</option>
+              <option value="quarter">This Quarter</option>
+              <option value="ytd">YTD</option>
+            </select>
+            <select id="bil-chart-group"
+                    onchange="bilReloadChart()"
+                    style="font-size:10px; border:1px solid var(--border-color,#e2e8f0);
+                           border-radius:4px; padding:2px 6px; background:var(--surface,#fff);
+                           color:var(--text); cursor:pointer;">
+              <option value="attorney">By Attorney</option>
+              <option value="practice_area">By Practice Area</option>
+              <option value="client">By Client</option>
+            </select>
+          </div>
+        </div>
+
+        {# Center content — starts as intake, swaps to chart when client scoped #}
+        <div id="widget-billing-revenue-chart"
+             hx-get="/widgets/billing_matter_intake"
+             hx-trigger="load"
+             hx-swap="innerHTML"
+             style="flex:1; min-height:0; display:flex; flex-direction:column; overflow-y:auto;">
+          <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+        </div>
+      </div>
+
+      {# Bill state summary strip #}
+      <div style="flex-shrink:0; height:88px;
+                  border:1px solid var(--border-color,#e2e8f0); border-radius:8px;
+                  background:var(--surface,#fff); overflow:hidden;
+                  display:flex; flex-direction:column;">
+
+        <div style="padding:5px 12px; border-bottom:1px solid #f1f5f9; background:#f8fafc; flex-shrink:0;">
+          <span style="font-size:10px; font-weight:700; color:var(--muted);
+                       font-size:11px; font-weight:600;">Bill State</span>
+        </div>
+
+        <div hx-get="/widgets/billing_bill_state_summary"
+             hx-trigger="load"
+             hx-swap="innerHTML"
+             id="widget-billing-bill-state"
+             style="flex:1; display:flex; align-items:center;">
+          <div style="padding:12px; text-align:center; color:var(--muted); font-size:12px; width:100%;">Loading…</div>
+        </div>
+      </div>
+
+    </div>
+
+    {# ── RIGHT: AR Aging (top) + Timekeeper KPI (bottom) ─────────────────── #}
+    <div style="width:280px; min-width:200px; flex-shrink:0;
+                display:flex; flex-direction:column; gap:10px; overflow:hidden;">
+
+      {# AR Aging snapshot #}
+      <div style="flex:1; min-height:0;
+                  border:1px solid var(--border-color,#e2e8f0); border-radius:8px;
+                  background:var(--surface,#fff); overflow:hidden;
+                  display:flex; flex-direction:column;">
+
+        <div style="padding:7px 12px; border-bottom:1px solid #f1f5f9; background:#f8fafc;
+                    display:flex; align-items:center; justify-content:space-between; flex-shrink:0;">
+          <span style="font-size:10px; font-weight:700; color:var(--muted);
+                       font-size:11px; font-weight:600;">AR Aging</span>
+          <a href="/billing/reports"
+             style="font-size:9px; color:var(--primary,#1B2A4A); text-decoration:none;">
+            Reports →
+          </a>
+        </div>
+
+        <div hx-get="/widgets/billing_ar_aging_snapshot"
+             hx-trigger="load"
+             hx-swap="innerHTML"
+             id="widget-billing-ar-aging"
+             style="flex:1; min-height:0; overflow-y:auto;">
+          <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+        </div>
+      </div>
+
+      {# Timekeeper KPI strip #}
+      <div style="flex:1; min-height:0;
+                  border:1px solid var(--border-color,#e2e8f0); border-radius:8px;
+                  background:var(--surface,#fff); overflow:hidden;
+                  display:flex; flex-direction:column;">
+
+        <div style="padding:7px 12px; border-bottom:1px solid #f1f5f9; background:#f8fafc;
+                    display:flex; align-items:center; justify-content:space-between; flex-shrink:0;">
+          <span style="font-size:10px; font-weight:700; color:var(--muted);
+                       font-size:11px; font-weight:600;">Timekeepers</span>
+          <span style="font-size:9px; color:var(--muted);">WIP · Util · Real</span>
+        </div>
+
+        <div hx-get="/widgets/billing_timekeeper_kpi"
+             hx-trigger="load"
+             hx-swap="innerHTML"
+             id="widget-billing-timekeeper-kpi"
+             style="flex:1; min-height:0; overflow-y:auto;">
+          <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  {# ── Bottom: Billing AI Chat ──────────────────────────────────────────────── #}
+  <div style="flex-shrink:0; margin-top:10px;
+              border:1px solid var(--border-color,#e2e8f0); border-radius:8px;
+              background:var(--surface,#fff);">
+
+    <div style="padding:6px 12px; border-bottom:1px solid #f1f5f9; background:#f8fafc;
+                display:flex; align-items:center; justify-content:space-between;">
+      <span style="font-size:11px; font-weight:600; color:var(--muted);">Billing Intelligence</span>
+      <span style="font-size:9px; color:var(--muted);">
+        UTBMS classification · WIP analysis · Collection strategy
+      </span>
+    </div>
+
+    <div hx-get="/widgets/billing_ai_chat?context=billing"
+         hx-trigger="load"
+         hx-swap="innerHTML"
+         id="widget-billing-ai-chat">
+      <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+// ── Left panel resize ───────────────────────────────────────────────────────
+var bilRs = null;
+function bilStartResize(e) {
+  e.preventDefault();
+  bilRs = { x0: e.clientX, w0: document.getElementById('bil-left-panel').offsetWidth };
+  document.addEventListener('mousemove', bilDoResize);
+  document.addEventListener('mouseup', bilEndResize);
+}
+function bilDoResize(e) {
+  if (!bilRs) return;
+  const w = Math.max(180, Math.min(420, bilRs.w0 + e.clientX - bilRs.x0));
+  document.getElementById('bil-left-panel').style.width = w + 'px';
+}
+function bilEndResize() {
+  bilRs = null;
+  document.removeEventListener('mousemove', bilDoResize);
+  document.removeEventListener('mouseup', bilEndResize);
+}
+
+// ── Scope state tracker ────────────────────────────────────────────────────
+window._bilScoped = false;
+window._bilScopeParams = '';
+
+// ── Chart period / grouping reload ─────────────────────────────────────────
+function bilReloadChart() {
+  // Only fires when center is showing chart — not intake widget
+  if (!window._bilScoped) return;
+  const period   = document.getElementById('bil-chart-period').value;
+  const group_by = document.getElementById('bil-chart-group').value;
+  const scope    = window._bilScopeParams;
+  htmx.ajax('GET',
+    '/widgets/billing_revenue_chart?period=' + period + '&group_by=' + group_by + (scope ? '&' + scope : ''),
+    { target: '#widget-billing-revenue-chart', swap: 'innerHTML' }
+  );
+}
+
+// ── Client scope callback ──────────────────────────────────────────────────
+window.bilScopeClient = function(clientId) {
+  console.log('bilScopeClient called with:', clientId);
+  if (!clientId) return;
+  console.log('navigating to:', '/billing/clients/' + clientId);
+  window.location.href = '/billing/clients/' + clientId;
+};
+
+// ── Matter tree scope callback ─────────────────────────────────────────────
+window.bilScopeMatter = function(event, matterId, clientId) {
+  event && event.preventDefault && event.preventDefault();
+  window._bilScoped = true;
+  const mq = matterId ? 'matter_id=' + matterId : '';
+  const cq = clientId ? 'client_id=' + clientId : '';
+  const scope = [mq, cq].filter(Boolean).join('&');
+  window._bilScopeParams = scope;
+  const period   = document.getElementById('bil-chart-period').value;
+  const group_by = document.getElementById('bil-chart-group').value;
+  const sep      = scope ? '&' : '';
+
+  htmx.ajax('GET',
+    '/widgets/billing_revenue_chart?period=' + period + '&group_by=' + group_by + sep + scope,
+    { target: '#widget-billing-revenue-chart', swap: 'innerHTML' }
+  );
+  htmx.ajax('GET',
+    '/widgets/billing_ar_aging_snapshot' + (scope ? '?' + scope : ''),
+    { target: '#widget-billing-ar-aging', swap: 'innerHTML' }
+  );
+  htmx.ajax('GET',
+    '/widgets/billing_bill_state_summary' + (scope ? '?' + scope : ''),
+    { target: '#widget-billing-bill-state', swap: 'innerHTML' }
+  );
+  htmx.ajax('GET',
+    '/widgets/billing_timekeeper_kpi' + (scope ? '?' + scope : ''),
+    { target: '#widget-billing-timekeeper-kpi', swap: 'innerHTML' }
+  );
+
+  // Update breadcrumb
+  const bc = document.getElementById('bil-scope-crumb');
+  if (bc) {
+    bc.style.display = 'inline-flex';
+    bc.querySelector('.bil-crumb-label').textContent = 'Matter scope active';
+  }
+};
+
+// ── Reset scope to firm-wide ───────────────────────────────────────────────
+window.bilResetScope = function() {
+  const period   = document.getElementById('bil-chart-period').value;
+  const group_by = document.getElementById('bil-chart-group').value;
+
+  htmx.ajax('GET',
+    '/widgets/billing_revenue_chart?period=' + period + '&group_by=' + group_by,
+    { target: '#widget-billing-revenue-chart', swap: 'innerHTML' }
+  );
+  htmx.ajax('GET', '/widgets/billing_ar_aging_snapshot',
+    { target: '#widget-billing-ar-aging', swap: 'innerHTML' }
+  );
+  htmx.ajax('GET', '/widgets/billing_bill_state_summary',
+    { target: '#widget-billing-bill-state', swap: 'innerHTML' }
+  );
+  htmx.ajax('GET', '/widgets/billing_timekeeper_kpi',
+    { target: '#widget-billing-timekeeper-kpi', swap: 'innerHTML' }
+  );
+  htmx.ajax('GET', '/widgets/billing_ai_chat?context=billing',
+    { target: '#widget-billing-ai-chat', swap: 'innerHTML' }
+  );
+  // Restore intake widget as center default
+  htmx.ajax('GET', '/widgets/billing_matter_intake',
+    { target: '#widget-billing-revenue-chart', swap: 'innerHTML' }
+  );
+  window._bilScoped = false;
+  window._bilScopeParams = '';
+
+  const bc = document.getElementById('bil-scope-crumb');
+  if (bc) bc.style.display = 'none';
+};
+</script>

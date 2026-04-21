@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title_suffix %} — Users{% endblock %}
+{% block page_title %}User Management{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+
+  <!-- Toolbar -->
+  <div class="flex items-center justify-between gap-4">
+    <form method="get" action="/admin/users" class="flex items-center gap-2">
+      <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+      <input type="text" name="search" value="{{ search }}"
+             placeholder="Search name, email, username…"
+             class="bg-gray-800 border border-gray-700 text-gray-100 text-sm rounded px-3 py-1.5 w-64 focus:outline-none focus:border-blue-500">
+      <button type="submit"
+              class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-200 text-sm rounded border border-gray-600">
+        Search
+      </button>
+      {% if search %}
+      <a href="/admin/users?tenant_id={{ tenant_id }}"
+         class="text-xs text-gray-400 hover:text-gray-200">Clear</a>
+      {% endif %}
+    </form>
+    <a href="/admin/users/new?tenant_id={{ tenant_id }}"
+       class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded font-medium">
+      + New User
+    </a>
+  </div>
+
+  <!-- User table -->
+  <div class="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-800 text-gray-400 text-xs uppercase tracking-wider">
+          <th class="text-left px-4 py-3">Name / Username</th>
+          <th class="text-left px-4 py-3">Email</th>
+          <th class="text-left px-4 py-3">Role</th>
+          <th class="text-left px-4 py-3">Theme</th>
+          <th class="text-left px-4 py-3">Auth</th>
+          <th class="text-left px-4 py-3">Last Active</th>
+          <th class="text-left px-4 py-3">Status</th>
+          <th class="text-left px-4 py-3">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for u in users %}
+        <tr class="hover:bg-gray-800/50 {% if not u.is_active %}opacity-50{% endif %}">
+
+          <!-- Name / Username -->
+          <td class="px-4 py-3">
+            <div class="font-medium text-gray-100">{{ u.full_name or u.username }}</div>
+            <div class="text-xs text-gray-500">{{ u.username }}</div>
+          </td>
+
+          <!-- Email -->
+          <td class="px-4 py-3 text-gray-300">{{ u.email or '—' }}</td>
+
+          <!-- Role -->
+          <td class="px-4 py-3">
+            <span class="badge
+              {% if u.role == 'admin' %}bg-purple-900 text-purple-200
+              {% elif u.role == 'attorney' %}bg-blue-900 text-blue-200
+              {% elif u.role == 'paralegal' %}bg-teal-900 text-teal-200
+              {% else %}bg-gray-700 text-gray-300{% endif %}">
+              {{ u.role }}
+            </span>
+          </td>
+
+          <!-- Theme toggle (HTMX inline) -->
+          <td class="px-4 py-3">
+            <div id="theme-badge-{{ u.id }}">
+              <form hx-post="/admin/users/{{ u.id }}/theme"
+                    hx-target="#theme-badge-{{ u.id }}"
+                    hx-swap="innerHTML"
+                    class="inline">
+                <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+                <!-- Toggle to opposite value on click -->
+                <input type="hidden" name="theme_preference"
+                       value="{{ 'light' if u.theme_preference == 'dark' else 'dark' }}">
+                <button type="submit" title="Click to toggle theme"
+                        class="badge cursor-pointer hover:opacity-80
+                          {% if u.theme_preference == 'light' %}bg-yellow-100 text-yellow-800
+                          {% else %}bg-gray-700 text-gray-300{% endif %}">
+                  {{ '☀️ Light' if u.theme_preference == 'light' else '🌙 Dark' }}
+                </button>
+              </form>
+            </div>
+          </td>
+
+          <!-- Auth type -->
+          <td class="px-4 py-3">
+            {% if u.is_ldap %}
+            <span class="badge bg-indigo-900 text-indigo-200">LDAP</span>
+            {% else %}
+            <span class="badge bg-gray-700 text-gray-400">Local</span>
+            {% endif %}
+          </td>
+
+          <!-- Last active -->
+          <td class="px-4 py-3 text-gray-400 text-xs">
+            {% if u.last_active_at %}
+              {{ u.last_active_at.strftime('%b %d %Y %H:%M') }}
+            {% else %}
+              Never
+            {% endif %}
+          </td>
+
+          <!-- Status -->
+          <td class="px-4 py-3">
+            {% if u.is_active %}
+            <span class="badge status-ok">Active</span>
+            {% else %}
+            <span class="badge status-err">Inactive</span>
+            {% endif %}
+          </td>
+
+          <!-- Actions -->
+          <td class="px-4 py-3">
+            <div class="flex items-center gap-3">
+              <a href="/admin/users/{{ u.id }}?tenant_id={{ tenant_id }}"
+                 class="text-xs text-blue-400 hover:text-blue-300">Edit</a>
+              {% if u.is_active %}
+              <form method="post" action="/admin/users/{{ u.id }}/deactivate"
+                    onsubmit="return confirm('Deactivate {{ u.username }}?')">
+                <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+                <button type="submit" class="text-xs text-red-400 hover:text-red-300">
+                  Deactivate
+                </button>
+              </form>
+              {% else %}
+              <form method="post" action="/admin/users/{{ u.id }}/reactivate">
+                <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+                <button type="submit" class="text-xs text-green-400 hover:text-green-300">
+                  Reactivate
+                </button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="8" class="px-4 py-8 text-center text-gray-500 text-sm">
+            {% if search %}
+              No users match "{{ search }}".
+            {% else %}
+              No users found for this tenant.
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Summary line -->
+  <div class="text-xs text-gray-600">
+    {{ users | length }} user{{ 's' if users | length != 1 else '' }}
+    {% if search %} matching "{{ search }}"{% endif %}
+  </div>
+
+</div>
+{% endblock %}

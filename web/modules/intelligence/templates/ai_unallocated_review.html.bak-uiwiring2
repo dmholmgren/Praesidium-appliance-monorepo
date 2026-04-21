@@ -1,0 +1,122 @@
+{# widgets/ai_unallocated_review.html
+   Unallocated AI Charges widget — partner review summary.
+   Matches billing widget convention (inline vars, thin borders, no shadow).
+   Auto-refreshes every 60s. No manual resync.
+   Data source: modules.intelligence.widget_service.get_unallocated_review
+#}
+<div style="display:flex; flex-direction:column; height:100%; min-height:0;"
+     id="widget-ai-unallocated-review-body"
+     hx-get="/widgets/ai_unallocated_review"
+     hx-trigger="every 60s"
+     hx-swap="outerHTML">
+
+  {% if empty_state %}
+  <div style="flex:1; display:flex; align-items:center; justify-content:center;
+              padding:16px; text-align:center;">
+    <div style="font-size:22px; margin-bottom:6px;">✓</div>
+    <div>
+      <div style="font-size:11px; font-weight:600; color:var(--muted);">
+        No unallocated AI charges
+      </div>
+      <div style="font-size:10px; color:var(--muted); margin-top:2px;">
+        {{ reason or 'Nothing awaiting review this month.' }}
+      </div>
+    </div>
+  </div>
+
+  {% else %}
+
+  {# Header — pending total with jump link #}
+  <div style="padding:6px 12px; flex-shrink:0; border-bottom:1px solid #f1f5f9;
+              display:flex; align-items:center; justify-content:space-between;">
+    <div>
+      <div style="font-size:9px; font-weight:700; color:var(--muted);
+                  text-transform:uppercase; letter-spacing:0.05em;">
+        Unallocated AI
+      </div>
+      <div style="font-size:10px; color:var(--muted);">Month to date</div>
+    </div>
+    <a href="/billing/ai-usage/unallocated"
+       style="text-align:right; text-decoration:none;"
+       onmouseover="this.querySelector('div').style.color='var(--primary)'"
+       onmouseout="this.querySelector('div').style.color='var(--text)'">
+      <div style="font-size:15px; font-weight:700; color:var(--text);
+                  font-variant-numeric:tabular-nums; line-height:1;
+                  transition:color 0.2s;">
+        ${{ "{:,.2f}".format(total_usd) }}
+      </div>
+      <div style="font-size:9px; color:var(--primary); margin-top:2px;">
+        Review →
+      </div>
+    </a>
+  </div>
+
+  {# Buckets #}
+  <div style="flex:1; min-height:0; overflow-y:auto;">
+    {% if buckets.no_matter_context.n > 0 %}
+    <div style="display:flex; align-items:center; justify-content:space-between;
+                padding:5px 12px; border-bottom:1px solid #f8fafc;">
+      <div style="flex:1; min-width:0; padding-right:8px;">
+        <div style="font-size:11px; color:var(--text);">No matter context</div>
+        <div style="font-size:9px; color:var(--muted);">
+          Cross-matter calls
+        </div>
+      </div>
+      <div style="text-align:right; flex-shrink:0;">
+        <div style="font-size:11px; font-weight:600; color:var(--text);
+                    font-variant-numeric:tabular-nums;">
+          ${{ "{:,.2f}".format(buckets.no_matter_context.total) }}
+        </div>
+        <div style="font-size:9px; color:var(--muted);">
+          {{ buckets.no_matter_context.n }} call{{ 's' if buckets.no_matter_context.n != 1 else '' }}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if buckets.policy_firm_overhead.n > 0 %}
+    <div style="display:flex; align-items:center; justify-content:space-between;
+                padding:5px 12px; border-bottom:1px solid #f8fafc;">
+      <div style="flex:1; min-width:0; padding-right:8px;">
+        <div style="font-size:11px; color:var(--text);">Firm overhead</div>
+        <div style="font-size:9px; color:var(--muted);">
+          Non-billable by policy
+        </div>
+      </div>
+      <div style="text-align:right; flex-shrink:0;">
+        <div style="font-size:11px; font-weight:600; color:var(--text);
+                    font-variant-numeric:tabular-nums;">
+          ${{ "{:,.2f}".format(buckets.policy_firm_overhead.total) }}
+        </div>
+        <div style="font-size:9px; color:var(--muted);">
+          {{ buckets.policy_firm_overhead.n }} call{{ 's' if buckets.policy_firm_overhead.n != 1 else '' }}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% if buckets.matter_unavailable.n > 0 %}
+    <div style="display:flex; align-items:center; justify-content:space-between;
+                padding:5px 12px; border-bottom:1px solid #f8fafc;
+                background:#fffbeb;">
+      <div style="flex:1; min-width:0; padding-right:8px;">
+        <div style="font-size:11px; color:var(--text);">Matter unavailable</div>
+        <div style="font-size:9px; color:#b45309;">
+          Deleted or archived — needs attention
+        </div>
+      </div>
+      <div style="text-align:right; flex-shrink:0;">
+        <div style="font-size:11px; font-weight:600; color:var(--text);
+                    font-variant-numeric:tabular-nums;">
+          ${{ "{:,.2f}".format(buckets.matter_unavailable.total) }}
+        </div>
+        <div style="font-size:9px; color:var(--muted);">
+          {{ buckets.matter_unavailable.n }} call{{ 's' if buckets.matter_unavailable.n != 1 else '' }}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  {% endif %}
+</div>

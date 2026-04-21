@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block title %}Configure Timeslips — Connectors{% endblock %}
+
+{% block content %}
+<div class="p-6 max-w-3xl mx-auto">
+
+  <!-- Breadcrumb -->
+  <div class="text-sm text-gray-400 mb-4">
+    <a href="/tenant-admin/connectors" class="hover:text-blue-500">Connectors</a>
+    <span class="mx-2">/</span>
+    <a href="/tenant-admin/connectors/timeslips" class="hover:text-blue-500">Timeslips Live</a>
+    <span class="mx-2">/</span>
+    <span class="text-gray-300">Configure</span>
+  </div>
+
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Configure Timeslips Live</h1>
+    <p class="text-sm text-gray-500 mt-1">
+      The Timeslips agent runs on the Timeslips Windows Server VM and pushes data to Praesidium.
+      Configure the connection settings below, then download and install the agent on the Timeslips VM.
+    </p>
+  </div>
+
+  {% if saved %}
+  <div class="mb-4 p-3 bg-green-50 border border-green-200 rounded text-green-800 text-sm">
+    Configuration saved. Download the agent package below and install it on the Timeslips VM.
+  </div>
+  {% endif %}
+
+  {% if error %}
+  <div class="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-800 text-sm">
+    {{ error }}
+  </div>
+  {% endif %}
+
+  <form method="post" action="/tenant-admin/connectors/timeslips/configure" class="space-y-6">
+
+    <!-- Firebird Connection -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-1">Timeslips Database</h2>
+      <p class="text-xs text-gray-400 mb-4">
+        The Firebird database on the Timeslips VM. The agent reads this database directly.
+      </p>
+
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Timeslips VM Hostname or IP
+          </label>
+          <input type="text" name="config_fb_host"
+                 value="{{ config.fb_host or '' }}"
+                 placeholder="e.g. 10.10.60.20 or timeslips-vm"
+                 class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm
+                        dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <p class="text-xs text-gray-400 mt-1">The agent runs on this VM — this is for documentation only.</p>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Firebird Database Path (.fdb file)
+          </label>
+          <input type="text" name="config_fb_database"
+                 value="{{ config.fb_database or '' }}"
+                 placeholder="e.g. C:\Users\Public\Timeslips Data\HJMM\TSDATA.fdb"
+                 class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm
+                        font-mono dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+        </div>
+
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Firebird Username
+            </label>
+            <input type="text" name="config_fb_user"
+                   value="{{ config.fb_user or 'SYSDBA' }}"
+                   class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm
+                          dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              Firebird Password
+            </label>
+            <input type="password" name="config_fb_password"
+                   value="{{ config.fb_password or '' }}"
+                   placeholder="{{ '••••••••' if config.fb_password else 'masterkey' }}"
+                   class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm
+                          dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <p class="text-xs text-gray-400 mt-1">Stored encrypted. Default is masterkey.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sync Settings -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-1">Sync Settings</h2>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Sync Frequency
+          </label>
+          <select name="sync_frequency"
+                  class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm
+                         dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <option value="15min" {% if connector and connector.sync_frequency == '15min' %}selected{% endif %}>Every 15 minutes</option>
+            <option value="hourly" {% if not connector or connector.sync_frequency == 'hourly' %}selected{% endif %}>Every hour (recommended)</option>
+            <option value="4hour" {% if connector and connector.sync_frequency == '4hour' %}selected{% endif %}>Every 4 hours</option>
+            <option value="nightly" {% if connector and connector.sync_frequency == 'nightly' %}selected{% endif %}>Nightly (2:00 AM)</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            Historical Import Start Date
+          </label>
+          <input type="date" name="config_import_from"
+                 value="{{ config.import_from or '' }}"
+                 class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm
+                        dark:bg-gray-700 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+          <p class="text-xs text-gray-400 mt-1">
+            Leave blank to import all historical data. Set a date to import from that date forward.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Praesidium Ingest Endpoint -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-5">
+      <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-1">Agent Ingest Endpoint</h2>
+      <p class="text-xs text-gray-400 mb-4">
+        The Windows agent posts data to this endpoint. This is auto-configured — save your settings
+        and the agent installer will be pre-configured with this URL and API key.
+      </p>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Ingest URL</label>
+          <div class="flex">
+            <input type="text" readonly
+                   value="{{ ingest_url }}"
+                   class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm
+                          font-mono bg-gray-50 dark:bg-gray-900 dark:text-gray-300">
+            <button type="button" onclick="navigator.clipboard.writeText('{{ ingest_url }}')"
+                    class="ml-2 px-3 py-2 text-xs bg-gray-200 dark:bg-gray-700 rounded-lg hover:bg-gray-300">
+              Copy
+            </button>
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">API Key</label>
+          <div class="flex">
+            <input type="text" readonly
+                   value="{{ api_key or 'Save configuration to generate API key' }}"
+                   class="w-full border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-2 text-sm
+                          font-mono bg-gray-50 dark:bg-gray-900 dark:text-gray-300">
+            {% if api_key %}
+            <button type="button" onclick="navigator.clipboard.writeText('{{ api_key }}')"
+                    class="ml-2 px-3 py-2 text-xs bg-gray-200 dark:bg-gray-700 rounded-lg hover:bg-gray-300">
+              Copy
+            </button>
+            {% endif %}
+          </div>
+          <p class="text-xs text-gray-400 mt-1">This key authenticates the Windows agent. Keep it secret.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Save -->
+    <div class="flex items-center gap-3">
+      <button type="submit"
+              class="px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
+        Save Configuration
+      </button>
+      <a href="/tenant-admin/connectors/timeslips"
+         class="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">
+        Cancel
+      </a>
+    </div>
+
+  </form>
+
+  {% if api_key %}
+  <!-- Agent Download -->
+  <div class="mt-8 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-700 rounded-lg p-5">
+    <h2 class="text-lg font-semibold text-indigo-900 dark:text-indigo-200 mb-2">
+      Install the Windows Agent
+    </h2>
+    <p class="text-sm text-indigo-700 dark:text-indigo-300 mb-4">
+      Copy the agent files to the Timeslips Windows Server VM, then right-click
+      <code class="bg-indigo-100 dark:bg-indigo-800 px-1 rounded">ts_sync_agent_setup.bat</code>
+      and choose <strong>Run as administrator</strong>. No terminal required.
+    </p>
+    <div class="text-sm text-indigo-700 dark:text-indigo-300 space-y-1">
+      <div>1. Copy agent files to <code class="bg-indigo-100 dark:bg-indigo-800 px-1 rounded font-mono">C:\Praesidium\TSAgent\</code> on the Timeslips VM</div>
+      <div>2. Right-click <code class="bg-indigo-100 dark:bg-indigo-800 px-1 rounded font-mono">ts_sync_agent_setup.bat</code> → Run as administrator</div>
+      <div>3. When prompted for the API key, enter: <code class="bg-indigo-100 dark:bg-indigo-800 px-1 rounded font-mono">{{ api_key }}</code></div>
+      <div>4. When prompted for the database path, enter: <code class="bg-indigo-100 dark:bg-indigo-800 px-1 rounded font-mono">{{ config.fb_database or 'your .fdb path' }}</code></div>
+      <div>5. Setup will run an initial sync and schedule automatic syncs</div>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

@@ -1,0 +1,1049 @@
+{% extends "base.html" %}
+{% block title %}{{ matter.matter_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block content %}
+<style>
+  .ws-outer {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 120px);
+    overflow: hidden;
+  }
+  .ws-header {
+    padding: 10px 16px;
+    background: var(--surface, #fff);
+    border-bottom: 1px solid var(--border-color, #e2e8f0);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .ws-panels {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
+  }
+  .ws-left {
+    flex-shrink: 0;
+    width: 260px;
+    border-right: 1px solid var(--border-color, #e2e8f0);
+    background: var(--surface, #fff);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 160px;
+    max-width: 480px;
+  }
+  .ws-center {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--surface, #fff);
+    min-width: 200px;
+    position: relative;
+  }
+  .ws-right {
+    flex-shrink: 0;
+    width: 300px;
+    border-left: 1px solid var(--border-color, #e2e8f0);
+    background: var(--surface, #fff);
+    overflow-y: auto;
+    min-width: 180px;
+    max-width: 560px;
+  }
+  .resize-handle {
+    width: 5px;
+    background: transparent;
+    cursor: col-resize;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .resize-handle:hover, .resize-handle.dragging {
+    background: var(--primary, #1B2A4A);
+    opacity: 0.25;
+  }
+  .panel-hdr {
+    padding: 7px 12px;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid var(--border-color, #f1f5f9);
+    background: #f8fafc;
+    flex-shrink: 0;
+  }
+  .folder-item {
+    padding: 6px 10px 6px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    border-bottom: 1px solid #f8fafc;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    user-select: none;
+  }
+  .folder-item:hover { background: #f1f5f9; }
+  .folder-item.active { background: #eff6ff; }
+  .folder-item.active .fi-name { color: #1d4ed8; font-weight: 500; }
+  .drop-overlay {
+    display: none;
+    position: absolute;
+    inset: 0;
+    background: rgba(59, 130, 246, 0.06);
+    border: 3px dashed #3b82f6;
+    border-radius: 4px;
+    z-index: 50;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    pointer-events: none;
+  }
+  .drop-overlay.show { display: flex; }
+  .drop-hint-bar {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    padding: 5px 12px;
+    font-size: 11px;
+    background: #eff6ff;
+    border-top: 1px solid #bfdbfe;
+    color: #1d4ed8;
+    display: none;
+    z-index: 20;
+    flex-shrink: 0;
+  }
+</style>
+
+<div class="ws-outer">
+
+{#
+  Matter header — loaded via widget route.
+  context=dms tells the template to render DMS-specific action buttons
+  (Upload, Issue Map, Drafting) instead of dashboard buttons.
+  The Upload button in the widget template calls openUploadModal() which
+  is defined in the script block below — same function, no change needed.
+#}
+<div id="matter-header-slot"
+     hx-get="/widgets/matter_header?matter_id={{ matter_id }}&context=dms"
+     hx-trigger="load"
+     hx-swap="innerHTML"
+     class="ws-header"
+     style="min-height: 62px;">
+  {# Skeleton shown until HTMX swap — preserves layout height #}
+  <div style="flex:1; min-width:0;">
+    <div style="font-size:11px; color:var(--muted); margin-bottom:4px;">
+      <a href="/dms/" style="color:var(--muted); text-decoration:none;">Documents</a>
+      &rsaquo; <span style="color:var(--text);">{{ matter.matter_name }}</span>
+    </div>
+    <div style="font-size:16px; font-weight:600; color:var(--text);">
+      {{ matter.matter_name }}
+    </div>
+  </div>
+</div>
+
+{# Matter nav tabs #}
+<div style="display:flex; align-items:center; gap:2px; padding:0 16px;
+            background:var(--surface,#fff); border-bottom:1px solid var(--border-color,#e2e8f0);
+            flex-shrink:0;">
+  <a href="/dms/"
+     style="padding:8px 14px; font-size:12px; font-weight:500; text-decoration:none;
+            color:var(--muted); border-bottom:2px solid transparent; margin-bottom:-1px;
+            white-space:nowrap;"
+     onmouseenter="this.style.color='var(--primary)'"
+     onmouseleave="this.style.color='var(--muted)'">
+    DMS Home
+  </a>
+  <a href="/dms/matter/{{ matter_id }}"
+     style="padding:8px 14px; font-size:12px; font-weight:500; text-decoration:none;
+            color:var(--primary); border-bottom:2px solid var(--primary); margin-bottom:-1px;
+            white-space:nowrap;">
+    Documents
+  </a>
+  <a href="/dms/matter/{{ matter_id }}/reconciliation"
+     style="padding:8px 14px; font-size:12px; font-weight:500; text-decoration:none;
+            color:var(--muted); border-bottom:2px solid transparent; margin-bottom:-1px;
+            white-space:nowrap;"
+     onmouseenter="this.style.color='var(--primary)'"
+     onmouseleave="this.style.color='var(--muted)'">
+    Import Reconciliation
+  </a>
+  <a href="/ediscovery/matters/{{ matter_id }}/"
+     style="padding:8px 14px; font-size:12px; font-weight:500; text-decoration:none;
+            color:var(--muted); border-bottom:2px solid transparent; margin-bottom:-1px;
+            white-space:nowrap;"
+     onmouseenter="this.style.color='var(--primary)'"
+     onmouseleave="this.style.color='var(--muted)'">
+    eDiscovery
+  </a>
+  <a href="/billing/matter/{{ matter_id }}"
+     style="padding:8px 14px; font-size:12px; font-weight:500; text-decoration:none;
+            color:var(--muted); border-bottom:2px solid transparent; margin-bottom:-1px;
+            white-space:nowrap;"
+     onmouseenter="this.style.color='var(--primary)'"
+     onmouseleave="this.style.color='var(--muted)'">
+    Billing
+  </a>
+</div>
+
+{# Three panels #}
+<div class="ws-panels" id="ws-panels">
+
+  {# LEFT: unified folder tree + search #}
+  <div class="ws-left" id="ws-left">
+    <div class="panel-hdr">Files</div>
+
+    <div style="flex:1; overflow-y:auto; min-height:0;" id="folder-tree">
+
+      {# Native Praesidium folder #}
+      <div class="folder-item {% if native_count > 0 %}active{% endif %}"
+           id="fi-native"
+           onclick="loadFolder('native','','fi-native')">
+        <span>🗂</span>
+        <span class="fi-name" style="flex:1;">Praesidium</span>
+        <span style="font-size:10px; background:#1B2A4A; color:#fff; padding:1px 5px; border-radius:3px;">P</span>
+        <span style="font-size:10px; color:var(--muted);">{{ native_count }}</span>
+      </div>
+
+      {# Legacy linked folders #}
+      {% for f in linked_folders %}
+      <div class="folder-item"
+           id="fi-{{ loop.index }}"
+           data-prefix="{{ f.prefix if f.prefix and f.prefix != 'None' else '' }}"
+           data-diskroot="{{ f.disk_root if f.disk_root else '' }}"
+           data-folderpath="{{ f.folder_path }}"
+           onclick="loadFolder(this.dataset.diskroot ? 'legacy' : 'native', this.dataset.diskroot ? this.dataset.prefix : this.dataset.folderpath, 'fi-{{ loop.index }}')">
+        <span>{% if f.root_label == 'Docsend' %}📮{% else %}📁{% endif %}</span>
+        <div style="flex:1; min-width:0;">
+          <div class="fi-name" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+            {{ f.folder_path.split('/')[-1] }}
+          </div>
+          <div style="font-size:10px; color:var(--muted); margin-top:1px;">
+            <span style="background:{{ '#EDE9FE' if f.root_label == 'Docsend' else '#dbeafe' }};
+                         color:{{ '#5B21B6' if f.root_label == 'Docsend' else '#1d4ed8' }};
+                         padding:0 4px; border-radius:2px; font-size:9px;">{{ f.root_label }}</span>
+            {% if f.file_count %} {{ f.file_count }}{% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+
+      {% if not linked_folders and native_count == 0 %}
+      <div style="padding:12px; font-size:11px; color:var(--muted); line-height:1.5;">
+        No files yet. Upload a document or
+        <a href="/tenant-admin/folder-reconciliation" style="color:var(--primary,#1B2A4A);">link legacy folders →</a>
+      </div>
+      {% endif %}
+    </div>
+
+    {# Search #}
+    <div style="border-top:2px solid var(--border-color,#e2e8f0); flex-shrink:0;">
+      <div class="panel-hdr">Search</div>
+      <div style="padding:8px 10px;">
+        <input type="text" id="search-input"
+               placeholder="Search documents..."
+               style="width:100%; padding:5px 8px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; box-sizing:border-box; background:var(--surface,#fff); color:var(--text);"
+               oninput="triggerSearch(this.value)"
+               onkeydown="if(event.key==='Enter') doSearch()">
+        <div style="display:flex; gap:10px; margin-top:6px; font-size:11px;">
+          <label style="display:flex; align-items:center; gap:3px; cursor:pointer;">
+            <input type="checkbox" id="scope-all" onchange="doSearch()"> All matters
+          </label>
+          <label style="display:flex; align-items:center; gap:3px; cursor:pointer;">
+            <input type="checkbox" id="include-ediscovery" onchange="doSearch()"> eDiscovery
+          </label>
+        </div>
+      </div>
+      <div id="search-results" style="max-height:260px; overflow-y:auto; border-top:1px solid var(--border-color,#f1f5f9);"></div>
+    </div>
+  </div>
+
+  {# Resize handle L-C #}
+  <div class="resize-handle" id="rh-lc" onmousedown="startResize(event,'lc')"></div>
+
+  {# CENTER: document list with drop zone #}
+  <div class="ws-center" id="ws-center">
+    <div class="drop-overlay" id="drop-overlay">
+      <div style="font-size:40px; margin-bottom:6px;">📄</div>
+      <div style="font-size:14px; font-weight:600; color:#1d4ed8;">Drop to upload</div>
+      <div id="drop-folder-hint" style="font-size:11px; color:#3b82f6; margin-top:4px;"></div>
+    </div>
+
+    <div style="display:flex; align-items:center; padding:0 12px; border-bottom:1px solid var(--border-color,#e2e8f0); background:#f8fafc; flex-shrink:0; gap:8px;">
+      {# Back button — shown when viewer is active #}
+      <button id="back-to-files" onclick="closeViewer()" style="display:none;
+              font-size:11px; padding:3px 10px; border:1px solid var(--border-color,#e2e8f0);
+              border-radius:4px; background:var(--surface,#fff); cursor:pointer; color:var(--primary);">
+        ← Files
+      </button>
+      <span id="center-title" style="font-size:12px; color:var(--muted); padding:7px 0;">All files</span>
+      <span style="flex:1;"></span>
+      <button id="new-folder-btn" onclick="showNewFolderPrompt()"
+              style="font-size:11px; padding:3px 10px; border:1px solid var(--border-color,#e2e8f0); border-radius:4px; background:var(--surface,#fff); cursor:pointer; color:var(--text);">
+        + New Folder
+      </button>
+      <span id="drop-hint-text" style="font-size:10px; color:var(--muted);">Drop file to upload</span>
+    </div>
+
+    {# New folder inline prompt #}
+    <div id="new-folder-bar" style="display:none; padding:8px 12px; background:#1d4ed8; border-bottom:2px solid #1e40af; flex-shrink:0; align-items:center; gap:8px;">
+      <span style="font-size:12px; color:#fff; font-weight:500;">New folder name:</span>
+      <input type="text" id="new-folder-input"
+             placeholder="e.g. Pleadings"
+             style="flex:1; padding:4px 8px; font-size:12px; border:1px solid rgba(255,255,255,0.4); border-radius:4px; outline:none; background:rgba(255,255,255,0.15); color:#fff;"
+             onkeydown="if(event.key==='Enter') createFolder(); if(event.key==='Escape') hideNewFolderPrompt()">
+      <button onclick="createFolder()" class="btn-primary" style="padding:3px 12px; font-size:12px;">Create</button>
+      <button onclick="hideNewFolderPrompt()" style="padding:3px 10px; font-size:12px; border:1px solid #93c5fd; border-radius:4px; background:transparent; cursor:pointer; color:#1d4ed8;">Cancel</button>
+    </div>
+    <div id="folder-contents" style="flex:1; overflow-y:auto; min-height:0;">
+      <div style="padding:24px; text-align:center; color:var(--muted); font-size:12px;">
+        <div style="font-size:32px; margin-bottom:8px;">📁</div>
+        Select a folder from the tree to view files.
+      </div>
+    </div>
+    {# Document viewer — hidden until file selected, replaces file list in center #}
+    <div id="doc-viewer" style="display:none; flex:1; overflow-y:auto; min-height:0;">
+      <div style="padding:24px; text-align:center; color:var(--muted); font-size:12px;">
+        Loading document…
+      </div>
+    </div>
+    <div class="drop-hint-bar" id="drop-hint-bar"></div>
+  </div>
+
+  {# Resize handle C-R #}
+  <div class="resize-handle" id="rh-cr" onmousedown="startResize(event,'cr')"></div>
+
+  {# RIGHT: preview + widget rail #}
+  <div class="ws-right" id="ws-right" style="display:flex; flex-direction:column;">
+
+    {# Widget rail — full height, scrollable #}
+    <div style="flex:1; overflow-y:auto;">
+
+      {# Recent Documents #}
+      <div id="w-recent-docs"
+           hx-get="/widgets/dms_recent_documents?matter_id={{ matter_id }}"
+           hx-trigger="load"
+           hx-swap="innerHTML"
+           style="border-bottom:1px solid var(--border-color,#f1f5f9);">
+        <div style="padding:10px 12px; font-size:11px; color:var(--muted);">Loading…</div>
+      </div>
+
+      {# Checkout & Versioning #}
+      <div id="w-checkout"
+           hx-get="/widgets/dms_checkout_tracker?matter_id={{ matter_id }}"
+           hx-trigger="load"
+           hx-swap="innerHTML"
+           style="border-bottom:1px solid var(--border-color,#f1f5f9);">
+        <div style="padding:10px 12px; font-size:11px; color:var(--muted);">Loading…</div>
+      </div>
+
+      {# Drafting Tags #}
+      <div id="w-drafting-tags"
+           hx-get="/widgets/dms_drafting_tags?matter_id={{ matter_id }}"
+           hx-trigger="load"
+           hx-swap="innerHTML"
+           style="border-bottom:1px solid var(--border-color,#f1f5f9);">
+        <div style="padding:10px 12px; font-size:11px; color:var(--muted);">Loading…</div>
+      </div>
+
+      {# Redline Launcher #}
+      <div id="w-redline"
+           hx-get="/widgets/dms_redline_launcher?matter_id={{ matter_id }}"
+           hx-trigger="load"
+           hx-swap="innerHTML">
+        <div style="padding:10px 12px; font-size:11px; color:var(--muted);">Loading…</div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+</div>
+
+{# Upload modal #}
+<div id="upload-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); align-items:center; justify-content:center; z-index:200;">
+  <div style="background:var(--surface,#fff); border-radius:8px; padding:20px; width:380px; box-shadow:0 8px 32px rgba(0,0,0,0.15);">
+    <h3 style="font-size:14px; font-weight:600; margin-bottom:14px;">Upload Document</h3>
+    <form id="upload-form">
+      <input type="hidden" name="matter_id" value="{{ matter_id }}">
+      <div style="margin-bottom:12px;">
+        <label style="display:block; font-size:12px; font-weight:500; margin-bottom:4px;">Folder (optional)</label>
+        <input type="text" name="folder_path" id="upload-folder-path" placeholder="e.g. Pleadings"
+               style="width:100%; padding:6px 8px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; box-sizing:border-box;">
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="display:block; font-size:12px; font-weight:500; margin-bottom:4px;">File</label>
+        <input type="file" name="file" id="upload-file-input" required style="width:100%; font-size:12px;">
+        <div id="drop-file-name" style="font-size:11px; color:#166534; margin-top:4px;"></div>
+      </div>
+      <div id="upload-status" style="margin-bottom:8px; min-height:18px;"></div>
+      <div style="display:flex; justify-content:flex-end; gap:8px;">
+        <button type="button" onclick="closeUploadModal()"
+                style="padding:6px 14px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; cursor:pointer; background:var(--surface,#fff);">
+          Cancel
+        </button>
+        <button type="button" onclick="submitUpload()" class="btn-primary" style="padding:6px 14px; font-size:12px;">
+          Upload
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# Folder picker modal (drop fallback) #}
+<div id="folder-picker" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); align-items:center; justify-content:center; z-index:300;">
+  <div style="background:var(--surface,#fff); border-radius:8px; padding:20px; width:360px; box-shadow:0 8px 32px rgba(0,0,0,0.15);">
+    <h3 style="font-size:14px; font-weight:600; margin-bottom:4px;">Select destination folder</h3>
+    <p style="font-size:12px; color:var(--muted); margin-bottom:12px;">
+      Where should <strong id="picker-fname"></strong> be filed?
+    </p>
+    <input type="text" id="picker-input" placeholder="e.g. Pleadings, Correspondence"
+           style="width:100%; padding:6px 8px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; box-sizing:border-box; margin-bottom:8px;">
+    <div id="picker-suggestions" style="display:flex; flex-wrap:wrap; gap:4px; margin-bottom:12px;"></div>
+    <div style="display:flex; justify-content:flex-end; gap:8px;">
+      <button onclick="closeFolderPicker(false)"
+              style="padding:6px 14px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; cursor:pointer;">
+        Cancel
+      </button>
+      <button onclick="closeFolderPicker(true)" class="btn-primary" style="padding:6px 14px; font-size:12px;">
+        Upload Here
+      </button>
+    </div>
+  </div>
+</div>
+
+{# eDiscovery rejection modal #}
+<div id="ediscovery-rejection-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); align-items:center; justify-content:center; z-index:400;">
+  <div style="background:var(--surface,#fff); border-radius:8px; padding:20px; width:440px; box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+      <span style="font-size:24px;">⚠️</span>
+      <h3 style="font-size:14px; font-weight:600; color:var(--text); margin:0;">This looks like a document production</h3>
+    </div>
+    <div style="background:#fef2f2; border:1px solid #fca5a5; border-radius:6px; padding:10px 12px; margin-bottom:12px; font-size:12px; color:#7f1d1d;">
+      <strong id="edr-filename"></strong> contains <strong id="edr-filecount"></strong> files with production indicators:
+      <ul style="margin:6px 0 0 16px; padding:0;" id="edr-reasons"></ul>
+    </div>
+    <p style="font-size:12px; color:var(--muted); margin-bottom:12px;">
+      Document productions should be processed through eDiscovery to preserve chain of custody,
+      enable review workflows, and maintain Bates number integrity.
+    </p>
+    <div style="margin-bottom:14px;">
+      <label style="display:block; font-size:12px; font-weight:500; margin-bottom:4px;">Collection name</label>
+      <input type="text" id="edr-collection-name"
+             style="width:100%; padding:6px 8px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; box-sizing:border-box;">
+    </div>
+    <div style="display:flex; align-items:center; gap:8px; justify-content:flex-end;">
+      <button onclick="ediscoveryUploadAnyway()"
+              style="padding:6px 12px; font-size:11px; border:none; background:none; cursor:pointer; color:var(--muted); text-decoration:underline;">
+        Upload to DMS anyway
+      </button>
+      <button onclick="closeEdiscoveryModal(false)"
+              style="padding:6px 14px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; cursor:pointer; background:var(--surface,#fff);">
+        Cancel
+      </button>
+      <button onclick="closeEdiscoveryModal(true)" class="btn-primary" style="padding:6px 14px; font-size:12px;">
+        Create eDiscovery Collection →
+      </button>
+    </div>
+  </div>
+</div>
+
+{# ZIP accept modal #}
+<div id="zip-accept-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); align-items:center; justify-content:center; z-index:400;">
+  <div style="background:var(--surface,#fff); border-radius:8px; padding:20px; width:420px; box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:12px;">
+      <span style="font-size:24px;">📦</span>
+      <h3 style="font-size:14px; font-weight:600; color:var(--text); margin:0;">Upload ZIP contents</h3>
+    </div>
+    <div style="background:#f0fdf4; border:1px solid #86efac; border-radius:6px; padding:10px 12px; margin-bottom:12px; font-size:12px; color:#166534;">
+      <strong id="za-filename"></strong> — <strong id="za-filecount"></strong> files detected.
+      Folder structure will be preserved under the destination folder.
+    </div>
+    <div style="margin-bottom:10px;">
+      <div style="font-size:11px; font-weight:600; color:var(--muted); margin-bottom:4px;">Folders in ZIP:</div>
+      <div id="za-folders"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <label style="display:block; font-size:12px; font-weight:500; margin-bottom:4px;">Destination folder</label>
+      <input type="text" id="za-dest-folder"
+             style="width:100%; padding:6px 8px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; box-sizing:border-box;">
+      <div style="font-size:10px; color:var(--muted); margin-top:3px;">Subfolder structure from ZIP will be preserved inside this folder.</div>
+    </div>
+    <div id="za-status" style="min-height:18px; margin-bottom:8px; font-size:12px;"></div>
+    <div style="display:flex; justify-content:flex-end; gap:8px;">
+      <button onclick="document.getElementById('zip-accept-modal').style.display='none'"
+              style="padding:6px 14px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; cursor:pointer; background:var(--surface,#fff);">
+        Cancel
+      </button>
+      <button onclick="uploadZipContents()" class="btn-primary" style="padding:6px 14px; font-size:12px;">
+        Upload All Files
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+const MATTER_ID = '{{ matter_id }}';
+const LS_KEY = 'dms_ws_' + MATTER_ID;
+
+// ── Panel size persistence ────────────────────────────────────────────────
+function saveSizes() {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify({
+      left:  document.getElementById('ws-left').offsetWidth,
+      right: document.getElementById('ws-right').offsetWidth,
+    }));
+  } catch(e) {}
+}
+function restoreSizes() {
+  try {
+    const s = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+    if (s) {
+      if (s.left)  document.getElementById('ws-left').style.width  = s.left  + 'px';
+      if (s.right) document.getElementById('ws-right').style.width = s.right + 'px';
+    }
+  } catch(e) {}
+}
+
+// ── Resize ────────────────────────────────────────────────────────────────
+let rs = null;
+function startResize(e, which) {
+  e.preventDefault();
+  document.getElementById('rh-' + which).classList.add('dragging');
+  rs = {
+    which,
+    x0: e.clientX,
+    lw0: document.getElementById('ws-left').offsetWidth,
+    rw0: document.getElementById('ws-right').offsetWidth,
+  };
+  document.addEventListener('mousemove', doResize);
+  document.addEventListener('mouseup', endResize);
+}
+function doResize(e) {
+  if (!rs) return;
+  const dx = e.clientX - rs.x0;
+  if (rs.which === 'lc') {
+    document.getElementById('ws-left').style.width = Math.max(160, Math.min(480, rs.lw0 + dx)) + 'px';
+  } else {
+    document.getElementById('ws-right').style.width = Math.max(180, Math.min(560, rs.rw0 - dx)) + 'px';
+  }
+}
+function endResize() {
+  if (rs) {
+    document.getElementById('rh-' + rs.which).classList.remove('dragging');
+    rs = null;
+    saveSizes();
+  }
+  document.removeEventListener('mousemove', doResize);
+  document.removeEventListener('mouseup', endResize);
+}
+
+// ── Folder loading ────────────────────────────────────────────────────────
+let activeFolder = {type: null, prefix: '', elemId: null};
+
+function loadFolder(type, prefix, elemId) {
+  document.querySelectorAll('.folder-item').forEach(el => el.classList.remove('active'));
+  const el = document.getElementById(elemId);
+  if (el) el.classList.add('active');
+  activeFolder = {type, prefix, elemId};
+
+  // Update center title
+  const nameEl = el ? el.querySelector('.fi-name') : null;
+  const name = nameEl ? nameEl.textContent.trim() : (type === 'native' ? 'Praesidium' : 'Files');
+  document.getElementById('center-title').textContent = name;
+
+  // Update drop hint
+  currentFolderName = name;
+  document.getElementById('drop-folder-hint').textContent = name !== 'Praesidium' ? '→ ' + name : '';
+
+  // Load contents
+  const container = document.getElementById('folder-contents');
+  container.innerHTML = '<div style="padding:16px; font-size:12px; color:var(--muted);">Loading...</div>';
+
+  if (type === 'native') {
+    const folderParam = prefix ? `?folder=${encodeURIComponent(prefix)}` : '';
+    htmxGet(`/dms/matter/${MATTER_ID}/native${folderParam}`, 'folder-contents');
+  } else {
+    htmxGet(`/dms/matter/${MATTER_ID}/folder?prefix=${encodeURIComponent(prefix)}`, 'folder-contents');
+  }
+}
+
+// ── Document selection → center viewer ───────────────────────────────────
+function selectDoc(docId, filePath, source) {
+  // Show viewer, hide file list
+  document.getElementById('folder-contents').style.display = 'none';
+  document.getElementById('doc-viewer').style.display = 'flex';
+  document.getElementById('doc-viewer').style.flexDirection = 'column';
+  document.getElementById('back-to-files').style.display = 'inline-block';
+  document.getElementById('new-folder-btn').style.display = 'none';
+  document.getElementById('drop-hint-text').style.display = 'none';
+
+  const name = (filePath || docId || 'Document').split(/[/\\]/).pop();
+  document.getElementById('center-title').textContent = name;
+
+  document.getElementById('doc-viewer').innerHTML =
+    '<div style="padding:16px; font-size:12px; color:var(--muted);">Loading…</div>';
+
+  htmxGet(
+    `/dms/matter/${MATTER_ID}/preview?doc_id=${encodeURIComponent(docId)}&file_path=${encodeURIComponent(filePath)}&source=${source}`,
+    'doc-viewer'
+  );
+}
+
+function closeViewer() {
+  // Return to file list
+  document.getElementById('doc-viewer').style.display = 'none';
+  document.getElementById('folder-contents').style.display = 'block';
+  document.getElementById('back-to-files').style.display = 'none';
+  document.getElementById('new-folder-btn').style.display = 'inline-block';
+  document.getElementById('drop-hint-text').style.display = 'inline';
+  document.getElementById('center-title').textContent = currentFolderName || 'All files';
+}
+
+// ── Search ────────────────────────────────────────────────────────────────
+let searchTimer = null;
+function triggerSearch(val) {
+  clearTimeout(searchTimer);
+  if (!val || val.length < 2) { document.getElementById('search-results').innerHTML = ''; return; }
+  searchTimer = setTimeout(doSearch, 320);
+}
+function doSearch() {
+  const q = document.getElementById('search-input').value.trim();
+  if (!q || q.length < 2) return;
+  const scope = document.getElementById('scope-all').checked ? 'all' : 'matter';
+  const ed    = document.getElementById('include-ediscovery').checked ? '1' : '0';
+  document.getElementById('search-results').innerHTML =
+    '<div style="padding:8px 10px; font-size:11px; color:var(--muted);">Searching...</div>';
+  htmxGet(`/dms/matter/${MATTER_ID}/search?q=${encodeURIComponent(q)}&scope=${scope}&include_ediscovery=${ed}`, 'search-results');
+}
+
+// ── Drop zone ─────────────────────────────────────────────────────────────
+let dragCounter = 0;
+let pendingDropFile = null;
+
+const center = document.getElementById('ws-center');
+const overlay = document.getElementById('drop-overlay');
+const hintBar = document.getElementById('drop-hint-bar');
+
+center.addEventListener('dragenter', e => {
+  e.preventDefault();
+  dragCounter++;
+  overlay.classList.add('show');
+});
+center.addEventListener('dragleave', e => {
+  dragCounter--;
+  if (dragCounter <= 0) { dragCounter = 0; overlay.classList.remove('show'); }
+});
+center.addEventListener('dragover', e => { e.preventDefault(); });
+center.addEventListener('drop', e => {
+  e.preventDefault();
+  dragCounter = 0;
+  overlay.classList.remove('show');
+  const files = e.dataTransfer.files;
+  if (!files || !files.length) return;
+  handleDroppedFile(files[0]);
+});
+
+async function handleDroppedFile(file) {
+  const isZip = file.name.toLowerCase().endsWith('.zip') ||
+                file.type === 'application/zip' ||
+                file.type === 'application/x-zip-compressed';
+
+  if (isZip) {
+    await handleZipDrop(file);
+    return;
+  }
+
+  // Regular file — auto-detect folder from active selection
+  const detectedFolder = detectFolder();
+  if (detectedFolder !== null) {
+    hintBar.textContent = `Uploading to: ${detectedFolder || 'Praesidium (root)'}`;
+    hintBar.style.display = 'block';
+    setTimeout(() => { hintBar.style.display = 'none'; }, 3000);
+    openUploadModalWithFile(file, detectedFolder);
+  } else {
+    pendingDropFile = file;
+    showFolderPicker(file.name);
+  }
+}
+
+function detectFolder() {
+  if (activeFolder.type === 'native' || activeFolder.type === 'legacy') return '';
+  return null;
+}
+
+// ── JSZip lazy loader ─────────────────────────────────────────────────────
+let _jszipLoading = false;
+function loadJSZip() {
+  return new Promise((resolve, reject) => {
+    if (window.JSZip) { resolve(); return; }
+    if (_jszipLoading) {
+      const t = setInterval(() => { if (window.JSZip) { clearInterval(t); resolve(); } }, 50);
+      return;
+    }
+    _jszipLoading = true;
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('JSZip failed to load'));
+    document.head.appendChild(s);
+  });
+}
+
+// ── eDiscovery detection heuristics ──────────────────────────────────────
+const ED_LOAD_EXTS    = new Set(['dat','opt','lfp','dii']);
+const ED_FOLDER_RE    = /^(IMAGES|NATIVES|TEXT|DATA|DOCUMENTS|VOL\d+)[\/\\]/i;
+const BATES_RE        = /^[A-Z]{2,10}[-_]?\d{4,8}\.(tif|tiff|pdf|jpg|jpeg)$/i;
+
+function analyzeZip(entries) {
+  const files = entries.filter(e => !e.dir);
+  const total = files.length;
+  let loadFiles = 0, batesFiles = 0, edFolders = 0;
+
+  for (const f of files) {
+    const name = f.name;
+    const base = name.split('/').pop();
+    const ext  = base.includes('.') ? base.split('.').pop().toLowerCase() : '';
+    if (ED_LOAD_EXTS.has(ext)) loadFiles++;
+    if (BATES_RE.test(base)) batesFiles++;
+    if (ED_FOLDER_RE.test(name)) edFolders++;
+  }
+
+  const isEdiscovery = loadFiles >= 1 || edFolders >= 2 ||
+                       (total > 10 && (batesFiles / total) > 0.3);
+
+  return { isEdiscovery, total, loadFiles, batesFiles, edFolders, files };
+}
+
+// ── ZIP drop handler ──────────────────────────────────────────────────────
+async function handleZipDrop(file) {
+  // Show scanning indicator
+  hintBar.textContent = `Scanning ${file.name}...`;
+  hintBar.style.display = 'block';
+
+  try {
+    await loadJSZip();
+  } catch(e) {
+    hintBar.textContent = 'Could not load ZIP inspector — uploading as-is.';
+    setTimeout(() => { hintBar.style.display = 'none'; }, 3000);
+    openUploadModalWithFile(file, detectFolder() || '');
+    return;
+  }
+
+  let zip;
+  try {
+    zip = await JSZip.loadAsync(file);
+  } catch(e) {
+    hintBar.style.display = 'none';
+    openUploadModalWithFile(file, detectFolder() || '');
+    return;
+  }
+
+  const entries = Object.values(zip.files);
+  const analysis = analyzeZip(entries);
+
+  hintBar.style.display = 'none';
+
+  if (analysis.isEdiscovery) {
+    showEdiscoveryRejectionModal(file, analysis);
+  } else {
+    showZipAcceptModal(file, analysis, zip);
+  }
+}
+
+// ── eDiscovery rejection modal ────────────────────────────────────────────
+function showEdiscoveryRejectionModal(file, analysis) {
+  const zipBase = file.name.replace(/\.zip$/i, '');
+  const collectionName = zipBase.replace(/[_-]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+  let reasons = [];
+  if (analysis.loadFiles > 0)  reasons.push(`${analysis.loadFiles} load file${analysis.loadFiles > 1 ? 's' : ''} (.dat/.opt/.lfp)`);
+  if (analysis.edFolders > 0)  reasons.push(`production folder structure (IMAGES/NATIVES/TEXT)`);
+  if (analysis.batesFiles > 0) reasons.push(`${analysis.batesFiles} Bates-numbered file${analysis.batesFiles > 1 ? 's' : ''}`);
+
+  const modal = document.getElementById('ediscovery-rejection-modal');
+  document.getElementById('edr-filename').textContent = file.name;
+  document.getElementById('edr-filecount').textContent = analysis.total;
+  document.getElementById('edr-reasons').innerHTML = reasons.map(r =>
+    `<li style="margin-bottom:3px;">${r}</li>`).join('');
+  document.getElementById('edr-collection-name').value = collectionName;
+
+  // Store file ref for "upload anyway" fallback
+  modal._pendingFile = file;
+  modal.style.display = 'flex';
+}
+
+function closeEdiscoveryModal(createCollection) {
+  const modal = document.getElementById('ediscovery-rejection-modal');
+  modal.style.display = 'none';
+  if (createCollection) {
+    const name = encodeURIComponent(document.getElementById('edr-collection-name').value.trim());
+    window.location.href = `/ediscovery/collections/new?matter_id=${MATTER_ID}&name=${name}`;
+  }
+  modal._pendingFile = null;
+}
+
+function ediscoveryUploadAnyway() {
+  const modal = document.getElementById('ediscovery-rejection-modal');
+  const file = modal._pendingFile;
+  modal.style.display = 'none';
+  modal._pendingFile = null;
+  if (file) openUploadModalWithFile(file, detectFolder() || 'Imported');
+}
+
+// ── ZIP accept modal (non-eDiscovery) ────────────────────────────────────
+function showZipAcceptModal(file, analysis, zip) {
+  const modal = document.getElementById('zip-accept-modal');
+  document.getElementById('za-filename').textContent = file.name;
+  document.getElementById('za-filecount').textContent = analysis.total;
+
+  // Show folder structure preview
+  const folders = new Set();
+  for (const f of analysis.files) {
+    const parts = f.name.split('/');
+    if (parts.length > 1) folders.add(parts[0]);
+  }
+  const folderList = [...folders].slice(0, 8);
+  document.getElementById('za-folders').innerHTML = folderList.length
+    ? folderList.map(f => `<span style="display:inline-block;padding:2px 8px;font-size:11px;background:#f1f5f9;border-radius:12px;margin:2px;">${f}/</span>`).join('')
+    : '<span style="font-size:11px;color:var(--muted);">No subfolders — files will be uploaded flat.</span>';
+
+  // Default destination
+  const today = new Date().toISOString().slice(0,10);
+  document.getElementById('za-dest-folder').value = `Imported/${today}`;
+
+  modal._zip = zip;
+  modal._analysis = analysis;
+  modal._file = file;
+  modal.style.display = 'flex';
+}
+
+async function uploadZipContents() {
+  const modal = document.getElementById('zip-accept-modal');
+  const zip = modal._zip;
+  const destBase = document.getElementById('za-dest-folder').value.trim() || 'Imported';
+  const statusEl = document.getElementById('za-status');
+
+  modal.querySelector('button.btn-primary').disabled = true;
+  statusEl.innerHTML = '<span style="color:var(--muted);">Uploading files...</span>';
+
+  const files = Object.values(zip.files).filter(f => !f.dir);
+  let uploaded = 0, failed = 0;
+
+  for (const entry of files) {
+    try {
+      const blob = await entry.async('blob');
+      const basename = entry.name.split('/').pop();
+      if (!basename) continue;
+
+      // Preserve subfolder structure under destBase
+      const entryDir = entry.name.includes('/')
+        ? entry.name.split('/').slice(0, -1).join('/')
+        : '';
+      const folder = entryDir ? `${destBase}/${entryDir}` : destBase;
+
+      const formData = new FormData();
+      formData.append('matter_id', MATTER_ID);
+      formData.append('folder_path', folder);
+      formData.append('file', new File([blob], basename, {type: blob.type || 'application/octet-stream'}));
+
+      const resp = await fetch('/dms/upload', {method: 'POST', body: formData});
+      if (resp.ok) uploaded++; else failed++;
+
+      statusEl.innerHTML = `<span style="color:var(--muted);">Uploading ${uploaded + failed} / ${files.length}...</span>`;
+    } catch(e) {
+      failed++;
+    }
+  }
+
+  modal.style.display = 'none';
+  modal._zip = null;
+
+  // Reload native folder view
+  loadFolder('native', '', 'fi-native');
+
+  hintBar.textContent = `✓ Uploaded ${uploaded} files from ZIP${failed > 0 ? ` (${failed} failed)` : ''} → ${destBase}`;
+  hintBar.style.display = 'block';
+  setTimeout(() => { hintBar.style.display = 'none'; }, 5000);
+}
+
+// ── Folder picker modal ───────────────────────────────────────────────────
+// Common folder suggestions based on practice area
+const FOLDER_SUGGESTIONS = [
+  'Pleadings', 'Correspondence', 'Discovery', 'Research',
+  'Contracts', 'Title', 'Closing', 'Orders', 'Billing', 'Working Docs',
+];
+
+function showFolderPicker(filename) {
+  document.getElementById('picker-fname').textContent = filename;
+  document.getElementById('picker-input').value = '';
+
+  // Render suggestions
+  const suggEl = document.getElementById('picker-suggestions');
+  suggEl.innerHTML = FOLDER_SUGGESTIONS.map(f =>
+    `<button onclick="document.getElementById('picker-input').value='${f}'"
+             style="padding:2px 8px; font-size:11px; border:1px solid var(--border-color,#e2e8f0); border-radius:12px; cursor:pointer; background:var(--surface,#fff);">
+       ${f}
+     </button>`
+  ).join('');
+
+  const modal = document.getElementById('folder-picker');
+  modal.style.display = 'flex';
+  setTimeout(() => document.getElementById('picker-input').focus(), 50);
+}
+
+function closeFolderPicker(confirm) {
+  const modal = document.getElementById('folder-picker');
+  modal.style.display = 'none';
+  if (confirm && pendingDropFile) {
+    const folder = document.getElementById('picker-input').value.trim();
+    openUploadModalWithFile(pendingDropFile, folder);
+  }
+  pendingDropFile = null;
+}
+
+// ── Upload modal ──────────────────────────────────────────────────────────
+function openUploadModal() {
+  document.getElementById('drop-file-name').textContent = '';
+  document.getElementById('upload-file-input').value = '';
+  document.getElementById('upload-folder-path').value = '';
+  document.getElementById('upload-status').innerHTML = '';
+  document.getElementById('upload-modal').style.display = 'flex';
+}
+
+function openUploadModalWithFile(file, folder) {
+  // Inject the dropped file into the file input using DataTransfer
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  const fi = document.getElementById('upload-file-input');
+  fi.files = dt.files;
+  document.getElementById('drop-file-name').textContent = '✓ ' + file.name;
+  document.getElementById('upload-folder-path').value = folder || '';
+  document.getElementById('upload-status').innerHTML = '';
+  document.getElementById('upload-modal').style.display = 'flex';
+}
+
+function closeUploadModal() {
+  document.getElementById('upload-modal').style.display = 'none';
+}
+
+async function submitUpload() {
+  const form = document.getElementById('upload-form');
+  const statusEl = document.getElementById('upload-status');
+  const data = new FormData(form);
+
+  statusEl.innerHTML = '<span style="color:var(--muted); font-size:11px;">Uploading...</span>';
+
+  try {
+    const resp = await fetch('/dms/upload', {method: 'POST', body: data});
+    const html = await resp.text();
+    statusEl.innerHTML = html;
+    if (resp.ok) {
+      setTimeout(() => {
+        closeUploadModal();
+        // Reload page to refresh folder tree
+        const fp = document.getElementById("upload-folder-path").value.trim(); if (fp) sessionStorage.setItem("dms_last_folder_" + MATTER_ID, fp); window.location.reload();
+      }, 1200);
+    }
+  } catch (err) {
+    statusEl.innerHTML = '<span style="color:#dc2626; font-size:11px;">Upload failed — please retry.</span>';
+  }
+}
+
+// ── HTMX-lite ─────────────────────────────────────────────────────────────
+async function htmxGet(url, targetId) {
+  try {
+    const resp = await fetch(url, {headers: {'X-Requested-With': 'fetch'}});
+    const html = await resp.text();
+    const el = document.getElementById(targetId);
+    if (el) el.innerHTML = html;
+  } catch (err) {
+    const el = document.getElementById(targetId);
+    if (el) el.innerHTML = '<div style="padding:12px; font-size:12px; color:#dc2626;">Load failed — please retry.</div>';
+  }
+}
+
+// ── New folder ────────────────────────────────────────────────────────────
+function showNewFolderPrompt() {
+  const bar = document.getElementById('new-folder-bar');
+  bar.style.display = 'flex';
+  setTimeout(() => document.getElementById('new-folder-input').focus(), 50);
+}
+
+function hideNewFolderPrompt() {
+  const bar = document.getElementById('new-folder-bar');
+  bar.style.display = 'none';
+  document.getElementById('new-folder-input').value = '';
+}
+
+async function createFolder() {
+  const name = document.getElementById('new-folder-input').value.trim();
+  if (!name) return;
+
+  try {
+    const resp = await fetch(`/dms/matter/${MATTER_ID}/folder/create`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({folder_name: name}),
+    });
+
+    if (resp.ok) {
+      hideNewFolderPrompt();
+      addFolderToTree(name);
+    } else {
+      const data = await resp.json().catch(() => ({}));
+      alert('Failed to create folder: ' + (data.detail || 'unknown error'));
+    }
+  } catch (err) {
+    console.error('Create folder error:', err);
+    alert('Network error creating folder.');
+  }
+}
+
+function addFolderToTree(folderName) {
+  const tree = document.getElementById('folder-tree');
+  const div = document.createElement('div');
+  div.className = 'folder-item';
+  div.id = 'fi-new-' + Date.now();
+  div.innerHTML = `
+    <span>🗂</span>
+    <div style="flex:1;min-width:0;">
+      <div class="fi-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${folderName}</div>
+      <div style="font-size:10px;color:var(--muted);">
+        <span style="background:#1B2A4A;color:#fff;padding:0 4px;border-radius:2px;font-size:9px;">P</span>
+      </div>
+    </div>`;
+  div.onclick = () => loadFolder('native', folderName, div.id);
+  // Insert after native folder item
+  const nativeEl = document.getElementById('fi-native');
+  if (nativeEl && nativeEl.nextSibling) {
+    tree.insertBefore(div, nativeEl.nextSibling);
+  } else {
+    tree.appendChild(div);
+  }
+  div.click();
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  restoreSizes();
+  // Auto-load first folder
+  const first = document.querySelector('.folder-item');
+  if (first) first.click();
+});
+
+// ── Matter widget panel toggle ────────────────────────────────────────────
+function toggleWidgetPanel() {
+  const body = document.getElementById('widget-panel-body');
+  const arrow = document.getElementById('widget-panel-arrow');
+  if (body.style.display === 'none') {
+    body.style.display = 'block';
+    arrow.style.transform = '';
+  } else {
+    body.style.display = 'none';
+    arrow.style.transform = 'rotate(-90deg)';
+  }
+}
+</script>
+{% endblock %}

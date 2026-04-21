@@ -1,0 +1,80 @@
+{# eDiscovery Review — matter picker showing only matters with collections #}
+{% extends "base.html" %}
+{% block title %}eDiscovery Review — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block content %}
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+  <div>
+    <h1 style="font-family:'Lora',serif; font-size:20px; font-weight:600; color:var(--text);">eDiscovery Review</h1>
+    <p style="font-size:12px; color:var(--muted); margin-top:2px;">Select a matter to review its document collections</p>
+  </div>
+  <a href="/ediscovery/collections/new" class="btn-primary">
+    <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+    New Collection
+  </a>
+</div>
+
+{% if matters %}
+<div class="card" style="padding:0; overflow:hidden;">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Matter</th>
+        <th>Collections</th>
+        <th>Documents</th>
+        <th>Progress</th>
+        <th>Status</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in matters %}
+      <tr style="cursor:pointer;" onclick="window.location='/ediscovery/matters/{{ m.matter_id }}/collections'">
+        <td>
+          <div style="font-weight:500; color:var(--text); font-size:13px;">{{ m.matter_name or '—' }}</div>
+          {% if m.matter_number %}
+          <div style="font-size:11px; color:var(--muted); font-family:monospace;">{{ m.matter_number }}</div>
+          {% endif %}
+        </td>
+        <td style="font-size:13px; color:var(--text);">{{ m.collection_count }}</td>
+        <td style="font-size:13px; color:var(--text);">{{ (m.total_docs or 0) | int }}</td>
+        <td style="min-width:140px;">
+          {% set total = (m.total_docs or 0) | int %}
+          {% set reviewed = (m.reviewed_docs or 0) | int %}
+          <div style="font-size:12px; color:var(--text);">{{ reviewed }} / {{ total }}</div>
+          {% if total > 0 %}
+          <div style="height:4px; background:#E5E7EB; border-radius:4px; margin-top:4px; overflow:hidden;">
+            <div style="height:100%; background:var(--primary); border-radius:4px; width:{{ (reviewed / total * 100) | int }}%;"></div>
+          </div>
+          {% endif %}
+        </td>
+        <td>
+          {% if m.has_ready %}
+            <span class="badge badge-green">Review Ready</span>
+          {% else %}
+            <span class="badge badge-yellow">In Progress</span>
+          {% endif %}
+        </td>
+        <td>
+          <a href="/ediscovery/matters/{{ m.matter_id }}/collections"
+             style="font-size:12px; font-weight:500; color:var(--primary); text-decoration:none;"
+             onclick="event.stopPropagation()">Open &rarr;</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty-state card">
+  <svg width="40" height="40" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin:0 auto 12px; display:block; color:#D1D5DB;">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+  </svg>
+  <p style="font-weight:500; color:var(--text); margin-bottom:4px;">No collections yet</p>
+  <p style="font-size:12px; color:var(--muted);">Create a collection to start loading documents for review.</p>
+  <div style="margin-top:16px;">
+    <a href="/ediscovery/collections/new" class="btn-primary">New Collection</a>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

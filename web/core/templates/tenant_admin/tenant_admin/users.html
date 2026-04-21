@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}Users — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Users{% endblock %}
+{% block content %}
+<div style="padding:0;">
+
+  {% include "tenant_admin/_topnav.html" %}
+
+
+
+    {# ── Banners ── #}
+    {% if saved %}
+    <div style="background:#D1FAE5; border:1px solid #6EE7B7; border-radius:6px; padding:10px 14px; font-size:13px; color:#065F46; margin-bottom:16px;">
+      ✓ Changes saved.
+    </div>
+    {% endif %}
+    {% if syncing %}
+    <div style="background:#EFF6FF; border:1px solid #93C5FD; border-radius:6px; padding:10px 14px; font-size:13px; color:#1E40AF; margin-bottom:16px;">
+      ↻ Directory sync queued. New users will appear here once the job completes.
+    </div>
+    {% endif %}
+    {% if sync_error %}
+    <div style="background:#FEE2E2; border:1px solid #FCA5A5; border-radius:6px; padding:10px 14px; font-size:13px; color:#991B1B; margin-bottom:16px;">
+      ✗ {{ sync_error | replace('+', ' ') }}
+    </div>
+    {% endif %}
+
+    {# ── Header ── #}
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+      <div>
+        <h2 style="font-size:16px; font-weight:600; color:var(--text); margin:0 0 4px 0;">Users</h2>
+        <p style="font-size:12px; color:var(--muted); margin:0;">
+          Manage platform users for this tenant.
+          {% if last_sync %}
+          Last directory sync: {{ last_sync.completed_at or last_sync.started_at }}.
+          {% endif %}
+        </p>
+      </div>
+      <div style="display:flex; gap:8px;">
+        {# Sync Directory — only shown when auth source has an external directory #}
+        {% if auth_adapter and auth_adapter != 'local' %}
+        <form method="post" action="/tenant-admin/users/sync-directory" style="margin:0;">
+          <button type="submit" class="btn-secondary" style="font-size:13px;">
+            ↻ Sync Directory
+          </button>
+        </form>
+        {% endif %}
+        <button onclick="document.getElementById('add-user-panel').style.display='block'"
+          class="btn-primary" style="font-size:13px;">
+          + Add User
+        </button>
+      </div>
+    </div>
+
+    {# ── Add user panel (hidden by default) ── #}
+    <div id="add-user-panel" style="display:none; margin-bottom:20px;">
+      <div class="card">
+        <h3 style="font-size:13px; font-weight:600; color:var(--text); margin:0 0 14px 0;">Add User</h3>
+        <form method="post" action="/tenant-admin/users/add">
+          <div style="display:grid; grid-template-columns:1fr 1fr 1fr auto; gap:10px; align-items:end;">
+            <div>
+              <label style="display:block; font-size:12px; font-weight:500; color:var(--text); margin-bottom:4px;">Email *</label>
+              <input type="email" name="email" required
+                placeholder="attorney@firm.com"
+                style="width:100%; font-size:12px; padding:7px 10px; border:1px solid var(--border); border-radius:6px; box-sizing:border-box;">
+            </div>
+            <div>
+              <label style="display:block; font-size:12px; font-weight:500; color:var(--text); margin-bottom:4px;">Role *</label>
+              <select name="role"
+                style="width:100%; font-size:12px; padding:7px 10px; border:1px solid var(--border); border-radius:6px; background:var(--surface);">
+                <option value="attorney">Attorney</option>
+                <option value="staff">Staff</option>
+                <option value="admin">Admin</option>
+                <option value="viewer">Viewer</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block; font-size:12px; font-weight:500; color:var(--text); margin-bottom:4px;">Temp Password *</label>
+              <input type="password" name="temp_password" required
+                placeholder="Temporary password"
+                style="width:100%; font-size:12px; padding:7px 10px; border:1px solid var(--border); border-radius:6px; box-sizing:border-box;">
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button type="submit" class="btn-primary" style="font-size:12px;">Add</button>
+              <button type="button" onclick="document.getElementById('add-user-panel').style.display='none'"
+                class="btn-secondary" style="font-size:12px;">Cancel</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    {# ── Users table ── #}
+    {% if users %}
+    <div class="card" style="padding:0; overflow:hidden;">
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead>
+          <tr style="background:var(--surface); border-bottom:1px solid var(--border);">
+            <th style="text-align:left; padding:10px 14px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Email</th>
+            <th style="text-align:left; padding:10px 14px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Role</th>
+            <th style="text-align:left; padding:10px 14px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Status</th>
+            <th style="text-align:left; padding:10px 14px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Created</th>
+            <th style="padding:10px 14px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for u in users %}
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:10px 14px; color:var(--text);">{{ u.email }}</td>
+            <td style="padding:10px 14px;">
+              <span style="font-size:11px; font-weight:500; color:var(--muted); text-transform:capitalize;">{{ u.role }}</span>
+            </td>
+            <td style="padding:10px 14px;">
+              {% if u.is_active %}
+              <span class="badge badge-green">Active</span>
+              {% else %}
+              <span class="badge badge-gray">Inactive</span>
+              {% endif %}
+            </td>
+            <td style="padding:10px 14px; font-size:12px; color:var(--muted);">
+              {{ u.created_at.strftime('%b %d, %Y') if u.created_at else '—' }}
+            </td>
+            <td style="padding:8px 14px;">
+              <div style="display:flex; gap:6px; justify-content:flex-end;">
+                {# Reset password #}
+                <button onclick="document.getElementById('reset-{{ u.id }}').style.display='block'"
+                  class="btn-secondary" style="font-size:11px; padding:4px 8px;">
+                  Reset PW
+                </button>
+                {# Deactivate — can't deactivate yourself #}
+                {% if u.id != user.id %}
+                <form method="post" action="/tenant-admin/users/{{ u.id }}/deactivate" style="margin:0;">
+                  <button type="submit" class="btn-secondary"
+                    style="font-size:11px; padding:4px 8px; color:#DC2626;"
+                    onclick="return confirm('Deactivate this user?')">
+                    {{ 'Deactivate' if u.is_active else 'Reactivate' }}
+                  </button>
+                </form>
+                {% endif %}
+              </div>
+              {# Inline reset password form #}
+              <div id="reset-{{ u.id }}" style="display:none; margin-top:8px;">
+                <form method="post" action="/tenant-admin/users/{{ u.id }}/reset-password"
+                  style="display:flex; gap:6px; align-items:center;">
+                  <input type="password" name="new_password" required
+                    placeholder="New password"
+                    style="font-size:12px; padding:5px 8px; border:1px solid var(--border); border-radius:5px; width:160px;">
+                  <button type="submit" class="btn-primary" style="font-size:11px; padding:4px 8px;">Save</button>
+                  <button type="button"
+                    onclick="document.getElementById('reset-{{ u.id }}').style.display='none'"
+                    class="btn-secondary" style="font-size:11px; padding:4px 8px;">Cancel</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% else %}
+    <div style="border:1px dashed var(--border); border-radius:8px; padding:40px; text-align:center; background:var(--surface);">
+      <div style="font-size:14px; font-weight:500; color:var(--text); margin-bottom:8px;">No users yet</div>
+      <p style="font-size:12px; color:var(--muted); margin:0 0 16px 0;">
+        Add users manually or sync from your directory.
+      </p>
+      {% if auth_adapter and auth_adapter != 'local' %}
+      <form method="post" action="/tenant-admin/users/sync-directory" style="display:inline;">
+        <button type="submit" class="btn-primary">↻ Sync from Directory</button>
+      </form>
+      {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %} %}

@@ -1,0 +1,67 @@
+{#
+  atty_email_summary.html
+  Recent Exchange emails for the scoped attorney.
+#}
+<div style="padding:10px 12px; height:100%; display:flex; flex-direction:column;">
+
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              margin-bottom:8px; flex-shrink:0;">
+    <span style="font-size:11px; font-weight:600; color:var(--text,#1a202c);
+                 text-transform:uppercase; letter-spacing:0.05em;">Email</span>
+    {% if unread_count > 0 %}
+    <span style="font-size:10px; background:#dc2626; color:#fff;
+                 padding:2px 6px; border-radius:10px; font-weight:600;">
+      {{ unread_count }} unread</span>
+    {% else %}
+    <span style="font-size:10px; color:var(--muted,#64748b);">All caught up</span>
+    {% endif %}
+  </div>
+
+  {% if error %}
+  <div style="font-size:11px; color:#dc2626;">{{ error }}</div>
+
+  {% elif not emails %}
+  <div style="flex:1; display:flex; align-items:center; justify-content:center;
+              font-size:11px; color:var(--muted,#64748b);">
+    No recent emails.
+  </div>
+
+  {% else %}
+  <div style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:2px;">
+    {% for email in emails %}
+    <div style="padding:5px 6px; border-radius:5px; cursor:default;
+                border-bottom:1px solid var(--border-color,#e2e8f0);
+                {% if not email.is_filed %}background:#fffbeb;{% endif %}">
+
+      <div style="display:flex; align-items:baseline; gap:6px;">
+        {% if not email.is_filed %}
+        <span style="width:6px; height:6px; border-radius:50%;
+                     background:#f59e0b; flex-shrink:0; margin-top:3px;
+                     display:inline-block;"></span>
+        {% else %}
+        <span style="width:6px; flex-shrink:0;"></span>
+        {% endif %}
+        <span style="font-size:11px; font-weight:{% if not email.is_filed %}600{% else %}400{% endif %};
+                     color:var(--text,#1a202c); flex:1;
+                     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+              title="{{ email.subject }}">{{ email.subject }}</span>
+        <span style="font-size:9px; color:var(--muted,#94a3b8); flex-shrink:0;">
+          {{ email.time_label }}</span>
+      </div>
+
+      <div style="font-size:10px; color:var(--muted,#64748b); padding-left:12px;
+                  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+        {{ email.from_display }}</div>
+
+      {% if email.body_preview %}
+      <div style="font-size:10px; color:var(--muted,#94a3b8); padding-left:12px;
+                  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+        {{ email.body_preview }}</div>
+      {% endif %}
+
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+</div>

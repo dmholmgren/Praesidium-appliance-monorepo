@@ -1,0 +1,326 @@
+{% extends "base.html" %}
+{% block title %}Document Drafting — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block head_extra %}
+<style>
+  .drafting-hero {
+    background: linear-gradient(135deg, var(--navy, #0D1F3C) 0%, var(--navy-mid, #1A3A5C) 100%);
+    border-radius: 8px;
+    padding: 32px 36px;
+    margin-bottom: 28px;
+    color: #fff;
+    position: relative;
+    overflow: hidden;
+  }
+  .drafting-hero::after {
+    content: '';
+    position: absolute;
+    right: -30px; top: -30px;
+    width: 200px; height: 200px;
+    border-radius: 50%;
+    background: rgba(212,168,67,0.08);
+  }
+  .drafting-hero h1 {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 28px;
+    font-weight: 600;
+    margin: 0 0 6px 0;
+    color: #fff;
+  }
+  .drafting-hero p {
+    font-size: 14px;
+    opacity: 0.75;
+    margin: 0;
+  }
+  .drafting-hero .gold-rule {
+    width: 40px; height: 2px;
+    background: var(--accent, #C9A84C);
+    margin: 12px 0;
+  }
+  .new-draft-card {
+    background: #fff;
+    border: 1px solid var(--border, #E5E7EB);
+    border-radius: 8px;
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+  .new-draft-card h2 {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--navy, #0D1F3C);
+    margin: 0 0 16px 0;
+  }
+  .form-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .form-group label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-muted, #6B7280);
+    margin-bottom: 4px;
+  }
+  .form-group select,
+  .form-group input,
+  .form-group textarea {
+    width: 100%;
+    border: 1px solid var(--border, #E5E7EB);
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-size: 13px;
+    color: var(--text, #1A1A1A);
+    background: #fff;
+    box-sizing: border-box;
+    font-family: inherit;
+  }
+  .form-group select:focus,
+  .form-group input:focus,
+  .form-group textarea:focus {
+    outline: none;
+    border-color: var(--accent, #C9A84C);
+    box-shadow: 0 0 0 2px rgba(201,168,76,0.15);
+  }
+  .matter-search-wrap {
+    position: relative;
+  }
+  .matter-search-wrap input {
+    padding-right: 32px;
+  }
+  .btn-draft {
+    background: var(--navy, #0D1F3C);
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 9px 20px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    letter-spacing: 0.02em;
+    transition: background 120ms;
+  }
+  .btn-draft:hover { background: var(--navy-mid, #1A3A5C); }
+  .btn-draft-accent {
+    background: var(--accent, #C9A84C);
+    color: var(--navy, #0D1F3C);
+  }
+  .btn-draft-accent:hover { background: #b8943e; }
+  .sessions-table-wrap {
+    background: #fff;
+    border: 1px solid var(--border, #E5E7EB);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .sessions-table-wrap h2 {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--navy, #0D1F3C);
+    margin: 0;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border, #E5E7EB);
+  }
+  table.sessions-tbl {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  table.sessions-tbl th {
+    text-align: left;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text-muted, #6B7280);
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border, #E5E7EB);
+    background: var(--bg, #F9FAFB);
+  }
+  table.sessions-tbl td {
+    padding: 11px 16px;
+    border-bottom: 1px solid var(--border, #E5E7EB);
+    vertical-align: middle;
+    color: var(--text, #1A1A1A);
+  }
+  table.sessions-tbl tr:last-child td { border-bottom: none; }
+  table.sessions-tbl tr:hover td { background: var(--bg, #F9FAFB); }
+  table.sessions-tbl a { color: var(--navy, #0D1F3C); text-decoration: none; font-weight: 500; }
+  table.sessions-tbl a:hover { color: var(--accent, #C9A84C); }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+  }
+  .badge-active   { background: #EFF6FF; color: #1D4ED8; }
+  .badge-complete { background: #F0FDF4; color: #15803D; }
+  .badge-warning  { background: #FFFBEB; color: #B45309; }
+  .badge-critical { background: #FEF2F2; color: #DC2626; }
+  .empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-muted, #6B7280);
+    font-size: 13px;
+  }
+  .empty-state .icon { font-size: 32px; margin-bottom: 8px; }
+</style>
+{% endblock %}
+
+{% block page_title %}Document Drafting{% endblock %}
+
+{% block header_right %}
+<a href="/drafting/" class="btn-draft btn-draft-accent" style="font-size:12px; padding:6px 14px;">
+  + New Draft
+</a>
+{% endblock %}
+
+{% block content %}
+<div style="max-width:960px; margin:0 auto; padding:24px 20px;">
+
+  <!-- Hero -->
+  <div class="drafting-hero">
+    <h1>Document Drafting</h1>
+    <div class="gold-rule"></div>
+    <p>AI-assisted drafting with 9-layer sanity check, Bates verification, and AI contribution logging.</p>
+  </div>
+
+  <!-- New Draft Form -->
+  <div class="new-draft-card">
+    <h2>Start a New Draft</h2>
+    <form method="post" id="new-draft-form">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Matter</label>
+          <input type="text" name="matter_search" id="matter-search"
+                 placeholder="Search by matter name or number…"
+                 autocomplete="off"
+                 hx-get="/api/v1/matters/search"
+                 hx-trigger="keyup changed delay:300ms"
+                 hx-target="#matter-results"
+                 hx-include="[name='matter_search']">
+          <input type="hidden" name="matter_id" id="matter-id-input">
+          <div id="matter-results"></div>
+        </div>
+        <div class="form-group">
+          <label>Document Type</label>
+          <select name="document_type" required>
+            <option value="">— select —</option>
+            {% for val, label in document_types %}
+            <option value="{{ val }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Practice Area</label>
+          <select name="practice_area" required>
+            <option value="">— select —</option>
+            {% for val, label in practice_areas %}
+            <option value="{{ val }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Title (optional)</label>
+          <input type="text" name="title" placeholder="e.g. Motion to Compel — Smith v. Jones">
+        </div>
+      </div>
+      <div class="form-group" style="margin-bottom:14px;">
+        <label>Drafting Instructions (optional)</label>
+        <textarea name="assembly_prompt" rows="3"
+                  placeholder="Specific instructions for the AI: tone, emphasis, sections to focus on, discovery period, etc."></textarea>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button type="submit" class="btn-draft">Create Session</button>
+        <span style="font-size:12px; color:var(--text-muted,#6B7280); line-height:2.2;">
+          Assembly and sanity check run after session is created.
+        </span>
+      </div>
+    </form>
+  </div>
+
+  <!-- Recent Sessions -->
+  <div class="sessions-table-wrap">
+    <h2>Recent Sessions</h2>
+    {% if recent_sessions %}
+    <table class="sessions-tbl">
+      <thead>
+        <tr>
+          <th>Title</th>
+          <th>Type</th>
+          <th>Matter</th>
+          <th>Status</th>
+          <th>Updated</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in recent_sessions %}
+        <tr>
+          <td>
+            <a href="/drafting/sessions/{{ s.id }}">{{ s.title }}</a>
+          </td>
+          <td>{{ s.document_type | replace('_', ' ') | title }}</td>
+          <td>{{ s.matter_name or '—' }}</td>
+          <td>
+            {% if s.status == 'active' %}
+              <span class="badge badge-active">Active</span>
+            {% elif s.status == 'complete' %}
+              <span class="badge badge-complete">Complete</span>
+            {% elif s.status == 'sanity_running' %}
+              <span class="badge badge-warning">Checking…</span>
+            {% else %}
+              <span class="badge" style="background:#F3F4F6;color:#6B7280;">{{ s.status }}</span>
+            {% endif %}
+          </td>
+          <td style="color:var(--text-muted,#6B7280); font-size:12px;">
+            {{ s.updated_at[:10] if s.updated_at else '—' }}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+      <div class="icon">📄</div>
+      No drafting sessions yet. Start a new draft above.
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+// Matter search result click handler
+document.addEventListener('click', function(e) {
+  var item = e.target.closest('[data-matter-id]');
+  if (item) {
+    document.getElementById('matter-id-input').value = item.dataset.matterId;
+    document.getElementById('matter-search').value = item.dataset.matterName;
+    document.getElementById('matter-results').innerHTML = '';
+  }
+});
+
+// Wire form to correct POST URL using selected matter_id
+document.getElementById('new-draft-form').addEventListener('submit', function(e) {
+  e.preventDefault();
+  var matterId = document.getElementById('matter-id-input').value;
+  if (!matterId) {
+    alert('Please select a matter.');
+    return;
+  }
+  this.action = '/drafting/matters/' + matterId + '/sessions';
+  this.method = 'post';
+  this.submit();
+});
+</script>
+{% endblock %}

@@ -1,0 +1,39 @@
+{# dms_redline_launcher — document comparison and redlining widget
+   Stub: renders placeholder until redline/comparison integration is built.
+
+   Design intent:
+   - Select two document versions (or two documents) and launch comparison.
+   - Short term: Draftable API integration for visual redline rendering.
+   - Long term: DocuSign API integration for signature workflow on redlined docs.
+   - Reusable across DMS matter page, Drafting module, eDiscovery productions.
+
+   AI intervention point (future): summarize material changes between versions,
+   flag clause-level deviations against standard form templates.
+
+   Integration targets:
+   - Draftable API (https://api.draftable.com) — visual side-by-side diff
+   - DocuSign eSignature API — send redlined doc for signature
+#}
+<div style="display:flex; flex-direction:column;">
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              padding:8px 12px; border-bottom:1px solid var(--border-color,#f1f5f9);
+              flex-shrink:0;">
+    <span style="font-size:10px; font-weight:700; color:var(--muted);
+                 text-transform:uppercase; letter-spacing:0.06em;">
+      Redline
+    </span>
+    <span style="font-size:9px; background:#FEF3C7; color:#92400e;
+                 padding:1px 6px; border-radius:8px; font-weight:500;">
+      Coming Soon
+    </span>
+  </div>
+  <div style="padding:16px 12px; text-align:center; font-size:11px; color:var(--muted);">
+    <svg style="width:22px;height:22px;color:#D1D5DB;margin:0 auto 6px;display:block;"
+         fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5
+               m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+    </svg>
+    Document comparison and redlining. Draftable + DocuSign integration.
+  </div>
+</div>

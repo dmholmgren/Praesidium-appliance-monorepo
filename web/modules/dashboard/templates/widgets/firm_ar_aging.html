@@ -1,0 +1,53 @@
+{#
+  firm_ar_aging.html
+  AR aging snapshot — 5 buckets with color-coded bars.
+#}
+<div style="padding:10px 12px; height:100%; display:flex; flex-direction:column;">
+
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              margin-bottom:8px; flex-shrink:0;">
+    <span style="font-size:11px; font-weight:600; color:var(--text,#1a202c);
+                 text-transform:uppercase; letter-spacing:0.05em;">AR Aging</span>
+    {% if not error and total_ar %}
+    <span style="font-size:11px; color:var(--muted,#64748b);">
+      Total: <strong style="color:var(--text);">${{ "{:,.0f}".format(total_ar) }}</strong>
+    </span>
+    {% endif %}
+  </div>
+
+  {% if error %}
+  <div style="font-size:11px; color:#dc2626;">{{ error }}</div>
+
+  {% elif not buckets or total_ar == 0 %}
+  <div style="flex:1; display:flex; align-items:center; justify-content:center;
+              font-size:11px; color:var(--muted,#64748b);">
+    No outstanding AR.
+  </div>
+
+  {% else %}
+  <div style="flex:1; display:flex; flex-direction:column; justify-content:space-between; gap:6px;">
+    {% for b in buckets %}
+    {% if b.amount > 0 %}
+    <div>
+      <div style="display:flex; justify-content:space-between; margin-bottom:2px;">
+        <span style="font-size:10px; font-weight:600; color:{{ b.color }};">{{ b.label }} days</span>
+        <span style="font-size:10px; color:var(--muted,#64748b);">
+          {{ b.count }} inv · ${{ "{:,.0f}".format(b.amount) }}</span>
+      </div>
+      <div style="height:10px; background:var(--border-color,#e2e8f0); border-radius:5px; overflow:hidden;">
+        <div style="height:100%; width:{{ b.bar_pct }}%;
+                    background:{{ b.bar }}; border-radius:5px;
+                    transition:width 0.4s ease;"></div>
+      </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+
+    <a href="/billing/" style="font-size:10px; color:var(--primary,#1B2A4A);
+       text-decoration:none; text-align:right; display:block; margin-top:4px;">
+      View Billing →
+    </a>
+  </div>
+  {% endif %}
+
+</div>

@@ -1,0 +1,147 @@
+{# ediscovery/partials/review_partial.html — HTMX partial, no base.html
+   One click to review:
+   - Single collection → "Review →" goes directly to review workspace
+   - Multiple collections → row click expands inline collection list
+   - "Open →" arrow always goes directly, never to the intermediate page
+#}
+<div style="padding:4px 0;">
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+    <div>
+      <div style="font-size:14px; font-weight:600; color:var(--text);">Review</div>
+      <div style="font-size:12px; color:var(--muted); margin-top:1px;">
+        Select a matter to review its document collections
+      </div>
+    </div>
+    <a href="/ediscovery/collections/new" class="btn-primary" style="font-size:12px;">
+      + New Collection
+    </a>
+  </div>
+
+  {% if matters %}
+  <div class="card" style="padding:0; overflow:hidden;">
+    <table style="width:100%; border-collapse:collapse; font-size:13px;">
+      <thead>
+        <tr style="background:#f8fafc; border-bottom:1px solid var(--border,#e2e8f0);">
+          <th style="text-align:left; padding:8px 14px; font-size:11px; font-weight:600;
+                     color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Matter</th>
+          <th style="text-align:left; padding:8px 14px; font-size:11px; font-weight:600;
+                     color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Collections</th>
+          <th style="text-align:left; padding:8px 14px; font-size:11px; font-weight:600;
+                     color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Documents</th>
+          <th style="text-align:left; padding:8px 14px; font-size:11px; font-weight:600;
+                     color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Progress</th>
+          <th style="text-align:left; padding:8px 14px; font-size:11px; font-weight:600;
+                     color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Status</th>
+          <th style="padding:8px 14px;"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in matters %}
+        {# Single collection → click row goes directly to review workspace #}
+        {# Multiple collections → click row expands inline list #}
+        <tr style="border-bottom:1px solid var(--border,#f1f5f9); cursor:pointer;"
+            id="review-row-{{ m.matter_id }}"
+            {% if m.collection_count == 1 and m.latest_collection_id %}
+            onclick="window.location='/ediscovery/collections/{{ m.latest_collection_id }}/review'"
+            {% else %}
+            onclick="toggleCollectionExpand('{{ m.matter_id }}')"
+            {% endif %}
+            onmouseover="this.style.background='#f8fafc'"
+            onmouseout="this.style.background=''">
+          <td style="padding:10px 14px;">
+            <div style="font-weight:500; color:var(--text);">{{ m.matter_name or '—' }}</div>
+            {% if m.matter_number %}
+            <div style="font-size:11px; color:var(--muted); font-family:monospace;">
+              {{ m.matter_number }}
+            </div>
+            {% endif %}
+          </td>
+          <td style="padding:10px 14px; font-size:13px; color:var(--text);">
+            {{ m.collection_count }}
+            {% if m.collection_count > 1 %}
+            <span style="font-size:10px; color:var(--muted); margin-left:4px;">▾</span>
+            {% endif %}
+          </td>
+          <td style="padding:10px 14px; font-size:13px; color:var(--text);">
+            {{ (m.total_docs or 0) | int }}
+          </td>
+          <td style="padding:10px 14px; min-width:140px;">
+            {% set total = (m.total_docs or 0) | int %}
+            {% set reviewed = (m.reviewed_docs or 0) | int %}
+            <div style="font-size:12px; color:var(--text);">{{ reviewed }}/{{ total }}</div>
+            {% if total > 0 %}
+            <div style="height:3px; background:#E5E7EB; border-radius:3px; margin-top:3px; overflow:hidden;">
+              <div style="height:100%; background:var(--primary); border-radius:3px;
+                          width:{{ ((reviewed/total)*100)|int }}%;"></div>
+            </div>
+            {% endif %}
+          </td>
+          <td style="padding:10px 14px;">
+            {% if m.has_ready %}
+              <span class="badge badge-green">Review Ready</span>
+            {% else %}
+              <span class="badge badge-yellow">In Progress</span>
+            {% endif %}
+          </td>
+          <td style="padding:10px 14px; text-align:right;">
+            {% if m.collection_count == 1 and m.latest_collection_id %}
+            {# Direct to review — one click #}
+            <a href="/ediscovery/collections/{{ m.latest_collection_id }}/review"
+               onclick="event.stopPropagation()"
+               style="font-size:12px; font-weight:600; color:var(--primary);
+                      text-decoration:none; white-space:nowrap;">
+              Review →
+            </a>
+            {% else %}
+            {# Multiple — show collections page #}
+            <a href="/ediscovery/matters/{{ m.matter_id }}/collections"
+               onclick="event.stopPropagation()"
+               style="font-size:12px; font-weight:500; color:var(--primary);
+                      text-decoration:none; white-space:nowrap;">
+              {{ m.collection_count }} collections →
+            </a>
+            {% endif %}
+          </td>
+        </tr>
+
+        {# Inline collection expand — shown for multi-collection matters on row click #}
+        {% if m.collection_count > 1 %}
+        <tr id="review-expand-{{ m.matter_id }}"
+            style="display:none; background:#f8fafc; border-bottom:1px solid var(--border,#e2e8f0);">
+          <td colspan="6" style="padding:0;">
+            <div hx-get="/ediscovery/matters/{{ m.matter_id }}/collections-inline"
+                 hx-trigger="revealed"
+                 hx-swap="innerHTML"
+                 style="padding:8px 14px 12px 28px;">
+              <div style="font-size:11px; color:var(--muted);">Loading collections…</div>
+            </div>
+          </td>
+        </tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% else %}
+  <div style="border:1px dashed var(--border,#e2e8f0); border-radius:8px;
+              padding:48px; text-align:center; background:var(--surface,#fff);">
+    <p style="font-weight:500; color:var(--text); margin-bottom:6px;">No collections yet</p>
+    <p style="font-size:12px; color:var(--muted); margin-bottom:16px;">
+      Create a collection to start loading documents for review.
+    </p>
+    <a href="/ediscovery/collections/new" class="btn-primary">+ New Collection</a>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+function toggleCollectionExpand(matterId) {
+  var row = document.getElementById('review-expand-' + matterId);
+  if (!row) return;
+  var isHidden = row.style.display === 'none' || row.style.display === '';
+  row.style.display = isHidden ? 'table-row' : 'none';
+  // Trigger HTMX load if first open
+  if (isHidden) htmx.process(row);
+}
+</script>

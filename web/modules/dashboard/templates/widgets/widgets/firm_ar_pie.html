@@ -1,0 +1,134 @@
+{#
+  firm_ar_pie.html
+  AR aging — Chart.js doughnut chart.
+  Clicking a slice navigates to /billing/?aging={bucket}
+#}
+<div style="padding:10px 12px; height:100%; display:flex; flex-direction:column; min-height:0;">
+
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              margin-bottom:6px; flex-shrink:0;">
+    <span style="font-size:11px; font-weight:600; color:var(--text,#1a202c);
+                 text-transform:uppercase; letter-spacing:0.05em;">AR Aging</span>
+    {% if not error and total_ar %}
+    <span style="font-size:11px; color:var(--muted,#64748b);">
+      ${{ "{:,.0f}".format(total_ar) }} outstanding
+    </span>
+    {% endif %}
+  </div>
+
+  {% if error %}
+  <div style="font-size:11px; color:#dc2626;">{{ error }}</div>
+
+  {% elif not buckets or total_ar == 0 %}
+  <div style="flex:1; display:flex; align-items:center; justify-content:center;
+              font-size:11px; color:var(--muted,#64748b);">
+    No outstanding AR.
+  </div>
+
+  {% else %}
+
+  {# Chart container #}
+  <div style="flex:1; min-height:0; display:flex; flex-direction:column;
+              align-items:center; justify-content:center;">
+    <div style="position:relative; width:140px; height:140px;">
+      <canvas id="ar-pie-{{ widget.widget_slug }}" width="140" height="140"></canvas>
+      {# Center label #}
+      <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+                  text-align:center; pointer-events:none;">
+        <div style="font-size:13px; font-weight:700; color:var(--text,#1a202c);">
+          ${{ "{:,.0f}".format(total_ar) }}</div>
+        <div style="font-size:9px; color:var(--muted,#64748b);">total AR</div>
+      </div>
+    </div>
+
+    {# Legend #}
+    <div style="display:flex; flex-direction:column; gap:3px; width:100%; margin-top:8px;">
+      {% for b in buckets %}
+      {% if b.amount > 0 %}
+      <a href="/billing/?aging={{ b.label | replace('-','_') | replace('+','plus') }}"
+         style="display:flex; align-items:center; gap:6px; text-decoration:none;
+                padding:2px 4px; border-radius:4px;"
+         onmouseover="this.style.background='#f8fafc'"
+         onmouseout="this.style.background=''">
+        <span style="width:8px; height:8px; border-radius:50%;
+                     background:{{ b.bar }}; flex-shrink:0;"></span>
+        <span style="font-size:10px; color:var(--text,#1a202c); flex:1;">{{ b.label }} days</span>
+        <span style="font-size:10px; color:var(--muted,#64748b);">
+          ${{ "{:,.0f}".format(b.amount) }}</span>
+      </a>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+
+  <script>
+  (function() {
+    var canvas = document.getElementById('ar-pie-{{ widget.widget_slug }}');
+    if (!canvas) return;
+
+    var data    = [{% for b in buckets %}{% if b.amount > 0 %}{{ b.amount }},{% endif %}{% endfor %}];
+    var colors  = [{% for b in buckets %}{% if b.amount > 0 %}'{{ b.bar }}',{% endif %}{% endfor %}];
+    var labels  = [{% for b in buckets %}{% if b.amount > 0 %}'{{ b.label }} days',{% endif %}{% endfor %}];
+    var hrefs   = [{% for b in buckets %}{% if b.amount > 0 %}'/billing/?aging={{ b.label | replace("-","_") | replace("+","plus") }}',{% endif %}{% endfor %}];
+
+    function loadChart() {
+      if (typeof Chart === 'undefined') {
+        setTimeout(loadChart, 100);
+        return;
+      }
+      var ctx = canvas.getContext('2d');
+      var chart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels: labels,
+          datasets: [{
+            data: data,
+            backgroundColor: colors,
+            borderWidth: 2,
+            borderColor: '#fff',
+            hoverOffset: 6,
+          }]
+        },
+        options: {
+          cutout: '68%',
+          responsive: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: function(ctx) {
+                  var val = ctx.parsed;
+                  return ' $' + val.toLocaleString('en-US', {maximumFractionDigits:0});
+                }
+              }
+            }
+          },
+          onClick: function(e, elements) {
+            if (elements.length > 0) {
+              var idx = elements[0].index;
+              if (hrefs[idx]) window.location.href = hrefs[idx];
+            }
+          }
+        }
+      });
+    }
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', loadChart);
+    } else {
+      loadChart();
+    }
+  })();
+  </script>
+
+  {# Load Chart.js if not already present #}
+  <script>
+  if (typeof Chart === 'undefined') {
+    var s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js';
+    document.head.appendChild(s);
+  }
+  </script>
+
+  {% endif %}
+</div>

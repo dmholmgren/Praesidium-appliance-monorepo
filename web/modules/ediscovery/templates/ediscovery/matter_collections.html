@@ -1,0 +1,127 @@
+{# ediscovery/matter_collections.html
+   Fills the dead link from the Review picker — lists all collections
+   in a matter with Open links to the review workspace.
+#}
+{% extends "base.html" %}
+{% block title %}Collections — {{ matter.matter_name if matter else 'Matter' }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block content %}
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+  <div>
+    <a href="/ediscovery/review"
+       style="font-size:11px; color:var(--muted,#64748b); text-decoration:none;">
+      ← Review
+    </a>
+    <h1 style="font-family:'Lora',serif; font-size:20px; font-weight:600;
+               color:var(--text); margin:4px 0 0 0;">
+      {% if matter %}{{ matter.matter_name }}{% else %}Matter{% endif %}
+    </h1>
+    {% if matter and matter.matter_number %}
+    <p style="font-size:12px; color:var(--muted); margin-top:2px;
+              font-family:monospace;">{{ matter.matter_number }}</p>
+    {% endif %}
+  </div>
+  <a href="/ediscovery/collections/new?matter_id={{ matter_id }}"
+     class="btn-primary">+ New Collection</a>
+</div>
+
+{% if collections %}
+<div class="card" style="padding:0; overflow:hidden;
+     border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+     background:var(--surface,#fff);">
+  <table style="width:100%; border-collapse:collapse; font-size:13px;">
+    <thead>
+      <tr style="background:#FAFBFC; border-bottom:1px solid var(--border-color,#e2e8f0);">
+        <th style="text-align:left; padding:10px 14px; font-size:11px;
+                   font-weight:600; color:var(--muted,#64748b);
+                   text-transform:uppercase; letter-spacing:0.05em;">Collection</th>
+        <th style="text-align:left; padding:10px 14px; font-size:11px;
+                   font-weight:600; color:var(--muted,#64748b);
+                   text-transform:uppercase; letter-spacing:0.05em;">Source</th>
+        <th style="text-align:left; padding:10px 14px; font-size:11px;
+                   font-weight:600; color:var(--muted,#64748b);
+                   text-transform:uppercase; letter-spacing:0.05em;">Bates</th>
+        <th style="text-align:left; padding:10px 14px; font-size:11px;
+                   font-weight:600; color:var(--muted,#64748b);
+                   text-transform:uppercase; letter-spacing:0.05em;">Received</th>
+        <th style="text-align:left; padding:10px 14px; font-size:11px;
+                   font-weight:600; color:var(--muted,#64748b);
+                   text-transform:uppercase; letter-spacing:0.05em;">Progress</th>
+        <th style="text-align:left; padding:10px 14px; font-size:11px;
+                   font-weight:600; color:var(--muted,#64748b);
+                   text-transform:uppercase; letter-spacing:0.05em;">Status</th>
+        <th style="padding:10px 14px;"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in collections %}
+      <tr style="border-bottom:1px solid var(--border-color,#f1f5f9); cursor:pointer;"
+          onclick="window.location='/ediscovery/collections/{{ c.id }}/review'">
+        <td style="padding:12px 14px;">
+          <div style="font-weight:500; color:var(--text,#1a202c);">
+            {{ c.display_name }}
+          </div>
+          {% if c.received_method %}
+          <div style="font-size:11px; color:var(--muted,#64748b);">
+            via {{ c.received_method }}
+          </div>
+          {% endif %}
+        </td>
+        <td style="padding:12px 14px; font-size:12px; color:var(--text);">
+          {{ c.source_party or '—' }}
+        </td>
+        <td style="padding:12px 14px; font-size:11px; font-family:monospace;
+                   color:var(--text);">
+          {{ c.stated_bates_range or '—' }}
+        </td>
+        <td style="padding:12px 14px; font-size:12px; color:var(--text);">
+          {{ c.received_date.strftime('%Y-%m-%d') if c.received_date else '—' }}
+        </td>
+        <td style="padding:12px 14px; min-width:160px;">
+          <div style="font-size:12px; color:var(--text);">
+            {{ c.reviewed_docs or 0 }} / {{ c.total_docs or 0 }}
+          </div>
+          {% if c.total_docs and c.total_docs > 0 %}
+          <div style="height:4px; background:#E5E7EB; border-radius:4px;
+                      margin-top:4px; overflow:hidden;">
+            <div style="height:100%; background:var(--primary,#2563eb);
+                        border-radius:4px; width:{{ c.progress_pct }}%;"></div>
+          </div>
+          {% endif %}
+        </td>
+        <td style="padding:12px 14px;">
+          <span style="display:inline-block; padding:2px 8px; border-radius:10px;
+                       font-size:10px; font-weight:600;
+                       text-transform:uppercase; letter-spacing:0.03em;
+                       {% if c.status == 'active' %}color:#047857; background:#D1FAE5;
+                       {% elif c.status == 'processing' %}color:#B45309; background:#FEF3C7;
+                       {% else %}color:#4B5563; background:#F3F4F6;{% endif %}">
+            {{ c.status or 'active' }}
+          </span>
+        </td>
+        <td style="padding:12px 14px; text-align:right;">
+          <a href="/ediscovery/collections/{{ c.id }}/review"
+             style="font-size:12px; font-weight:500; color:var(--primary,#2563eb);
+                    text-decoration:none;"
+             onclick="event.stopPropagation()">Open →</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div style="padding:48px; text-align:center;
+            border:1px dashed var(--border-color,#e2e8f0);
+            border-radius:8px; background:var(--surface,#fff);">
+  <p style="font-weight:500; color:var(--text); margin-bottom:6px;">
+    No collections for this matter yet
+  </p>
+  <p style="font-size:12px; color:var(--muted); margin-bottom:16px;">
+    Create a collection to start loading documents for review.
+  </p>
+  <a href="/ediscovery/collections/new?matter_id={{ matter_id }}"
+     class="btn-primary">+ New Collection</a>
+</div>
+{% endif %}
+{% endblock %}

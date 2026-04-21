@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}{{ matter.matter_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}{{ matter.matter_name }}{% endblock %}
+
+{% block head_extra %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+{% endblock %}
+
+{% block content %}
+
+{# ── Matter Header ───────────────────────────────────────── #}
+<div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:20px;">
+  <div>
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px;">
+      <a href="/dashboard" style="font-size:12px; color:var(--muted); text-decoration:none;">← Matters</a>
+      {% if matter.matter_number %}
+      <span style="font-size:11px; color:#D1D5DB;">·</span>
+      <span style="font-size:12px; color:var(--muted);">{{ matter.matter_number }}</span>
+      {% endif %}
+    </div>
+    <h2 style="font-family:'Lora',serif; font-size:20px; font-weight:600; color:var(--text); margin:0 0 4px 0;">{{ matter.matter_name }}</h2>
+    <p style="font-size:12px; color:var(--muted); margin:0;">
+      {{ matter.case_number or "No case number" }}
+      {% if matter.court %} · {{ matter.court }}{% endif %}
+      {% if matter.judge %} · {{ matter.judge }}{% endif %}
+    </p>
+  </div>
+  <div style="display:flex; align-items:center; gap:8px; flex-shrink:0;">
+    {% if matter.status == 'active' %}
+    <span class="badge badge-green">Active</span>
+    {% elif matter.status == 'closed' %}
+    <span class="badge badge-gray">Closed</span>
+    {% else %}
+    <span class="badge badge-yellow">{{ matter.status|title }}</span>
+    {% endif %}
+    <a href="/dashboard/matter/{{ matter_id }}/status-report" class="btn-secondary" style="font-size:12px;">
+      Status Report
+    </a>
+    <button onclick="toggleCustomize()" class="btn-secondary" style="font-size:12px;" title="Customize panels">
+      <svg style="width:13px;height:13px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/>
+      </svg>
+      Customize
+    </button>
+  </div>
+</div>
+
+{# ── Customize Bar (hidden by default) ──────────────────── #}
+<div id="customize-bar" style="display:none; background:#FEF3C7; border:1px solid #FDE68A; border-radius:6px; padding:10px 16px; margin-bottom:16px; font-size:12px; color:#92400E; align-items:center; gap:12px;">
+  <svg style="width:14px;height:14px;flex-shrink:0;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+  </svg>
+  Drag panels to reorder. Click × to hide a panel. Layout saves automatically.
+  <button onclick="toggleCustomize()" style="margin-left:auto; font-size:11px; padding:3px 10px; background:#fff; border:1px solid #FDE68A; border-radius:4px; cursor:pointer; color:#92400E;">Done</button>
+</div>
+
+{# ── Tab Navigation (registry-driven) ───────────────────── #}
+<div class="tab-nav" id="tab-nav">
+  {% for panel in panels %}
+  <button
+    class="tab-btn {% if loop.first %}active{% endif %}"
+    id="tab-{{ panel.panel_slug }}"
+    onclick="switchTab('{{ panel.panel_slug }}')"
+  >{{ panel.display_name }}</button>
+  {% endfor %}
+</div>
+
+{# ── Panel Containers (registry-driven, HTMX lazy-loaded) ── #}
+<div id="panel-container" style="min-height:200px;">
+  {% for panel in panels %}
+  <div
+    id="panel-{{ panel.panel_slug }}"
+    class="panel-wrapper"
+    data-panel="{{ panel.panel_slug }}"
+    style="display:{% if loop.first %}block{% else %}none{% endif %};"
+    {% if loop.first %}
+    hx-get="/dashboard/matter/{{ matter_id }}/panel/{{ panel.panel_slug }}"
+    hx-trigger="load"
+    hx-swap="innerHTML"
+    {% endif %}
+  >
+    {% if loop.first %}
+    <div class="panel-loading"><span class="spinner"></span> Loading…</div>
+    {% endif %}
+
+    {# Drag handle — shown in customize mode #}
+    <div class="drag-handle" style="display:none;" title="Drag to reorder">
+      <svg style="width:16px;height:16px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+      </svg>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+const matterId = '{{ matter_id }}';
+let customizeMode = false;
+let sortable = null;
+let loadedPanels = new Set(['{{ panels[0].panel_slug if panels else "" }}']);
+
+function switchTab(slug) {
+  // Update tab styles
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  const activeTab = document.getElementById('tab-' + slug);
+  if (activeTab) activeTab.classList.add('active');
+
+  // Show/hide panels
+  document.querySelectorAll('.panel-wrapper').forEach(p => p.style.display = 'none');
+  const panel = document.getElementById('panel-' + slug);
+  if (!panel) return;
+  panel.style.display = 'block';
+
+  // Lazy load if not yet loaded
+  if (!loadedPanels.has(slug)) {
+    loadedPanels.add(slug);
+    panel.innerHTML = '<div class="panel-loading"><span class="spinner"></span> Loading…</div>';
+    htmx.ajax('GET', '/dashboard/matter/' + matterId + '/panel/' + slug, {
+      target: '#panel-' + slug,
+      swap: 'innerHTML'
+    });
+  }
+}
+
+function toggleCustomize() {
+  customizeMode = !customizeMode;
+  const bar = document.getElementById('customize-bar');
+  bar.style.display = customizeMode ? 'flex' : 'none';
+
+  // Show/hide drag handles
+  document.querySelectorAll('.drag-handle').forEach(h => {
+    h.style.display = customizeMode ? 'block' : 'none';
+  });
+
+  if (customizeMode && !sortable) {
+    sortable = new Sortable(document.getElementById('panel-container'), {
+      animation: 150,
+      handle: '.drag-handle',
+      ghostClass: 'sortable-ghost',
+      onEnd: saveLayout,
+    });
+  }
+}
+
+function hidePanel(slug) {
+  const panel = document.getElementById('panel-' + slug);
+  const tab = document.getElementById('tab-' + slug);
+  if (panel) panel.style.display = 'none';
+  if (tab) tab.style.display = 'none';
+  saveLayout();
+}
+
+function saveLayout() {
+  const panels = [...document.querySelectorAll('.panel-wrapper')].map(p => p.dataset.panel);
+  const hidden = [...document.querySelectorAll('.tab-btn')]
+    .filter(t => t.style.display === 'none')
+    .map(t => t.id.replace('tab-', ''));
+
+  fetch('/dashboard/layout/save', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      page_slug: 'matter_dashboard',
+      panel_order: panels,
+      hidden_panels: hidden,
+    })
+  });
+}
+</script>
+{% endblock %}

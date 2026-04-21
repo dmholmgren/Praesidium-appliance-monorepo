@@ -1,0 +1,109 @@
+{#
+  widgets/ediscovery_doc_family.html
+  eDiscovery Review — right rail collapsible card: Family
+  Context: doc_id, thread_members, duplicates, has_family,
+           thread_count, duplicate_count, error
+#}
+<div class="edr-card" data-edr-card="family" data-edr-default-open="true"
+     style="border:1px solid var(--border-color,#e2e8f0);
+            border-radius:6px; background:var(--surface,#fff);
+            margin-bottom:10px; overflow:hidden;">
+
+  <div class="edr-card-header"
+       onclick="edrToggleCard(this)"
+       style="display:flex; align-items:center; justify-content:space-between;
+              padding:8px 12px; cursor:pointer; user-select:none;
+              border-bottom:1px solid var(--border-color,#f1f5f9);
+              background:#FAFBFC;">
+    <div style="display:flex; align-items:center; gap:8px;">
+      <span class="edr-card-caret"
+            style="display:inline-block; width:10px; font-size:10px;
+                   color:var(--muted,#64748b); transition:transform 0.15s;">▾</span>
+      <span style="font-size:10px; font-weight:700; color:var(--muted,#64748b);
+                   text-transform:uppercase; letter-spacing:0.06em;">
+        Family &amp; Related
+      </span>
+    </div>
+    {% if has_family %}
+    <span style="font-size:10px; color:var(--muted,#64748b);">
+      {{ (thread_count or 0) + (duplicate_count or 0) }}
+    </span>
+    {% endif %}
+  </div>
+
+  <div class="edr-card-body" style="padding:10px 12px;">
+    {% if error %}
+      <div style="font-size:11px; color:#991b1b; padding:6px 8px;
+                  background:#fef2f2; border-radius:4px;">
+        ⚠ {{ error }}
+      </div>
+    {% elif not doc_id %}
+      <div style="font-size:11px; color:var(--muted,#64748b);">
+        No document selected.
+      </div>
+    {% elif not has_family %}
+      <div style="font-size:11px; color:var(--muted,#64748b);">
+        No related documents in this collection.
+      </div>
+    {% else %}
+
+      {% if thread_members %}
+      <div style="font-size:10px; font-weight:600; color:var(--muted,#64748b);
+                  text-transform:uppercase; letter-spacing:0.04em;
+                  margin-bottom:6px;">
+        Email thread ({{ thread_count }})
+      </div>
+      <div style="display:flex; flex-direction:column; gap:1px; margin-bottom:12px;">
+        {% for m in thread_members %}
+        <div hx-get="/ediscovery/documents/{{ m.id }}/panes"
+             hx-target="#doc-panes"
+             hx-swap="innerHTML"
+             style="padding:5px 8px; border-radius:4px; cursor:pointer;
+                    border-bottom:1px solid var(--border-color,#f8fafc);">
+          <div style="font-size:11px; color:var(--text,#1a202c);
+                      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+               title="{{ m.display_name|e }}">
+            {{ m.display_name }}
+          </div>
+          <div style="font-size:10px; color:var(--muted,#64748b);
+                      display:flex; gap:6px; margin-top:1px;">
+            {% if m.email_from %}<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;">{{ m.email_from }}</span>{% endif %}
+            {% if m.display_date %}<span>· {{ m.display_date }}</span>{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if duplicates %}
+      <div style="font-size:10px; font-weight:600; color:var(--muted,#64748b);
+                  text-transform:uppercase; letter-spacing:0.04em;
+                  margin-bottom:6px;">
+        Exact duplicates ({{ duplicate_count }})
+      </div>
+      <div style="display:flex; flex-direction:column; gap:1px;">
+        {% for d in duplicates %}
+        <div hx-get="/ediscovery/documents/{{ d.id }}/panes"
+             hx-target="#doc-panes"
+             hx-swap="innerHTML"
+             style="padding:5px 8px; border-radius:4px; cursor:pointer;
+                    border-bottom:1px solid var(--border-color,#f8fafc);">
+          <div style="font-size:11px; color:var(--text,#1a202c);
+                      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+               title="{{ d.display_name|e }}">
+            {{ d.display_name }}
+          </div>
+          <div style="font-size:10px; color:var(--muted,#64748b);
+                      display:flex; gap:6px; margin-top:1px;">
+            {% if d.custodian %}<span>{{ d.custodian|truncate(20, True) }}</span>{% endif %}
+            {% if d.display_date %}<span>· {{ d.display_date }}</span>{% endif %}
+            {% if d.bates_begin %}<span style="font-family:monospace;">· {{ d.bates_begin }}</span>{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+    {% endif %}
+  </div>
+</div>

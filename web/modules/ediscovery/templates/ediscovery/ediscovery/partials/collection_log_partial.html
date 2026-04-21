@@ -1,0 +1,10 @@
+{% if audit_log %}
+  {% for entry in audit_log %}
+  <div style="padding:6px 0; border-bottom:1px solid var(--border-color,#e2e8f0); font-size:11px;">
+    <span style="color:var(--muted);">{{ entry.created_at.strftime('%H:%M:%S') if entry.created_at else '' }}</span>
+    <span style="margin-left:8px; color:var(--text);">{{ entry.action }}</span>
+  </div>
+  {% endfor %}
+{% else %}
+  <div style="font-size:11px; color:var(--muted); padding:8px 0;">No activity logged yet.</div>
+{% endif %}

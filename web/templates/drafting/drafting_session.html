@@ -1,0 +1,425 @@
+{% extends "base.html" %}
+{% block title %}{{ session.title }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block head_extra %}
+<style>
+  .session-layout {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 20px;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px 20px;
+    align-items: start;
+  }
+  @media (max-width: 900px) {
+    .session-layout { grid-template-columns: 1fr; }
+  }
+  .draft-panel {
+    background: #fff;
+    border: 1px solid var(--border, #E5E7EB);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--border, #E5E7EB);
+    background: var(--bg, #F9FAFB);
+  }
+  .panel-header h2 {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--navy, #0D1F3C);
+    margin: 0;
+  }
+  .panel-body { padding: 18px; }
+  .draft-text-area {
+    font-family: 'Georgia', serif;
+    font-size: 13.5px;
+    line-height: 1.75;
+    color: var(--text, #1A1A1A);
+    white-space: pre-wrap;
+    background: #FAFAFA;
+    border: 1px solid var(--border, #E5E7EB);
+    border-radius: 4px;
+    padding: 16px;
+    min-height: 300px;
+    max-height: 600px;
+    overflow-y: auto;
+  }
+  .gap-highlight {
+    background: #FFFBEB;
+    border: 1px solid #FCD34D;
+    border-radius: 3px;
+    padding: 0 4px;
+    color: #92400E;
+    font-style: italic;
+    font-size: 12px;
+  }
+  .flags-section { margin-top: 16px; }
+  .flags-section h3 {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted, #6B7280);
+    margin: 0 0 8px 0;
+  }
+  .flag-item {
+    display: flex;
+    gap: 10px;
+    padding: 8px 10px;
+    border-radius: 4px;
+    margin-bottom: 4px;
+    font-size: 12px;
+    align-items: flex-start;
+  }
+  .flag-gap     { background: #FFFBEB; border-left: 3px solid #F59E0B; }
+  .flag-infer   { background: #EFF6FF; border-left: 3px solid #3B82F6; }
+  .flag-item .flag-loc {
+    font-weight: 600;
+    color: var(--navy, #0D1F3C);
+    white-space: nowrap;
+    min-width: 80px;
+  }
+  .flag-item .flag-msg { color: var(--text, #1A1A1A); flex: 1; }
+  .flag-item .flag-hint { color: var(--text-muted, #6B7280); font-style: italic; font-size: 11px; }
+  /* Action buttons */
+  .btn { display: inline-flex; align-items: center; gap: 6px;
+    border: none; border-radius: 4px; padding: 8px 14px;
+    font-size: 12px; font-weight: 600; cursor: pointer;
+    letter-spacing: 0.02em; transition: background 120ms; }
+  .btn-navy { background: var(--navy, #0D1F3C); color: #fff; }
+  .btn-navy:hover { background: var(--navy-mid, #1A3A5C); }
+  .btn-gold { background: var(--accent, #C9A84C); color: var(--navy, #0D1F3C); }
+  .btn-gold:hover { background: #b8943e; }
+  .btn-ghost { background: transparent; color: var(--navy, #0D1F3C);
+    border: 1px solid var(--border, #E5E7EB); }
+  .btn-ghost:hover { background: var(--bg, #F9FAFB); }
+  .btn-danger { background: #FEF2F2; color: #DC2626; border: 1px solid #FECACA; }
+  .btn-danger:hover { background: #FEE2E2; }
+  /* Right sidebar */
+  .sidebar-card {
+    background: #fff;
+    border: 1px solid var(--border, #E5E7EB);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+  .sidebar-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border, #E5E7EB);
+    background: var(--bg, #F9FAFB);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .sidebar-header h3 {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--navy, #0D1F3C);
+    margin: 0;
+  }
+  .sidebar-body { padding: 14px 16px; }
+  .sanity-layer {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border, #E5E7EB);
+    font-size: 12px;
+  }
+  .sanity-layer:last-child { border-bottom: none; }
+  .sanity-layer .layer-num {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--navy, #0D1F3C);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .sanity-layer .layer-name { flex: 1; color: var(--text, #1A1A1A); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .dot-pass     { background: #22C55E; }
+  .dot-warning  { background: #F59E0B; }
+  .dot-critical { background: #EF4444; }
+  .dot-skipped  { background: #D1D5DB; }
+  .dot-error    { background: #F97316; }
+  .dot-not_run  { background: #E5E7EB; }
+  .overall-badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 20px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+  .overall-pass     { background: #F0FDF4; color: #15803D; }
+  .overall-warning  { background: #FFFBEB; color: #B45309; }
+  .overall-critical { background: #FEF2F2; color: #DC2626; }
+  .overall-error    { background: #FFF7ED; color: #C2410C; }
+  .overall-not_run  { background: #F3F4F6; color: #6B7280; }
+  /* Bates items */
+  .bates-item {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border, #E5E7EB);
+    font-size: 12px;
+  }
+  .bates-item:last-child { border-bottom: none; }
+  .bates-citation { font-weight: 600; color: var(--navy, #0D1F3C); margin-bottom: 2px; }
+  .bates-ref { color: var(--text-muted, #6B7280); font-style: italic; margin-bottom: 4px; }
+  .bates-flags { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 6px; }
+  .bates-flag {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+    padding: 1px 6px; border-radius: 3px;
+  }
+  .bates-flag-clawback  { background: #FEF2F2; color: #DC2626; }
+  .bates-flag-priv      { background: #FEF2F2; color: #DC2626; }
+  .bates-flag-missing   { background: #FFFBEB; color: #B45309; }
+  .bates-flag-fuzzy     { background: #EFF6FF; color: #1D4ED8; }
+  .bates-actions { display: flex; gap: 4px; }
+  .bates-accepted { color: #15803D; font-weight: 600; font-size: 11px; }
+  .bates-rejected { color: #6B7280; font-size: 11px; text-decoration: line-through; }
+  /* AI contributions */
+  .contrib-item {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border, #E5E7EB);
+    font-size: 11px;
+  }
+  .contrib-item:last-child { border-bottom: none; }
+  .contrib-model { font-weight: 600; color: var(--navy, #0D1F3C); }
+  .contrib-summary { color: var(--text-muted, #6B7280); margin-top: 2px; }
+  .contrib-reviewed { color: #15803D; font-size: 10px; font-weight: 600; }
+  .no-data { text-align: center; padding: 20px; color: var(--text-muted, #6B7280); font-size: 12px; }
+  /* Session meta */
+  .meta-row { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+  .meta-item { font-size: 12px; color: var(--text-muted, #6B7280); }
+  .meta-item strong { color: var(--navy, #0D1F3C); }
+</style>
+{% endblock %}
+
+{% block page_title %}{{ session.title }}{% endblock %}
+
+{% block header_right %}
+<div style="display:flex; gap:8px; align-items:center;">
+  {% if not latest_doc %}
+  <form method="post" action="/drafting/sessions/{{ session.id }}/assemble">
+    <button type="submit" class="btn btn-gold">▶ Run Assembly</button>
+  </form>
+  {% else %}
+  <form method="post" action="/drafting/sessions/{{ session.id }}/assemble">
+    <button type="submit" class="btn btn-ghost">↺ Re-assemble</button>
+  </form>
+  {% if sanity.overall == 'not_run' %}
+  <form method="post" action="/drafting/sessions/{{ session.id }}/sanity">
+    <button type="submit" class="btn btn-navy">✓ Run Sanity Check</button>
+  </form>
+  {% else %}
+  <form method="post" action="/drafting/sessions/{{ session.id }}/sanity">
+    <button type="submit" class="btn btn-ghost">↺ Re-run Sanity</button>
+  </form>
+  {% endif %}
+  {% endif %}
+  <form method="post" action="/drafting/sessions/{{ session.id }}/dismiss?matter_id={{ session.matter_id or '' }}">
+    <button type="submit" class="btn btn-danger">Dismiss</button>
+  </form>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="session-layout">
+
+  <!-- Left: Draft + Flags -->
+  <div>
+    <!-- Session meta -->
+    <div class="meta-row">
+      <span class="meta-item"><strong>Type:</strong> {{ session.document_type | replace('_',' ') | title }}</span>
+      <span class="meta-item"><strong>Practice:</strong> {{ session.practice_area | title }}</span>
+      {% if session.matter_name %}
+      <span class="meta-item"><strong>Matter:</strong> {{ session.matter_name }}</span>
+      {% endif %}
+      {% if session.matter_number %}
+      <span class="meta-item"><strong>#:</strong> {{ session.matter_number }}</span>
+      {% endif %}
+    </div>
+
+    <!-- Draft Text -->
+    <div class="draft-panel">
+      <div class="panel-header">
+        <h2>Draft Document</h2>
+        {% if latest_doc %}
+        <span style="font-size:11px; color:var(--text-muted,#6B7280);">
+          Version {{ latest_doc.version }} · {{ latest_doc.created_at[:10] if latest_doc.created_at else '' }}
+        </span>
+        {% endif %}
+      </div>
+      <div class="panel-body">
+        {% if latest_doc %}
+        <div class="draft-text-area" id="draft-text">{{ latest_doc.body_text }}</div>
+
+        {% if latest_doc.gaps_flagged %}
+        <div class="flags-section">
+          <h3>⚠ Gaps Flagged ({{ latest_doc.gaps_flagged | length }})</h3>
+          {% for gap in latest_doc.gaps_flagged %}
+          <div class="flag-item flag-gap">
+            <span class="flag-loc">{{ gap.location[:30] }}</span>
+            <div>
+              <div class="flag-msg">{{ gap.description }}</div>
+              {% if gap.suggested_source %}
+              <div class="flag-hint">Source: {{ gap.suggested_source }}</div>
+              {% endif %}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if latest_doc.inferences %}
+        <div class="flags-section">
+          <h3>🔵 AI Inferences ({{ latest_doc.inferences | length }})</h3>
+          {% for inf in latest_doc.inferences %}
+          <div class="flag-item flag-infer">
+            <span class="flag-loc">{{ inf.location[:30] }}</span>
+            <div>
+              <div class="flag-msg">{{ inf.inference }}</div>
+              <div class="flag-hint">{{ (inf.confidence * 100) | int }}% confidence · {{ inf.basis[:80] }}</div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        {% else %}
+        <div class="no-data">
+          No draft yet. Click <strong>Run Assembly</strong> to generate the first draft.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Sanity + Bates + AI Log -->
+  <div>
+
+    <!-- Sanity Check -->
+    <div class="sidebar-card">
+      <div class="sidebar-header">
+        <h3>Sanity Check</h3>
+        {% if sanity.overall != 'not_run' %}
+        <span class="overall-badge overall-{{ sanity.overall }}">{{ sanity.overall | upper }}</span>
+        {% endif %}
+      </div>
+      <div class="sidebar-body">
+        {% if sanity.overall == 'not_run' %}
+        <div class="no-data">Not yet run.</div>
+        {% else %}
+        {% if sanity.critical_count %}
+        <div style="background:#FEF2F2; border-radius:4px; padding:8px 10px; margin-bottom:10px; font-size:12px; color:#DC2626; font-weight:600;">
+          {{ sanity.critical_count }} critical issue(s) require attention before filing.
+        </div>
+        {% endif %}
+        {% for layer in sanity.layers %}
+        <div class="sanity-layer">
+          <div class="layer-num">{{ layer.layer_number }}</div>
+          <span class="layer-name">{{ layer.layer_name }}</span>
+          <span class="dot dot-{{ layer.result }}" title="{{ layer.result }}"></span>
+        </div>
+        {% if layer.findings %}
+        {% for f in layer.findings[:2] %}
+        <div style="margin: 0 0 4px 28px; font-size:11px; color:{% if f.severity == 'critical' %}#DC2626{% elif f.severity == 'warning' %}#B45309{% else %}#6B7280{% endif %};">
+          {{ f.message[:100] }}
+        </div>
+        {% endfor %}
+        {% endif %}
+        {% endfor %}
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Bates Insertions -->
+    {% if bates.total > 0 %}
+    <div class="sidebar-card">
+      <div class="sidebar-header">
+        <h3>Bates Insertions</h3>
+        <span style="font-size:11px; color:var(--text-muted,#6B7280);">
+          {{ bates.pending }} pending
+          {% if bates.critical_flags %} · <span style="color:#DC2626;">{{ bates.critical_flags }} critical</span>{% endif %}
+        </span>
+      </div>
+      <div class="sidebar-body" style="max-height:300px; overflow-y:auto;">
+        {% for item in bates.items %}
+        <div class="bates-item" id="bates-{{ item.id }}">
+          <div class="bates-citation">{{ item.citation_text[:60] }}</div>
+          {% if item.bates_ref %}
+          <div class="bates-ref">→ {{ item.bates_ref }}</div>
+          {% else %}
+          <div class="bates-ref" style="color:#B45309;">Not found in productions</div>
+          {% endif %}
+          <div class="bates-flags">
+            {% if item.flag_clawback %}<span class="bates-flag bates-flag-clawback">CLAWBACK</span>{% endif %}
+            {% if item.flag_privilege_log %}<span class="bates-flag bates-flag-priv">PRIVILEGE</span>{% endif %}
+            {% if item.flag_not_produced %}<span class="bates-flag bates-flag-missing">NOT PRODUCED</span>{% endif %}
+            {% if item.match_method == 'fuzzy' %}<span class="bates-flag bates-flag-fuzzy">FUZZY {{ (item.match_confidence * 100) | int }}%</span>{% endif %}
+          </div>
+          {% if item.disposition == 'pending' and item.bates_ref %}
+          <div class="bates-actions">
+            <form method="post" action="/drafting/sessions/{{ session.id }}/bates/{{ item.id }}/dispose"
+                  hx-post="/drafting/sessions/{{ session.id }}/bates/{{ item.id }}/dispose"
+                  hx-target="#bates-{{ item.id }}" hx-swap="outerHTML">
+              <input type="hidden" name="disposition" value="accepted">
+              <button type="submit" class="btn btn-gold" style="padding:4px 10px; font-size:11px;">Accept</button>
+            </form>
+            <form method="post" action="/drafting/sessions/{{ session.id }}/bates/{{ item.id }}/dispose"
+                  hx-post="/drafting/sessions/{{ session.id }}/bates/{{ item.id }}/dispose"
+                  hx-target="#bates-{{ item.id }}" hx-swap="outerHTML">
+              <input type="hidden" name="disposition" value="rejected">
+              <button type="submit" class="btn btn-ghost" style="padding:4px 10px; font-size:11px;">Reject</button>
+            </form>
+          </div>
+          {% elif item.disposition == 'accepted' %}
+          <span class="bates-accepted">✓ Accepted</span>
+          {% elif item.disposition == 'rejected' %}
+          <span class="bates-rejected">Rejected</span>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- AI Contributions -->
+    {% if contributions %}
+    <div class="sidebar-card">
+      <div class="sidebar-header">
+        <h3>AI Contributions</h3>
+        <span style="font-size:11px; color:var(--text-muted,#6B7280);">{{ contributions | length }}</span>
+      </div>
+      <div class="sidebar-body">
+        {% for c in contributions %}
+        <div class="contrib-item">
+          <div class="contrib-model">{{ c.model_used or 'Claude' }}</div>
+          <div class="contrib-summary">{{ c.contribution_summary }}</div>
+          {% if c.prompt_tokens %}
+          <div style="color:var(--text-muted,#6B7280); font-size:10px; margin-top:2px;">
+            {{ c.prompt_tokens }}↑ {{ c.completion_tokens }}↓ tokens
+          </div>
+          {% endif %}
+          {% if c.attorney_reviewed %}
+          <div class="contrib-reviewed">✓ Attorney reviewed</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+  </div><!-- /right sidebar -->
+</div>
+{% endblock %}

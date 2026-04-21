@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}{{ brand.platform_name }} — Research: {{ matter.matter_name }}{% endblock %}
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-6">
+  <nav class="text-sm text-gray-500 mb-4">
+    <a href="/dms/" class="hover:text-blue-600">DMS</a> /
+    <a href="/dms/matter/{{ matter.id }}" class="hover:text-blue-600">{{ matter.matter_name }}</a> /
+    <span class="text-gray-900 font-medium">Research</span>
+  </nav>
+  <h1 class="text-2xl font-bold text-gray-900 mb-6">Legal Research — {{ matter.matter_name }}</h1>
+  <form hx-get="/dms/research/{{ matter.id }}" hx-target="#research-results"
+        hx-push-url="true" class="bg-white rounded-lg shadow p-6 mb-6">
+    <div class="grid grid-cols-12 gap-4">
+      <div class="col-span-5">
+        <input type="text" name="q" value="{{ query }}" placeholder="Search case law, statutes..."
+               class="w-full border rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500">
+      </div>
+      <div class="col-span-2">
+        <select name="jurisdiction" class="w-full border rounded-lg px-3 py-2">
+          <option value="">All jurisdictions</option>
+          <option value="federal" {% if jurisdiction == 'federal' %}selected{% endif %}>Federal</option>
+          <option value="TX" {% if jurisdiction == 'TX' %}selected{% endif %}>Texas</option>
+          <option value="CA" {% if jurisdiction == 'CA' %}selected{% endif %}>California</option>
+          <option value="NY" {% if jurisdiction == 'NY' %}selected{% endif %}>New York</option>
+        </select>
+      </div>
+      <div class="col-span-2">
+        <select name="provider" class="w-full border rounded-lg px-3 py-2">
+          <option value="lexis" {% if provider == 'lexis' %}selected{% endif %}>Lexis+</option>
+          <option value="westlaw" {% if provider == 'westlaw' %}selected{% endif %}>Westlaw</option>
+        </select>
+      </div>
+      <div class="col-span-1">
+        <input type="date" name="date_from" value="{{ date_from }}" class="w-full border rounded-lg px-2 py-2 text-sm">
+      </div>
+      <div class="col-span-1">
+        <input type="date" name="date_to" value="{{ date_to }}" class="w-full border rounded-lg px-2 py-2 text-sm">
+      </div>
+      <div class="col-span-1">
+        <button type="submit" class="w-full bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700">Search</button>
+      </div>
+    </div>
+  </form>
+  <div class="grid grid-cols-12 gap-6">
+    <div id="research-results" class="col-span-9">
+      {% if results %}
+      <div class="space-y-4">
+        {% for hit in results %}
+        <div class="bg-white rounded-lg shadow p-4">
+          <div class="flex justify-between items-start">
+            <div>
+              <div class="flex items-center gap-2">
+                {% set signal = hit.cite_signal if hit.cite_signal is string else hit.cite_signal %}
+                {% if signal == 'positive' %}<span class="w-3 h-3 bg-green-500 rounded-full inline-block"></span>
+                {% elif signal == 'cautionary' %}<span class="w-3 h-3 bg-yellow-500 rounded-full inline-block"></span>
+                {% elif signal == 'negative' or signal == 'overruled' %}<span class="w-3 h-3 bg-red-500 rounded-full inline-block"></span>
+                {% else %}<span class="w-3 h-3 bg-gray-300 rounded-full inline-block"></span>{% endif %}
+                <span class="font-semibold text-blue-600">{{ hit.citation }}</span>
+              </div>
+              <h3 class="font-medium text-gray-900 mt-1">{{ hit.title }}</h3>
+              <div class="text-sm text-gray-500 mt-1">{{ hit.court }} · {{ hit.date }}</div>
+              {% if hit.snippet %}<p class="text-sm text-gray-600 mt-2">{{ hit.snippet }}</p>{% endif %}
+            </div>
+            <div class="flex gap-2">
+              <button hx-get="/dms/research/{{ matter.id }}/cite-check?citation={{ hit.citation }}&provider={{ hit.provider }}"
+                      hx-target="#cite-detail" class="text-xs bg-gray-100 px-3 py-1 rounded hover:bg-gray-200">
+                Check Citation
+              </button>
+              <button hx-post="/dms/research/{{ matter.id }}/save"
+                      hx-vals='{"result_citation": "{{ hit.citation }}", "result_title": "{{ hit.title }}", "provider_doc_id": "{{ hit.provider_doc_id }}", "provider": "{{ hit.provider }}"}'
+                      hx-target="this" hx-swap="outerHTML"
+                      class="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded hover:bg-blue-200">
+                Save to Matter
+              </button>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% elif query %}
+      <p class="text-gray-500 text-center py-12">No results found for "{{ query }}"</p>
+      {% else %}
+      <div class="bg-white rounded-lg shadow p-12 text-center text-gray-500">
+        Enter a search query to find case law, statutes, and other legal authorities.
+      </div>
+      {% endif %}
+      <div id="cite-detail" class="mt-6"></div>
+    </div>
+    <div class="col-span-3">
+      <div class="bg-white rounded-lg shadow p-4">
+        <h3 class="font-semibold text-gray-700 mb-3">Prior Research</h3>
+        <div class="space-y-2">
+          {% for sess in prior_sessions %}
+          <a href="/dms/research/{{ matter.id }}?q={{ sess.query }}&provider={{ sess.provider }}"
+             class="block text-sm text-blue-600 hover:underline">
+            {{ sess.query[:40] }}
+            <span class="text-xs text-gray-400">{{ sess.provider }} · {{ sess.created_at[:10] }}</span>
+          </a>
+          {% endfor %}
+        </div>
+        <hr class="my-4">
+        <h3 class="font-semibold text-gray-700 mb-3">Cross-Matter Search</h3>
+        <form hx-get="/dms/research/cross-matter-search"
+              hx-target="#cross-results" class="flex gap-2">
+          <input type="text" name="q" placeholder="Legal issue..." class="flex-1 border rounded px-2 py-1 text-sm">
+          <button class="text-xs bg-gray-100 px-2 py-1 rounded">Search</button>
+        </form>
+        <div id="cross-results" class="mt-2"></div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}

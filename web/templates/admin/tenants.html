@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title_suffix %} — Tenants{% endblock %}
+{% block page_title %}Tenants{% endblock %}
+
+{% block content %}
+<div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+  <div class="px-4 py-3 border-b border-gray-800 bg-gray-800/50 flex items-center justify-between">
+    <h2 class="text-gray-300 font-medium text-sm">Registered Tenants</h2>
+    <span class="text-gray-500 text-xs">{{ tenants | length }} tenant{% if tenants | length != 1 %}s{% endif %}</span>
+  </div>
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-gray-800">
+        <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Slug</th>
+        <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Domain</th>
+        <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Status</th>
+        <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">Tier</th>
+        <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">AI</th>
+        <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">VM</th>
+        <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase font-medium">License Exp</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for t in tenants %}
+      <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+        <td class="px-4 py-2.5 font-mono text-xs text-white font-medium">{{ t.slug }}</td>
+        <td class="px-4 py-2.5 text-xs text-gray-400">{{ t.domain or '—' }}</td>
+        <td class="px-4 py-2.5">
+          {% if t.status == 'active' %}
+          <span class="badge status-ok">active</span>
+          {% elif t.status == 'provisioning' %}
+          <span class="badge status-warn">provisioning</span>
+          {% else %}
+          <span class="badge status-unk">{{ t.status or '—' }}</span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-2.5">
+          <span class="badge {% if t.tier == 'intelligence' %}status-ok{% elif t.tier == 'enterprise' %}bg-purple-900 text-purple-200{% else %}status-unk{% endif %}">
+            {{ t.tier or 'none' }}
+          </span>
+        </td>
+        <td class="px-4 py-2.5 text-xs text-gray-400">{{ t.ai_provider or '—' }}</td>
+        <td class="px-4 py-2.5 font-mono text-xs text-gray-500">{{ t.middleware_server_name or '—' }}</td>
+        <td class="px-4 py-2.5 text-xs text-gray-500">{{ t.expires_at or 'no expiry' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="7" class="px-4 py-6 text-center text-gray-500">No tenants found</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

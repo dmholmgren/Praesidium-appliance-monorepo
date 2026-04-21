@@ -1,0 +1,39 @@
+# Praesidium Platform — Docker Compose
+# VM: MAIN-PRD-WEB-01 (10.10.60.10)
+
+services:
+  web:
+    dns:
+      - 10.10.10.1
+      - 8.8.8.8
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: praesidium-web
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+    ports:
+      - "8000:8000"
+    volumes:
+      - /mnt/clients:/mnt/clients:ro
+      - /mnt/docsend:/mnt/docsend:ro
+      - /mnt/praesidium:/mnt/praesidium:rw
+      - /mnt/ediscovery:/mnt/ediscovery:rw
+      - /opt/praesidium:/app
+    command: ["python", "startup.py"]
+
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: praesidium-nginx
+    restart: unless-stopped
+    volumes:
+      - ./web/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+    environment:
+      - WEB_UPSTREAM=web:8000
+    ports:
+      - "80:80"
+    depends_on:
+      - web

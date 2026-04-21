@@ -1,0 +1,50 @@
+{# widgets/billing_bill_state_summary.html
+   Bill State Summary widget — horizontal strip
+   Context vars (from widget_service.get_billing_bill_state_summary):
+     states — list of {label, count, amount, color, bg, href}
+     error  — str|None
+
+   Visualization only. Colors and hrefs precomputed in service. No logic.
+#}
+
+<div style="display:flex; height:100%; align-items:center; padding:0 12px; gap:8px;">
+
+  {% if error %}
+  <div style="font-size:11px; color:#dc2626; width:100%;">⚠ {{ error }}</div>
+
+  {% elif not states %}
+  <div style="font-size:11px; color:var(--muted); width:100%; text-align:center;">
+    No invoices found.
+  </div>
+
+  {% else %}
+
+  {% for s in states %}
+  <a href="{{ s.href }}"
+     style="flex:1; display:flex; flex-direction:column; align-items:center;
+            justify-content:center; padding:8px 10px; border-radius:6px;
+            background:{{ s.bg }}; border:1px solid transparent;
+            text-decoration:none; transition:all 0.15s; min-width:0;"
+     onmouseover="this.style.borderColor='{{ s.color }}'; this.style.boxShadow='0 1px 4px rgba(0,0,0,0.08)'"
+     onmouseout="this.style.borderColor='transparent'; this.style.boxShadow=''">
+
+    <div style="font-size:9px; font-weight:700; color:{{ s.color }};
+                text-transform:uppercase; letter-spacing:0.06em; margin-bottom:2px;">
+      {{ s.label }}
+    </div>
+
+    <div style="font-size:15px; font-weight:700; color:{{ s.color }};
+                font-variant-numeric:tabular-nums; line-height:1;">
+      ${{ "{:,.0f}".format(s.amount) }}
+    </div>
+
+    <div style="font-size:10px; color:{{ s.color }}; opacity:0.8; margin-top:1px;">
+      {{ s.count }} invoice{{ 's' if s.count != 1 else '' }}
+    </div>
+
+  </a>
+  {% endfor %}
+
+  {% endif %}
+
+</div>

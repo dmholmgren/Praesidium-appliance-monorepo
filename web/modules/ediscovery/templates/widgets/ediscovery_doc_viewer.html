@@ -1,0 +1,285 @@
+{#
+  widgets/ediscovery_doc_viewer.html
+  eDiscovery Review — center pane document viewer
+
+  Context: doc, viewer_mode, file_url, text_url, native_url,
+           has_native, has_image, native_ext, productions,
+           display_name, error
+
+  viewer_mode:
+    'pdf'     — iframe file_url (Relativity image PDF)
+    'audio'   — HTML5 audio player + transcript
+    'image'   — <img>
+    'text'    — hx-get text_url into <pre>
+    'convert' — iframe file_url (LibreOffice conversion)
+    'unsupported' — download button
+    'empty'   — no doc selected
+    'error'   — error message
+#}
+{% if viewer_mode == 'empty' %}
+  <div style="display:flex; align-items:center; justify-content:center;
+              height:100%; background:#FAFBFC;
+              color:var(--muted,#64748b); font-size:12px;">
+    Select a document from the list to begin review.
+  </div>
+
+{% elif viewer_mode == 'error' %}
+  <div style="display:flex; flex-direction:column; align-items:center;
+              justify-content:center; height:100%; background:#fef2f2;
+              color:#991b1b; font-size:12px; gap:4px; padding:16px;">
+    <div>⚠ {{ error or 'Viewer error' }}</div>
+  </div>
+
+{% else %}
+<div style="display:flex; flex-direction:column; height:100%; min-height:0;
+            background:var(--surface,#fff); border-radius:6px;
+            border:1px solid var(--border-color,#e2e8f0);
+            overflow:hidden;">
+
+  {# ── Header: filename + version dropdown + download ────────────────────── #}
+  <div style="flex-shrink:0; display:flex; align-items:center;
+              justify-content:space-between; gap:8px;
+              padding:7px 12px;
+              border-bottom:1px solid var(--border-color,#f1f5f9);
+              background:var(--surface,#fff);">
+    <div style="flex:1; min-width:0;">
+      <div style="font-size:12px; font-weight:600; color:var(--text,#1a202c);
+                  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+           title="{{ display_name|e }}">
+        {{ display_name }}
+      </div>
+      <div style="font-size:10px; color:var(--muted,#64748b);
+                  margin-top:1px; display:flex; gap:6px; flex-wrap:wrap;">
+        {% if doc.page_count %}<span>{{ doc.page_count }} pages</span>{% endif %}
+        {% if doc.mime_type %}<span>· {{ doc.mime_type }}</span>{% endif %}
+        {% if doc.bates_begin %}
+        <span style="font-family:monospace;">
+          · {{ doc.bates_begin }}{% if doc.bates_end and doc.bates_end != doc.bates_begin %}–{{ doc.bates_end }}{% endif %}
+        </span>
+        {% endif %}
+      </div>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+
+      {# Version picker dropdown #}
+      <select id="edr-version-picker-{{ doc.id }}"
+              onchange="edrSwitchVersion('{{ doc.id }}', this.value)"
+              style="font-size:11px; padding:3px 6px; border-radius:4px;
+                     border:1px solid var(--border-color,#e2e8f0);
+                     background:var(--surface,#fff); font-family:inherit;
+                     color:var(--text); cursor:pointer;">
+        {# Native — shown first if available #}
+        {% if has_native %}
+        <option value="native" {% if viewer_mode == 'audio' %}selected{% endif %}>
+          {% if native_ext in ('mp3','m4a','m4r','wav','ogg','aac','flac') %}🎵{% else %}📄{% endif %}
+          Native ({{ native_ext | upper }})
+        </option>
+        {% endif %}
+        {# Received Image — the Relativity production PDF #}
+        {% if has_image %}
+        <option value="image" {% if viewer_mode == 'pdf' %}selected{% endif %}>
+          📕 Received Image
+        </option>
+        {% endif %}
+        {# Extracted Text #}
+        <option value="text">📝 Extracted Text</option>
+        {# Our Productions #}
+        {% if productions %}
+          {% for p in productions %}
+          <option value="production_{{ p.production_id }}">
+            📦 {{ p.production_name }}{% if p.bates_number %} · {{ p.bates_number }}{% endif %}
+          </option>
+          {% endfor %}
+        {% else %}
+        <option value="no_production" disabled style="color:var(--muted);">
+          — No productions yet —
+        </option>
+        {% endif %}
+      </select>
+
+      {# Download button — downloads whatever is currently shown #}
+      <a id="edr-download-btn-{{ doc.id }}"
+         href="{{ native_url or file_url }}?download=1"
+         title="Download"
+         style="padding:4px 10px; font-size:11px;
+                border:1px solid var(--border-color,#e2e8f0); border-radius:4px;
+                color:var(--text,#1a202c); background:var(--surface,#fff);
+                text-decoration:none;">
+        ⤓ Download
+      </a>
+    </div>
+  </div>
+
+  {# ── Viewer body ────────────────────────────────────────────────────────── #}
+  <div id="edr-viewer-body-{{ doc.id }}"
+       style="flex:1; min-height:0; background:#F4F5F7; position:relative;
+              display:flex; flex-direction:column;">
+
+    {% if viewer_mode == 'audio' %}
+    {# ── Audio player + transcript ──────────────────────────────────────── #}
+    <div style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
+      <div style="flex-shrink:0; padding:24px 24px 16px;
+                  background:var(--surface,#fff);
+                  border-bottom:1px solid var(--border-color,#f1f5f9);">
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+          <div style="width:40px; height:40px; border-radius:50%;
+                      background:var(--primary,#1B2A4A); display:flex;
+                      align-items:center; justify-content:center;
+                      font-size:18px; flex-shrink:0;">🎵</div>
+          <div>
+            <div style="font-size:13px; font-weight:600; color:var(--text);">
+              {{ display_name }}
+            </div>
+            <div style="font-size:11px; color:var(--muted);">
+              {{ doc.custodian or '' }}{% if doc.doc_date %} · {{ doc.doc_date }}{% endif %}
+            </div>
+          </div>
+        </div>
+        <audio controls
+               src="{{ native_url }}"
+               style="width:100%; border-radius:6px;"
+               preload="metadata">
+          Your browser does not support audio playback.
+          <a href="{{ native_url }}?download=1">Download audio</a>
+        </audio>
+      </div>
+      {# Transcript #}
+      <div style="flex:1; overflow-y:auto; padding:14px 18px;
+                  font-family:'SF Mono', ui-monospace, Menlo, monospace;
+                  font-size:11px; line-height:1.7; white-space:pre-wrap;
+                  color:var(--text); background:#fff;">
+        <div style="font-size:10px; font-weight:700; color:var(--muted);
+                    text-transform:uppercase; letter-spacing:0.06em; margin-bottom:8px;">
+          Transcript
+        </div>
+        <div id="edr-transcript-{{ doc.id }}"
+             hx-get="{{ text_url }}"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+          <span style="color:var(--muted);">Loading transcript…</span>
+        </div>
+      </div>
+    </div>
+
+    {% elif viewer_mode == 'pdf' or viewer_mode == 'convert' %}
+      <iframe src="{{ file_url }}"
+              style="width:100%; height:100%; border:0; background:#fff;"
+              title="{{ display_name|e }}"></iframe>
+
+    {% elif viewer_mode == 'image' %}
+      <div style="width:100%; height:100%; overflow:auto;
+                  display:flex; align-items:center; justify-content:center;
+                  padding:12px; box-sizing:border-box;">
+        <img src="{{ file_url }}"
+             alt="{{ display_name|e }}"
+             style="max-width:100%; max-height:100%; object-fit:contain;
+                    box-shadow:0 1px 3px rgba(0,0,0,0.08); background:#fff;">
+      </div>
+
+    {% elif viewer_mode == 'text' %}
+      <div id="edr-text-viewer"
+           hx-get="{{ text_url }}"
+           hx-trigger="load"
+           hx-swap="innerHTML"
+           style="width:100%; height:100%; overflow:auto;
+                  padding:14px 18px; box-sizing:border-box;
+                  font-family:'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+                  font-size:12px; line-height:1.5; white-space:pre-wrap;
+                  background:#fff; color:var(--text,#1a202c);">
+        <div style="color:var(--muted,#64748b); font-family:inherit;">Loading text…</div>
+      </div>
+
+    {% else %}
+      <div style="display:flex; flex-direction:column; align-items:center;
+                  justify-content:center; height:100%; color:var(--muted,#64748b);
+                  gap:10px; padding:20px; text-align:center;">
+        <svg width="36" height="36" fill="none" stroke="currentColor" viewBox="0 0 24 24"
+             style="color:#D1D5DB;">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        <div style="font-size:13px; color:var(--text,#1a202c); font-weight:500;">
+          Preview not available
+        </div>
+        <div style="font-size:11px; max-width:320px;">
+          This file type cannot be previewed in the browser.
+        </div>
+        <div style="display:flex; gap:8px; margin-top:6px;">
+          <a href="{{ file_url }}?download=1"
+             style="padding:6px 12px; font-size:11px; border-radius:4px;
+                    background:var(--primary,#1B2A4A); color:#fff;
+                    text-decoration:none; font-weight:500;">
+            Download original
+          </a>
+          <a href="{{ text_url }}" target="_blank"
+             style="padding:6px 12px; font-size:11px; border-radius:4px;
+                    border:1px solid var(--border-color,#e2e8f0);
+                    background:var(--surface,#fff); color:var(--text);
+                    text-decoration:none; font-weight:500;">
+            View extracted text
+          </a>
+        </div>
+      </div>
+    {% endif %}
+
+  </div>{# end viewer body #}
+</div>
+
+<script>
+(function() {
+  var DOC_ID      = '{{ doc.id }}';
+  var FILE_URL    = '{{ file_url }}';
+  var TEXT_URL    = '{{ text_url }}';
+  var NATIVE_URL  = '{{ native_url or "" }}';
+
+  window.edrSwitchVersion = function(docId, version) {
+    if (docId !== DOC_ID) return;
+    var body    = document.getElementById('edr-viewer-body-' + docId);
+    var dlBtn   = document.getElementById('edr-download-btn-' + docId);
+    if (!body) return;
+
+    if (version === 'native' && NATIVE_URL) {
+      // Audio player
+      var ext = NATIVE_URL.split('.').pop().toLowerCase();
+      var audioExts = ['mp3','m4a','m4r','wav','ogg','aac','flac'];
+      if (audioExts.indexOf(ext) >= 0) {
+        body.innerHTML =
+          '<div style="display:flex;flex-direction:column;height:100%;overflow:hidden;">' +
+            '<div style="flex-shrink:0;padding:24px 24px 16px;background:var(--surface,#fff);border-bottom:1px solid var(--border-color,#f1f5f9);">' +
+              '<audio controls src="' + NATIVE_URL + '" style="width:100%;border-radius:6px;" preload="metadata">' +
+                'Your browser does not support audio. <a href="' + NATIVE_URL + '?download=1">Download</a>' +
+              '</audio>' +
+            '</div>' +
+            '<div style="flex:1;overflow-y:auto;padding:14px 18px;font-family:monospace;font-size:11px;line-height:1.7;white-space:pre-wrap;background:#fff;">' +
+              '<div style="font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px;">Transcript</div>' +
+              '<div hx-get="' + TEXT_URL + '" hx-trigger="load" hx-swap="innerHTML"><span style="color:var(--muted);">Loading…</span></div>' +
+            '</div>' +
+          '</div>';
+        htmx.process(body);
+        if (dlBtn) dlBtn.href = NATIVE_URL + '?download=1';
+      } else {
+        body.innerHTML = '<iframe src="' + NATIVE_URL + '" style="width:100%;height:100%;border:0;"></iframe>';
+        if (dlBtn) dlBtn.href = NATIVE_URL + '?download=1';
+      }
+    } else if (version === 'image') {
+      body.innerHTML = '<iframe src="' + FILE_URL + '" style="width:100%;height:100%;border:0;background:#fff;"></iframe>';
+      if (dlBtn) dlBtn.href = FILE_URL + '?download=1';
+    } else if (version === 'text') {
+      body.innerHTML =
+        '<div hx-get="' + TEXT_URL + '" hx-trigger="load" hx-swap="innerHTML"' +
+        ' style="width:100%;height:100%;overflow:auto;padding:14px 18px;box-sizing:border-box;' +
+        'font-family:monospace;font-size:12px;line-height:1.5;white-space:pre-wrap;background:#fff;">' +
+        '<span style="color:var(--muted);">Loading text…</span></div>';
+      htmx.process(body);
+      if (dlBtn) dlBtn.href = TEXT_URL;
+    } else if (version && version.startsWith('production_')) {
+      // Production output — served when production workflow is built
+      body.innerHTML =
+        '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--muted);font-size:12px;">' +
+        '📦 Production output viewer coming in a future build.</div>';
+    }
+  };
+})();
+</script>
+{% endif %}

@@ -1,0 +1,106 @@
+{#
+  widgets/matter_ai_chat.html
+  Context-aware AI chat bar.
+  Scope determines system prompt injection:
+    matter_id → matter context
+    attorney_id → attorney context
+    (none) → firm context
+
+  On billing tab: config.context = 'billing'
+  On matter overview: config.context = 'matter' (default)
+
+  Context:
+    matter_id    str|None
+    attorney_id  int|None
+    scope        dict
+    config       dict  — may contain: context (matter|billing|attorney|firm)
+#}
+
+{% set ctx = config.get('context', 'matter') %}
+{% set placeholder = {
+  'matter':   'Ask anything about this matter — documents, deadlines, billing, strategy…',
+  'billing':  'Ask about invoices, WIP, collections, time entries…',
+  'attorney': 'Ask about your matters, deadlines, billing, or get a status update…',
+  'firm':     'Ask about any matter, client, or firm-wide metrics…',
+}.get(ctx, 'Ask anything…') %}
+
+<div style="padding: 14px 16px; height: 100%;
+            display: flex; flex-direction: column; justify-content: center;">
+
+  <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+    <span style="font-size: 18px;">⚖</span>
+    <span style="font-size: 12px; font-weight: 600; color: var(--text);">
+      Ask Praesidium
+    </span>
+    <span style="font-size: 10px; color: var(--muted);">
+      {% if ctx == 'matter' %}Matter context
+      {% elif ctx == 'billing' %}Billing context
+      {% elif ctx == 'attorney' %}Your matters
+      {% else %}Firm-wide{% endif %}
+    </span>
+  </div>
+
+  <div style="display: flex; gap: 8px; align-items: flex-end;">
+    <textarea id="matter-ai-input-{{ matter_id or 'firm' }}"
+              placeholder="{{ placeholder }}"
+              rows="2"
+              style="flex: 1; padding: 10px 12px; font-size: 13px;
+                     border: 1px solid var(--border-color, #e2e8f0);
+                     border-radius: 8px; resize: none;
+                     background: var(--surface, #fff); color: var(--text);
+                     font-family: inherit; line-height: 1.4;
+                     box-sizing: border-box;"
+              onkeydown="if(event.key==='Enter' && !event.shiftKey){ event.preventDefault(); submitMatterAI('{{ matter_id or '' }}', '{{ ctx }}'); }">
+    </textarea>
+    <button onclick="submitMatterAI('{{ matter_id or '' }}', '{{ ctx }}')"
+            style="padding: 10px 16px; font-size: 13px; font-weight: 500;
+                   background: var(--primary, #1B2A4A); color: #fff;
+                   border: none; border-radius: 8px; cursor: pointer;
+                   white-space: nowrap; flex-shrink: 0; height: 56px;">
+      Ask →
+    </button>
+  </div>
+
+  {# Response area #}
+  <div id="matter-ai-response-{{ matter_id or 'firm' }}"
+       style="display: none; margin-top: 10px; padding: 12px 14px;
+              background: #f8fafc; border: 1px solid var(--border-color, #e2e8f0);
+              border-radius: 8px; font-size: 13px; line-height: 1.6;
+              color: var(--text); max-height: 200px; overflow-y: auto;">
+  </div>
+
+</div>
+
+<script>
+function submitMatterAI(matterId, context) {
+  const inputId    = 'matter-ai-input-' + (matterId || 'firm');
+  const responseId = 'matter-ai-response-' + (matterId || 'firm');
+  const input      = document.getElementById(inputId);
+  const responseEl = document.getElementById(responseId);
+  const query      = input ? input.value.trim() : '';
+
+  if (!query) return;
+
+  responseEl.style.display = 'block';
+  responseEl.innerHTML = '<span style="color:var(--muted);font-size:12px;">Thinking…</span>';
+
+  fetch('/dashboard/ai/chat', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      query:      query,
+      matter_id:  matterId || null,
+      context:    context,
+    })
+  })
+  .then(r => r.json())
+  .then(data => {
+    responseEl.innerHTML = data.response
+      ? data.response.replace(/\n/g, '<br>')
+      : '<span style="color:var(--muted);">No response.</span>';
+  })
+  .catch(() => {
+    responseEl.innerHTML = '<span style="color:#dc2626;font-size:12px;">Request failed — please retry.</span>';
+  });
+}
+</script>

@@ -1,0 +1,408 @@
+{% extends "base.html" %}
+{% block title %}Review — {{ session.date_from }} to {{ session.date_to }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Timesheet Review{% endblock %}
+{% block content %}
+
+{# ── Header ──────────────────────────────────────────────────────────────────── #}
+<div style="margin-bottom:12px; display:flex; justify-content:space-between; align-items:flex-start;">
+  <div>
+    <h2 style="font-family:'Lora',serif; font-size:20px; font-weight:600; color:var(--text); margin:0 0 4px 0;">
+      {{ session.date_from }} — {{ session.date_to }}
+    </h2>
+    <div style="display:flex; gap:8px; align-items:center;">
+      {% if session.status == 'running' %}
+        <span style="padding:2px 8px; background:#DBEAFE; color:#1E40AF;
+                     border-radius:10px; font-size:11px; font-weight:500;"
+              hx-get="/admin/timesheet/{{ session.id }}/status?tenant_id={{ tenant_id }}"
+              hx-trigger="every 3s" hx-swap="outerHTML">Running…</span>
+      {% elif session.status == 'complete' %}
+        <span style="padding:2px 8px; background:#DCFCE7; color:#166534;
+                     border-radius:10px; font-size:11px; font-weight:500;">Complete</span>
+      {% elif session.status == 'failed' %}
+        <span style="padding:2px 8px; background:#FEE2E2; color:#991B1B;
+                     border-radius:10px; font-size:11px; font-weight:500;"
+              title="{{ session.error_message or '' }}">Failed</span>
+      {% endif %}
+      <span style="font-size:11px; color:var(--muted);">
+        {{ session.draft_count }} drafts · {{ session.approved_count }} approved · {{ session.pushed_count }} pushed
+      </span>
+    </div>
+  </div>
+  <a href="/admin/timesheet?tenant_id={{ tenant_id }}"
+     style="font-size:12px; color:var(--primary); text-decoration:none;">← Sessions</a>
+</div>
+
+{# ── Filters + Bulk Actions ──────────────────────────────────────────────────── #}
+<div class="card" style="padding:10px 16px; margin-bottom:12px;
+                         display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+  <div style="display:flex; gap:4px;">
+    {% set filters = [('pending','Pending'),('approved','Approved'),('rejected','Rejected'),('all','All')] %}
+    {% for slug, label in filters %}
+    <a href="/admin/timesheet/{{ session.id }}?tenant_id={{ tenant_id }}&filter={{ slug }}"
+       style="padding:4px 12px; font-size:11px; font-weight:500; border-radius:4px;
+              text-decoration:none;
+              {% if filter == slug %}
+              background:var(--primary); color:#fff;
+              {% else %}
+              background:#F1F5F9; color:var(--text);
+              {% endif %}
+              ">{{ label }}
+      {% if slug == 'pending' and pending_count is defined %}({{ pending_count }}){% endif %}
+    </a>
+    {% endfor %}
+  </div>
+
+  <div style="display:flex; gap:6px; align-items:center;">
+    <span id="sel-count" style="font-size:11px; color:var(--muted);">0 selected</span>
+
+    <button onclick="bulkAction('approve')"
+            style="padding:4px 12px; font-size:11px; font-weight:500;
+                   background:#DCFCE7; color:#166534; border:1px solid #86EFAC;
+                   border-radius:4px; cursor:pointer;">
+      ✓ Approve Selected
+    </button>
+
+    <button onclick="bulkAction('reject')"
+            style="padding:4px 12px; font-size:11px; font-weight:500;
+                   background:#FEE2E2; color:#991B1B; border:1px solid #FECACA;
+                   border-radius:4px; cursor:pointer;">
+      ✕ Reject Selected
+    </button>
+
+    {% if filter == 'pending' %}
+    <button onclick="selectAll()"
+            style="padding:4px 12px; font-size:11px; font-weight:500;
+                   background:#F1F5F9; color:var(--text); border:1px solid #D1D5DB;
+                   border-radius:4px; cursor:pointer;">
+      Select All
+    </button>
+    {% endif %}
+
+    {# Push approved to time_entries #}
+    {% if session.approved_count and session.approved_count > session.pushed_count %}
+    <form action="/admin/timesheet/{{ session.id }}/push" method="post" style="display:inline;">
+      <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+      <button type="submit"
+              style="padding:4px 14px; font-size:11px; font-weight:600;
+                     background:var(--primary); color:#fff; border:none;
+                     border-radius:4px; cursor:pointer;"
+              onclick="return confirm('Push {{ session.approved_count - session.pushed_count }} approved entries to billing?');">
+        Push to Billing →
+      </button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{# ── AI Escalation (opt-in) ──────────────────────────────────────────────────── #}
+{% set unmatched = drafts | selectattr('ai_confidence', 'equalto', 0) | list %}
+{% if unmatched | length > 0 and filter == 'pending' %}
+<div class="card" style="padding:10px 16px; margin-bottom:12px;
+                         display:flex; justify-content:space-between; align-items:center;
+                         background:#FFFBEB; border-color:#FDE68A;">
+  <div>
+    <span style="font-size:12px; font-weight:500; color:#92400E;">
+      {{ unmatched | length }} unmatched entries
+    </span>
+    <span style="font-size:11px; color:#B45309;"> — rule ladder found no matter match</span>
+  </div>
+  <button onclick="runAiEscalation()" id="ai-btn"
+          style="padding:5px 14px; font-size:11px; font-weight:500;
+                 background:#F59E0B; color:#fff; border:none;
+                 border-radius:4px; cursor:pointer;">
+    Run AI on Unmatched
+  </button>
+</div>
+{% endif %}
+
+{# ── Draft Table ─────────────────────────────────────────────────────────────── #}
+{% if drafts %}
+<div class="card" style="padding:0; overflow-x:auto;">
+  <table class="data-table" style="margin:0; min-width:900px;">
+    <thead>
+      <tr>
+        <th style="width:30px;"><input type="checkbox" id="check-all" onchange="toggleAll(this);"></th>
+        <th>Date</th>
+        <th>Matter</th>
+        <th style="text-align:right;">Hours</th>
+        <th>Description</th>
+        <th>Source</th>
+        <th style="text-align:center;">Conf.</th>
+        <th>Match</th>
+        <th style="width:140px;">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for d in drafts %}
+      <tr id="row-{{ d.id }}" class="draft-row"
+          style="{% if d.status == 'approved' %}background:#F0FDF4;
+                 {% elif d.status == 'rejected' %}background:#FEF2F2; opacity:0.6;
+                 {% elif d.ai_confidence == 0 %}background:#FFFBEB;{% endif %}">
+        <td><input type="checkbox" class="draft-cb" value="{{ d.id }}" onchange="updateCount();"></td>
+        <td style="font-size:12px; white-space:nowrap;">{{ d.entry_date }}</td>
+        <td style="font-size:12px; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+            title="{{ d.matter_name or 'Unmatched' }}">
+          {% if d.matter_name %}
+            {{ d.matter_name }}
+          {% else %}
+            <span style="color:#B45309; font-style:italic;">Unmatched</span>
+          {% endif %}
+        </td>
+        <td style="font-size:12px; text-align:right; font-weight:500;">{{ "%.2f"|format(d.hours) }}</td>
+        <td style="font-size:11px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+            title="{{ d.description }}">
+          {{ d.description }}
+        </td>
+        <td>
+          {% set src_colors = {
+            'manictime': ('#E0E7FF','#3730A3'),
+            'phone_csv': ('#FEF3C7','#92400E'),
+            'ai_api_calls': ('#F3E8FF','#6B21A8'),
+            'timeslips': ('#E0F2FE','#0C4A6E'),
+            'manual': ('#F1F5F9','#475569'),
+            'excel': ('#DCFCE7','#166534'),
+          } %}
+          {% set sc = src_colors.get(d.source, ('#F1F5F9','#475569')) %}
+          <span style="padding:2px 6px; background:{{ sc[0] }}; color:{{ sc[1] }};
+                       border-radius:8px; font-size:10px; font-weight:500;">
+            {{ d.source }}
+          </span>
+        </td>
+        <td style="text-align:center;">
+          {% if d.ai_confidence >= 0.8 %}
+            <span style="color:#166534; font-size:11px; font-weight:600;">{{ "%.0f"|format(d.ai_confidence * 100) }}%</span>
+          {% elif d.ai_confidence >= 0.5 %}
+            <span style="color:#B45309; font-size:11px;">{{ "%.0f"|format(d.ai_confidence * 100) }}%</span>
+          {% elif d.ai_confidence > 0 %}
+            <span style="color:#DC2626; font-size:11px;">{{ "%.0f"|format(d.ai_confidence * 100) }}%</span>
+          {% else %}
+            <span style="color:#9CA3AF; font-size:11px;">—</span>
+          {% endif %}
+        </td>
+        <td style="font-size:10px; color:var(--muted); max-width:120px; overflow:hidden;
+                   text-overflow:ellipsis; white-space:nowrap;">
+          {% set detail = d.source_detail %}
+          {% if detail and detail is mapping and detail.match_reasons %}
+            {{ detail.match_reasons[0] if detail.match_reasons else '' }}
+          {% elif detail is string %}
+            {% set parsed = detail | tojson | default('{}') %}
+          {% endif %}
+        </td>
+        <td>
+          {% if d.status == 'pending' %}
+            <div style="display:flex; gap:4px;">
+              <form action="/admin/timesheet/{{ session.id }}/approve/{{ d.id }}" method="post" style="display:inline;">
+                <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+                <button type="submit"
+                        style="padding:2px 8px; font-size:11px; background:#DCFCE7; color:#166534;
+                               border:1px solid #86EFAC; border-radius:3px; cursor:pointer;">✓</button>
+              </form>
+              <form action="/admin/timesheet/{{ session.id }}/reject/{{ d.id }}" method="post" style="display:inline;">
+                <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+                <button type="submit"
+                        style="padding:2px 8px; font-size:11px; background:#FEE2E2; color:#991B1B;
+                               border:1px solid #FECACA; border-radius:3px; cursor:pointer;">✕</button>
+              </form>
+              <button onclick="openEdit('{{ d.id }}')"
+                      style="padding:2px 8px; font-size:11px; background:#F1F5F9; color:var(--text);
+                             border:1px solid #D1D5DB; border-radius:3px; cursor:pointer;">✎</button>
+            </div>
+          {% elif d.status == 'approved' %}
+            <span style="font-size:11px; color:#166534; font-weight:500;">✓ Approved</span>
+          {% elif d.status == 'rejected' %}
+            <span style="font-size:11px; color:#991B1B;">✕ Rejected</span>
+          {% elif d.status == 'pushed' %}
+            <span style="font-size:11px; color:var(--primary); font-weight:500;">→ Pushed</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div style="padding:40px; text-align:center; font-size:12px; color:var(--muted);">
+  {% if session.status == 'running' %}
+    Reconciliation in progress… this page will refresh automatically.
+  {% else %}
+    No drafts found for this filter.
+  {% endif %}
+</div>
+{% endif %}
+
+{# ── Edit Modal ──────────────────────────────────────────────────────────────── #}
+<div id="edit-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0;
+                            background:rgba(0,0,0,0.4); z-index:100; justify-content:center; align-items:center;">
+  <div style="background:#fff; border-radius:8px; padding:24px; width:480px; max-width:90vw; box-shadow:0 8px 30px rgba(0,0,0,0.2);">
+    <div style="font-size:14px; font-weight:600; margin-bottom:14px;">Edit Entry</div>
+    <form action="" method="post" id="edit-form">
+      <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+
+      <div style="margin-bottom:10px;">
+        <div style="font-size:11px; font-weight:500; color:var(--muted); margin-bottom:3px;">MATTER</div>
+        <select name="matter_id" id="edit-matter"
+                style="width:100%; border:1px solid #D1D5DB; border-radius:5px; padding:6px 10px;
+                       font-size:12px; background:#fff;">
+          <option value="">— Unmatched —</option>
+          {% for mid, mname in matters.items() %}
+          <option value="{{ mid }}">{{ mname }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div style="margin-bottom:10px;">
+        <div style="font-size:11px; font-weight:500; color:var(--muted); margin-bottom:3px;">HOURS</div>
+        <input type="number" name="hours" id="edit-hours" step="0.25" min="0.25" max="24"
+               style="width:100%; border:1px solid #D1D5DB; border-radius:5px; padding:6px 10px;
+                      font-size:12px;">
+      </div>
+
+      <div style="margin-bottom:14px;">
+        <div style="font-size:11px; font-weight:500; color:var(--muted); margin-bottom:3px;">DESCRIPTION</div>
+        <textarea name="description" id="edit-desc" rows="3"
+                  style="width:100%; border:1px solid #D1D5DB; border-radius:5px; padding:6px 10px;
+                         font-size:12px; font-family:inherit; resize:vertical;"></textarea>
+      </div>
+
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button type="button" onclick="closeEdit()"
+                style="padding:6px 14px; font-size:12px; background:#F1F5F9;
+                       border:1px solid #D1D5DB; border-radius:5px; cursor:pointer;">Cancel</button>
+        <button type="submit"
+                style="padding:6px 14px; font-size:12px; background:var(--primary);
+                       color:#fff; border:none; border-radius:5px; cursor:pointer;">Save & Approve</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ── Summary Strip ───────────────────────────────────────────────────────────── #}
+{% if drafts %}
+{% set total_hours = drafts | map(attribute='hours') | map('float') | sum %}
+{% set matched_drafts = drafts | selectattr('matter_id') | list %}
+{% set unmatched_drafts = drafts | rejectattr('matter_id') | list %}
+<div style="margin-top:12px; padding:10px 16px; background:#F8FAFC; border:1px solid var(--border);
+            border-radius:6px; display:flex; gap:20px; font-size:12px;">
+  <span><strong>{{ drafts | length }}</strong> entries</span>
+  <span><strong>{{ "%.2f"|format(total_hours) }}</strong> total hours</span>
+  <span style="color:#166534;"><strong>{{ matched_drafts | length }}</strong> matched</span>
+  <span style="color:#B45309;"><strong>{{ unmatched_drafts | length }}</strong> unmatched</span>
+</div>
+{% endif %}
+
+<style>
+  .data-table { width:100%; border-collapse:collapse; }
+  .data-table th {
+    padding:6px 10px; font-size:11px; font-weight:600;
+    color:var(--muted); text-align:left; border-bottom:1px solid var(--border);
+    background:#FAFBFC; position:sticky; top:0;
+  }
+  .data-table td { padding:6px 10px; border-bottom:1px solid var(--border); }
+  .data-table tr:hover { background:#F8FAFF; }
+</style>
+
+<script>
+// Draft data for edit modal
+var DRAFTS = {
+  {% for d in drafts %}
+  "{{ d.id }}": {
+    matter_id: "{{ d.matter_id or '' }}",
+    hours: {{ d.hours }},
+    description: {{ d.description | tojson }},
+    matter_name: {{ (d.matter_name or '') | tojson }}
+  },
+  {% endfor %}
+};
+
+function updateCount() {
+  var checked = document.querySelectorAll('.draft-cb:checked').length;
+  document.getElementById('sel-count').textContent = checked + ' selected';
+}
+
+function toggleAll(master) {
+  document.querySelectorAll('.draft-cb').forEach(function(cb) {
+    cb.checked = master.checked;
+  });
+  updateCount();
+}
+
+function selectAll() {
+  document.querySelectorAll('.draft-cb').forEach(function(cb) { cb.checked = true; });
+  document.getElementById('check-all').checked = true;
+  updateCount();
+}
+
+function bulkAction(action) {
+  var ids = [];
+  document.querySelectorAll('.draft-cb:checked').forEach(function(cb) { ids.push(cb.value); });
+  if (!ids.length) { alert('Select at least one entry.'); return; }
+  if (action === 'reject' && !confirm('Reject ' + ids.length + ' entries?')) return;
+
+  // Submit sequentially via fetch for each ID
+  var endpoint = action === 'approve' ? 'approve' : 'reject';
+  var promises = ids.map(function(id) {
+    var form = new FormData();
+    form.append('tenant_id', '{{ tenant_id }}');
+    return fetch('/admin/timesheet/{{ session.id }}/' + endpoint + '/' + id, {
+      method: 'POST', body: form
+    });
+  });
+  Promise.all(promises).then(function() { location.reload(); });
+}
+
+function openEdit(draftId) {
+  var d = DRAFTS[draftId];
+  if (!d) return;
+  document.getElementById('edit-form').action =
+    '/admin/timesheet/{{ session.id }}/edit/' + draftId;
+  document.getElementById('edit-matter').value = d.matter_id;
+  document.getElementById('edit-hours').value = d.hours;
+  document.getElementById('edit-desc').value = d.description;
+  document.getElementById('edit-modal').style.display = 'flex';
+}
+
+function closeEdit() {
+  document.getElementById('edit-modal').style.display = 'none';
+}
+
+// Close modal on Escape
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeEdit();
+});
+
+// Close modal on backdrop click
+document.getElementById('edit-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeEdit();
+});
+
+// AI escalation (opt-in)
+function runAiEscalation() {
+  var btn = document.getElementById('ai-btn');
+  if (!confirm('Run AI matching on unmatched entries? This will use Claude tokens.')) return;
+  btn.disabled = true;
+  btn.textContent = 'Running AI…';
+
+  fetch('/admin/timesheet/{{ session.id }}/ai-escalate', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({tenant_id: '{{ tenant_id }}'})
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    alert('AI matched ' + (data.matched || 0) + ' entries.');
+    location.reload();
+  })
+  .catch(function(err) {
+    alert('AI escalation failed: ' + err);
+    btn.disabled = false;
+    btn.textContent = 'Run AI on Unmatched';
+  });
+}
+
+// Auto-refresh if session is running
+{% if session.status == 'running' %}
+setTimeout(function() { location.reload(); }, 5000);
+{% endif %}
+</script>
+
+{% endblock %}

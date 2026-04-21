@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block title %}New Collection — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block page_title %}New eDiscovery Collection{% endblock %}
+
+{% block content %}
+<div style="max-width:720px;">
+
+  <!-- Breadcrumb -->
+  <div style="font-size:12px; color:var(--muted); margin-bottom:20px;">
+    <a href="/ediscovery/collections" style="color:var(--muted); text-decoration:none;">Collections</a>
+    <span style="margin:0 6px;">›</span>
+    <span style="color:var(--text);">New Collection</span>
+  </div>
+
+  <form id="collection-form"
+        hx-post="/api/v1/ediscovery/collections"
+        hx-target="#form-result"
+        hx-swap="innerHTML"
+        hx-indicator="#submit-spinner">
+
+    <!-- Matter Selection -->
+    <div class="card" style="margin-bottom:16px;">
+      <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:14px;">Matter</div>
+      <select id="matter_id" name="matter_id" required
+              style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:'DM Sans',sans-serif; background:var(--surface); color:var(--text); outline:none;"
+              hx-get="/api/v1/ediscovery/dms-folders/"
+              hx-trigger="change"
+              hx-target="#dms-folder-browser"
+              hx-swap="innerHTML"
+              hx-include="[name='matter_id']">
+        <option value="">Select a matter…</option>
+        {% for matter in matters %}
+        <option value="{{ matter.id }}">{{ matter.matter_number }} — {{ matter.matter_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!-- Collection Name -->
+    <div class="card" style="margin-bottom:16px;">
+      <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:14px;">Collection Name</div>
+      <input type="text" id="collection_name" name="collection_name" required
+             placeholder="e.g., Client Production 001, Opposing Production — Smith"
+             style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:'DM Sans',sans-serif; color:var(--text); outline:none; box-sizing:border-box;">
+    </div>
+
+    <!-- Source Type -->
+    <div class="card" style="margin-bottom:16px; display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+      <div>
+        <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:10px;">Source Type</div>
+        <select id="source_type" name="source_type" required
+                style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:'DM Sans',sans-serif; background:var(--surface); color:var(--text); outline:none;"
+                onchange="toggleSourceFields()">
+          <option value="client_collection_dms">Client Documents (from DMS)</option>
+          <option value="client_collection_dedicated">Client Documents (bulk upload — PST, archives)</option>
+          <option value="opposing_production">Opposing Counsel Production</option>
+          <option value="third_party_subpoena">Third Party Subpoena Response</option>
+          <option value="internal_collection">Internal Collection</option>
+        </select>
+      </div>
+      <div>
+        <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:10px;">Source Party</div>
+        <input type="text" id="source_party" name="source_party"
+               placeholder="e.g., Acme Corp, Smith & Jones LLP"
+               style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:'DM Sans',sans-serif; color:var(--text); outline:none; box-sizing:border-box;">
+      </div>
+    </div>
+
+    <!-- Received Date / Method -->
+    <div class="card" style="margin-bottom:16px; display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+      <div>
+        <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:10px;">Date Received</div>
+        <input type="date" id="received_date" name="received_date"
+               style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:'DM Sans',sans-serif; color:var(--text); outline:none; box-sizing:border-box;">
+      </div>
+      <div>
+        <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:10px;">Delivery Method</div>
+        <input type="text" id="received_method" name="received_method"
+               placeholder="USB drive, Relativity transfer, Box link"
+               style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:'DM Sans',sans-serif; color:var(--text); outline:none; box-sizing:border-box;">
+      </div>
+    </div>
+
+    <!-- Bates range (opposing/third-party only) -->
+    <div id="bates-range-section" style="display:none; margin-bottom:16px;">
+      <div class="card">
+        <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:10px;">Stated Bates Range (as represented by producing party)</div>
+        <input type="text" id="stated_bates_range" name="stated_bates_range"
+               placeholder="SJ000001 — SJ045832"
+               style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:'DM Sans',sans-serif; color:var(--text); outline:none; box-sizing:border-box;">
+      </div>
+    </div>
+
+    <!-- DMS Import (client_collection_dms and internal) -->
+    <div id="dms-import-section" style="margin-bottom:16px;">
+      <div class="card" style="background:#EFF6FF; border-color:#BFDBFE;">
+        <div style="display:flex; align-items:flex-start; gap:10px;">
+          <input id="import_from_dms" name="import_from_dms" type="checkbox" checked
+                 style="margin-top:2px; width:14px; height:14px; flex-shrink:0; cursor:pointer;"
+                 onchange="toggleDmsFolderBrowser()">
+          <div>
+            <label for="import_from_dms" style="font-size:13px; font-weight:500; color:var(--text); cursor:pointer;">Import client documents from DMS</label>
+            <p style="font-size:11px; color:var(--muted); margin-top:3px;">Copies files from the matter folder into eDiscovery. Originals are preserved — DMS copies remain working files, eDiscovery copies are immutable for chain of custody.</p>
+          </div>
+        </div>
+        <div id="dms-folder-browser" style="margin-top:14px;">
+          <p style="font-size:12px; color:var(--muted); font-style:italic;">Select a matter above to browse its folder structure.</p>
+        </div>
+        <input type="hidden" id="dms_folder_path" name="dms_folder_path" value="">
+      </div>
+    </div>
+
+    <!-- Dedicated path (bulk / opposing) -->
+    <div id="dedicated-path-section" style="display:none; margin-bottom:16px;">
+      <div class="card">
+        <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:10px;">Source Path (eDiscovery storage volume)</div>
+        <input type="text" id="dedicated_source_path" name="dedicated_source_path"
+               placeholder="/mnt/ediscovery/incoming/client_pst_files"
+               style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:'DM Sans',sans-serif; color:var(--text); outline:none; box-sizing:border-box;">
+        <p style="font-size:11px; color:var(--muted); margin-top:6px;">Path where PST files, archives, or bulk document collections have been placed on the dedicated eDiscovery storage volume.</p>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div style="display:flex; align-items:center; justify-content:flex-end; gap:10px; padding-top:4px;">
+      <span id="submit-spinner" class="htmx-indicator spinner"></span>
+      <a href="/ediscovery/collections" class="btn-secondary">Cancel</a>
+      <button type="submit" class="btn-primary">Create Collection &amp; Begin Ingestion</button>
+    </div>
+  </form>
+
+  <div id="form-result" style="margin-top:16px;"></div>
+</div>
+
+<script>
+function toggleSourceFields() {
+  const sourceType = document.getElementById('source_type').value;
+  const dmsSection = document.getElementById('dms-import-section');
+  const dedicatedSection = document.getElementById('dedicated-path-section');
+  const batesSection = document.getElementById('bates-range-section');
+
+  dmsSection.style.display = 'none';
+  dedicatedSection.style.display = 'none';
+  batesSection.style.display = 'none';
+
+  if (sourceType === 'client_collection_dms') {
+    dmsSection.style.display = 'block';
+    document.getElementById('import_from_dms').checked = true;
+  } else if (sourceType === 'client_collection_dedicated') {
+    dedicatedSection.style.display = 'block';
+  } else if (sourceType === 'opposing_production' || sourceType === 'third_party_subpoena') {
+    dedicatedSection.style.display = 'block';
+    batesSection.style.display = 'block';
+  } else if (sourceType === 'internal_collection') {
+    dmsSection.style.display = 'block';
+    document.getElementById('import_from_dms').checked = false;
+    dedicatedSection.style.display = 'block';
+  }
+}
+
+function toggleDmsFolderBrowser() {
+  const checkbox = document.getElementById('import_from_dms');
+  document.getElementById('dms-folder-browser').style.display = checkbox.checked ? 'block' : 'none';
+}
+
+function selectDmsFolder(path) {
+  document.getElementById('dms_folder_path').value = path;
+  document.querySelectorAll('.dms-folder-item').forEach(el => {
+    el.style.background = ''; el.style.borderLeftColor = 'var(--border)';
+  });
+  event.currentTarget.style.background = '#EFF6FF';
+  event.currentTarget.style.borderLeftColor = 'var(--primary)';
+}
+
+document.addEventListener('DOMContentLoaded', toggleSourceFields);
+</script>
+{% endblock %}

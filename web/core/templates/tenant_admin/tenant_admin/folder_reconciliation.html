@@ -1,0 +1,701 @@
+{% extends "base.html" %}
+{% block title %}Folder Reconciliation — {{ branding.platform_name if branding else 'Praesidium' }}{% endblock %}
+
+{% block content %}
+<div style="padding:0;">
+
+  {% include "tenant_admin/_topnav.html" %}
+  {% include "tenant_admin/_dataquality_subnav.html" %}
+
+<style>
+  .fr-workspace {
+    display: flex;
+    height: calc(100vh - 150px);
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid var(--border-color, #e2e8f0);
+    border-radius: 8px;
+    background: var(--surface, #fff);
+  }
+  /* Left: folder tree */
+  .fr-tree-panel {
+    width: 340px;
+    min-width: 200px;
+    max-width: 500px;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid var(--border-color, #e2e8f0);
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  /* Right: matter assignment */
+  .fr-assign-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-width: 0;
+  }
+  .panel-hdr {
+    padding: 8px 12px;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 1px solid var(--border-color, #f1f5f9);
+    background: #f8fafc;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .resize-handle {
+    width: 4px;
+    background: transparent;
+    cursor: col-resize;
+    flex-shrink: 0;
+  }
+  .resize-handle:hover, .resize-handle.dragging { background: var(--primary, #1B2A4A); opacity: 0.2; }
+
+  /* Tree nodes */
+  .tree-node {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-size: 12px;
+    user-select: none;
+    margin: 1px 4px;
+  }
+  .tree-node:hover { background: #f1f5f9; }
+  .tree-node.selected { background: #dbeafe; color: #1d4ed8; }
+  .tree-node.mapped { color: #166534; border-left: 2px solid #22c55e; padding-left: 6px !important; }
+  .tree-node.unmapped { border-left: 3px solid #fca5a5; background: #fff8f8; }
+  .tree-node.mapped { border-left: 3px solid #22c55e; background: #f0fdf4; }
+  .tree-node.mapped .node-icon::after { content: ' ✓'; font-size: 9px; color: #22c55e; }
+  .tree-arrow { font-size: 9px; color: var(--muted); transition: transform 0.12s; flex-shrink: 0; width: 10px; display: inline-block; }
+  .tree-arrow.open { transform: rotate(90deg); }
+  .tree-children { display: none; }
+  .tree-children.open { display: block; }
+
+  /* Matter search results */
+  /* Subfolder reconciliation rows */
+  .sfr-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-bottom: 1px solid #f8fafc;
+    font-size: 12px;
+    min-height: 44px;
+  }
+  .sfr-row.sfr-unmapped { background: #fff8f8; border-left: 3px solid #fca5a5; }
+  .sfr-row.sfr-mapped   { background: #f0fdf4; border-left: 3px solid #86efac; }
+  .sfr-row.sfr-committed { background: #dcfce7; border-left: 3px solid #22c55e; }
+  .sfr-typeahead { position: relative; flex: 1; min-width: 0; }
+  .sfr-input {
+    width: 100%; padding: 3px 7px; font-size: 11px;
+    border: 1px solid var(--border-color, #e2e8f0); border-radius: 4px;
+    box-sizing: border-box; background: var(--surface,#fff); color: var(--text);
+  }
+  .sfr-drop {
+    display: none; position: absolute; left: 0; top: 100%; z-index: 400;
+    background: var(--surface,#fff); border: 1px solid var(--border-color,#e2e8f0);
+    border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    min-width: 260px; max-height: 180px; overflow-y: auto; font-size: 11px;
+  }
+  .sfr-drop-item { padding: 5px 10px; cursor: pointer; }
+  .sfr-drop-item:hover { background: #f1f5f9; }
+
+  .matter-result {
+    padding: 8px 12px;
+    border-bottom: 1px solid #f8fafc;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .matter-result:hover { background: #f8fafc; }
+  .matter-result.selected { background: #eff6ff; }
+</style>
+
+{# ── Header ─────────────────────────────────────────────────────────────── #}
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+  <div>
+    <h1 style="font-family:'Lora',serif; font-size:20px; font-weight:600; color:var(--text); margin-bottom:2px;">
+      Folder Reconciliation
+    </h1>
+    <p style="font-size:12px; color:var(--muted); margin:0;">
+      Browse the file share, select a folder, assign it to a matter.
+      &nbsp;·&nbsp;<span style="color:#166534;">{{ mapped_count }} folders mapped</span>
+      &nbsp;·&nbsp;<span style="color:#f59e0b;">{{ unmapped_estimate }}+ folders to review</span>
+    </p>
+  </div>
+  <div style="display:flex; gap:8px;">
+    <a href="/tenant-admin/folder-reconciliation?view=list"
+       style="padding:6px 12px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; color:var(--text); text-decoration:none;">
+      List View
+    </a>
+    <span id="save-status" style="font-size:12px; color:var(--muted); line-height:32px;"></span>
+  </div>
+</div>
+
+{# ── Main workspace ──────────────────────────────────────────────────────── #}
+<div class="fr-workspace" id="fr-workspace">
+
+  {# LEFT: CIFS folder tree #}
+  <div class="fr-tree-panel" id="fr-tree-panel">
+
+    {# Share selector + filter #}
+    <div class="panel-hdr">
+      <div style="display:flex; gap:6px;">
+        <button onclick="loadShare('Clients')" id="share-btn-Clients"
+                style="padding:2px 8px; font-size:10px; border-radius:4px; border:1px solid #1B2A4A; background:#1B2A4A; color:#fff; cursor:pointer;">
+          📁 Clients
+        </button>
+        <button onclick="loadShare('Docsend')" id="share-btn-Docsend"
+                style="padding:2px 8px; font-size:10px; border-radius:4px; border:1px solid var(--border-color,#e2e8f0); background:var(--surface,#fff); color:var(--text); cursor:pointer;">
+          📮 Docsend
+        </button>
+      </div>
+      <span id="tree-status" style="font-size:10px; color:var(--muted);">Loading...</span>
+    </div>
+
+    <div style="padding:6px 8px; border-bottom:1px solid #f1f5f9; flex-shrink:0;">
+      <input type="text" id="tree-filter" placeholder="Filter folders..."
+             oninput="filterFolderTree(this.value)"
+             style="width:100%; padding:4px 8px; font-size:11px; border:1px solid var(--border-color,#e2e8f0); border-radius:4px; box-sizing:border-box; background:var(--surface,#fff); color:var(--text);">
+    </div>
+
+    <div id="tree-container" style="flex:1; overflow-y:auto; padding:4px 0;">
+      <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px;">Loading...</div>
+    </div>
+
+  </div>
+
+  {# Resize handle #}
+  <div class="resize-handle" id="rh-fr" onmousedown="startResize(event)"></div>
+
+  {# RIGHT: matter assignment #}
+  <div class="fr-assign-panel" id="fr-assign-panel">
+
+    {# Header with selected folder info #}
+    <div class="panel-hdr" id="assign-panel-hdr">
+      <span id="assign-panel-title">Select a folder to reconcile its contents</span>
+      <button onclick="commitAllChecked()" id="commit-all-btn"
+              style="display:none; padding:2px 10px; font-size:10px; border:1px solid #22c55e; border-radius:4px; cursor:pointer; background:#f0fdf4; color:#166534;">
+        ✓ Commit Checked
+      </button>
+    </div>
+
+    {# Subfolder reconciliation rows #}
+    <div id="subfolder-rows" style="flex:1; overflow-y:auto; min-height:0;">
+      <div style="padding:32px; text-align:center; color:var(--muted); font-size:12px;">
+        <div style="font-size:32px; margin-bottom:8px;">📁</div>
+        Click a folder in the tree to reconcile its subfolders.
+      </div>
+    </div>
+
+    {# Bottom status #}
+    <div style="padding:8px 14px; border-top:2px solid var(--border-color,#e2e8f0); display:flex; align-items:center; gap:10px; flex-shrink:0; background:#f8fafc;">
+      <span id="map-summary" style="font-size:12px; color:var(--muted); flex:1;"></span>
+      <span id="save-status" style="font-size:12px; color:var(--muted);"></span>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+// ── State ─────────────────────────────────────────────────────────────────
+const CIFS_ROOTS = { Clients: 'D:\\Public\\Clients', Docsend: 'D:\\Public\\Docsend' };
+// Track which folders are already mapped: path -> [{matter_name, matter_id}]
+const mappedFolders = {};
+let currentShare    = 'Clients';
+let selectedFolder  = null;  // {path, share}
+let selectedMatter  = null;  // {id, matter_name, client_name, matter_number}
+let matterSearchTimer = null;
+
+// Load mapped folders index on startup
+async function loadMappedIndex() {
+  try {
+    const resp = await fetch('/tenant-admin/folder-reconciliation/mapped-index');
+    const data = await resp.json();
+    (data.mappings || []).forEach(m => {
+      if (!mappedFolders[m.folder_path]) mappedFolders[m.folder_path] = [];
+      mappedFolders[m.folder_path].push(m);
+    });
+  } catch(e) {}
+}
+
+// ── Panel resize ──────────────────────────────────────────────────────────
+let rs = null;
+function startResize(e) {
+  e.preventDefault();
+  document.getElementById('rh-fr').classList.add('dragging');
+  rs = { x0: e.clientX, w0: document.getElementById('fr-tree-panel').offsetWidth };
+  document.addEventListener('mousemove', doResize);
+  document.addEventListener('mouseup', endResize);
+}
+function doResize(e) {
+  if (!rs) return;
+  const w = Math.max(180, Math.min(520, rs.w0 + e.clientX - rs.x0));
+  document.getElementById('fr-tree-panel').style.width = w + 'px';
+}
+function endResize() {
+  rs = null;
+  document.getElementById('rh-fr').classList.remove('dragging');
+  document.removeEventListener('mousemove', doResize);
+  document.removeEventListener('mouseup', endResize);
+}
+
+// ── Share selector ────────────────────────────────────────────────────────
+async function loadShare(share) {
+  currentShare = share;
+  ['Clients','Docsend'].forEach(s => {
+    const btn = document.getElementById('share-btn-' + s);
+    if (s === share) {
+      btn.style.cssText = 'padding:2px 8px;font-size:10px;border-radius:4px;border:1px solid #1B2A4A;background:#1B2A4A;color:#fff;cursor:pointer;';
+    } else {
+      btn.style.cssText = 'padding:2px 8px;font-size:10px;border-radius:4px;border:1px solid var(--border-color,#e2e8f0);background:var(--surface,#fff);color:var(--text);cursor:pointer;';
+    }
+  });
+  document.getElementById('tree-container').innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:12px;">Loading...</div>';
+  document.getElementById('tree-status').textContent = 'Loading...';
+  await loadFolderLevel('', share, document.getElementById('tree-container'), 0);
+  document.getElementById('tree-status').textContent = share;
+}
+
+// ── Folder tree ───────────────────────────────────────────────────────────
+async function loadFolderLevel(prefix, share, container, depth) {
+  try {
+    const resp = await fetch(`/tenant-admin/folder-reconciliation/browse?share=${encodeURIComponent(share)}&prefix=${encodeURIComponent(prefix)}`);
+    const data = await resp.json();
+    container.innerHTML = '';
+    const folders = (data.folders || []);
+    if (!folders.length) {
+      container.innerHTML = '<div style="padding:6px 16px;color:var(--muted);font-size:11px;font-style:italic;">No subfolders</div>';
+      return;
+    }
+    folders.forEach(f => renderTreeNode(container, f, share, depth));
+  } catch(e) {
+    container.innerHTML = '<div style="padding:8px;color:#dc2626;font-size:11px;">Failed to load.</div>';
+  }
+}
+
+function renderTreeNode(container, f, share, depth) {
+  const isMapped = !!mappedFolders[f.path];
+  const wrapper  = document.createElement('div');
+  wrapper.dataset.path = f.path;
+  wrapper.dataset.name = f.name.toLowerCase();
+
+  const node = document.createElement('div');
+  node.className = 'tree-node' + (isMapped ? ' mapped' : ' unmapped');
+  node.style.paddingLeft = (8 + depth * 14) + 'px';
+  node.dataset.path  = f.path;
+  node.dataset.share = share;
+  node.innerHTML = `
+    <span class="tree-arrow" id="ta-${CSS.escape(f.path)}">▶</span>
+    <span class="node-icon" style="font-size:14px;flex-shrink:0;">📁</span>
+    <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(f.name)}</span>
+    ${isMapped ? '<span style="font-size:9px;background:#dcfce7;color:#166534;padding:1px 4px;border-radius:8px;flex-shrink:0;">mapped</span>' : ''}`;
+
+  // Click to select (but not if arrow was clicked)
+  node.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (e.target.classList.contains('tree-arrow')) return;
+    selectFolder(f.path, f.name, share, node);
+  });
+
+  const children = document.createElement('div');
+  children.className = 'tree-children';
+  children.style.paddingLeft = '14px';
+
+  // Arrow click to expand
+  node.querySelector('.tree-arrow').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const arrow = node.querySelector('.tree-arrow');
+    if (!children.dataset.loaded) {
+      children.innerHTML = '<div style="padding:4px 8px;color:var(--muted);font-size:11px;">Loading...</div>';
+      children.classList.add('open');
+      arrow.classList.add('open');
+      await loadFolderLevel(f.path, share, children, depth + 1);
+      children.dataset.loaded = '1';
+      // Re-apply mapped status to children
+      children.querySelectorAll('.tree-node').forEach(n => {
+        if (mappedFolders[n.dataset.path]) n.classList.add('mapped');
+      });
+    } else {
+      children.classList.toggle('open');
+      arrow.classList.toggle('open');
+    }
+  });
+
+  wrapper.appendChild(node);
+  wrapper.appendChild(children);
+  container.appendChild(wrapper);
+}
+
+// ── Select folder ─────────────────────────────────────────────────────────
+// ── Select folder → load subfolder rows ─────────────────────────────────
+async function selectFolder(path, name, share, nodeEl) {
+  document.querySelectorAll('.tree-node.selected').forEach(n => n.classList.remove('selected'));
+  nodeEl.classList.add('selected');
+  selectedFolder = {path, name, share, diskRoot: CIFS_ROOTS[share]};
+  selectedMatter = null;
+
+  // Update panel header
+  document.getElementById('assign-panel-title').textContent = `📁 ${name} — subfolders`;
+  document.getElementById('commit-all-btn').style.display = 'inline-block';
+
+  const rowsEl = document.getElementById('subfolder-rows');
+  rowsEl.innerHTML = '<div style="padding:12px;text-align:center;color:var(--muted);font-size:12px;">Loading subfolders...</div>';
+  document.getElementById('map-summary').textContent = '';
+
+  try {
+    const resp = await fetch(`/tenant-admin/folder-reconciliation/browse?share=${encodeURIComponent(share)}&prefix=${encodeURIComponent(path)}`);
+    const data = await resp.json();
+    const subfolders = (data.folders || []);
+
+    if (!subfolders.length) {
+      // Leaf folder — show single-row assignment for this folder itself
+      renderSingleFolderRow(rowsEl, {path, name, share});
+      return;
+    }
+
+    // Parent folder row
+    const prid = 'sfr-PARENT-' + path.replace(/[^a-zA-Z0-9]/g,'_');
+    const pmapped = !!mappedFolders[path];
+    const pmaps = mappedFolders[path] || [];
+    const prow = document.createElement('div');
+    prow.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 180px 32px;gap:8px;padding:8px 12px;background:#eef2ff;border-bottom:2px solid #c7d2fe;align-items:center;';
+    prow.id = prid; prow.dataset.path = path; prow.dataset.share = share;
+    prow.innerHTML = `
+      <div style="display:flex;align-items:center;gap:5px;">
+        <span>&#128204;</span>
+        <span style="font-size:12px;font-weight:700;color:#3730a3;">${escHtml(name)}<span style="font-size:10px;font-weight:400;color:#818cf8;margin-left:4px;">(entire folder)</span></span>
+      </div>
+      <div style="font-size:11px;color:${pmapped?'#166534':'var(--muted)'};">${pmapped?'&#10003; '+(pmaps[0]&&pmaps[0].matter_name||'Mapped'):'Not mapped'}</div>
+      <div class="sfr-typeahead">
+        <input type="text" class="sfr-input" id="sfri-${prid}" placeholder="Assign entire folder..."
+               value="${pmapped&&pmaps[0]?escHtml(pmaps[0].matter_name):''}"
+               autocomplete="off"
+               oninput="sfrSearch(this,'${prid}')" onfocus="sfrSearch(this,'${prid}')" onblur="sfrHideDrop('${prid}')">
+        <input type="hidden" id="sfrv-${prid}" value="${pmapped&&pmaps[0]?pmaps[0].matter_id:''}">
+        <div class="sfr-drop" id="sfrd-${prid}"></div>
+      </div>
+      <input type="checkbox" class="sfr-check" id="sfrc-${prid}" style="width:15px;height:15px;cursor:pointer;" ${pmapped?'checked':''}>`;
+    rowsEl.appendChild(prow);
+    // Header row
+    const hdr = document.createElement('div');
+    hdr.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 180px 32px;gap:8px;padding:5px 12px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;background:#f8fafc;border-bottom:1px solid #f1f5f9;';
+    hdr.innerHTML = '<span>Folder</span><span>Current Mapping</span><span>Assign to Matter</span><span></span>';
+    rowsEl.appendChild(hdr);
+
+    for (const sf of subfolders) {
+      renderSubfolderRow(rowsEl, sf, share);
+    }
+  } catch(e) {
+    rowsEl.innerHTML = '<div style="padding:12px;color:#dc2626;font-size:12px;">Failed to load.</div>';
+  }
+}
+
+function renderSingleFolderRow(container, {path, name, share}) {
+  container.innerHTML = '';
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'display:grid;grid-template-columns:1fr 1fr 180px 32px;gap:8px;padding:5px 12px;font-size:10px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:0.05em;background:#f8fafc;border-bottom:1px solid #f1f5f9;';
+  hdr.innerHTML = '<span>Folder</span><span>Current Mapping</span><span>Assign to Matter</span><span></span>';
+  container.appendChild(hdr);
+  renderSubfolderRow(container, {path, name}, share);
+}
+
+function renderSubfolderRow(container, sf, share) {
+  const isMapped = !!mappedFolders[sf.path];
+  const existingMaps = mappedFolders[sf.path] || [];
+  const rowId = 'sfr-' + sf.path.replace(/[^a-zA-Z0-9]/g,'_');
+
+  const row = document.createElement('div');
+  row.className = 'sfr-row ' + (isMapped ? 'sfr-mapped' : 'sfr-unmapped');
+  row.id = rowId;
+  row.dataset.path = sf.path;
+  row.dataset.share = share;
+  row.dataset.mapped = isMapped ? 'true' : 'false';
+
+  const currentMap = existingMaps.length
+    ? `<div style="font-size:11px;color:#166534;">${escHtml(existingMaps[0].matter_name)}</div>`
+    : `<div style="font-size:11px;color:var(--muted);font-style:italic;">Not mapped</div>`;
+
+  row.innerHTML = `
+    <div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0;">
+      <span style="font-size:14px;flex-shrink:0;">📁</span>
+      <span style="font-size:12px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escHtml(sf.name)}</span>
+    </div>
+    <div style="flex:1;min-width:0;">${currentMap}</div>
+    <div class="sfr-typeahead">
+      <input type="text" class="sfr-input" id="sfri-${rowId}"
+             placeholder="Search matter..."
+             value="${isMapped ? escHtml(existingMaps[0].matter_name) : ''}"
+             autocomplete="off"
+             oninput="sfrSearch(this, '${rowId}')"
+             onfocus="sfrSearch(this, '${rowId}')"
+             onblur="sfrHideDrop('${rowId}')">
+      <input type="hidden" id="sfrv-${rowId}" value="${isMapped && existingMaps[0] ? existingMaps[0].matter_id : ''}">
+      <div class="sfr-drop" id="sfrd-${rowId}"></div>
+    </div>
+    <input type="checkbox" class="sfr-check" id="sfrc-${rowId}"
+           style="width:15px;height:15px;cursor:pointer;flex-shrink:0;"
+           ${isMapped ? 'checked' : ''}>`;
+
+  container.appendChild(row);
+}
+
+// ── Subfolder row typeahead ────────────────────────────────────────────────
+const sfrTimers = {};
+
+async function sfrSearch(input, rowId) {
+  const q = input.value.trim();
+  const drop = document.getElementById('sfrd-' + rowId);
+  clearTimeout(sfrTimers[rowId]);
+  if (!q || q.length < 1) { drop.style.display = 'none'; return; }
+
+  sfrTimers[rowId] = setTimeout(async () => {
+    try {
+      const resp = await fetch(`/tenant-admin/folder-reconciliation/search-matters?q=${encodeURIComponent(q)}`);
+      const data = await resp.json();
+      if (!data.matters || !data.matters.length) {
+        drop.innerHTML = '<div style="padding:7px 10px;color:var(--muted);">No matches</div>';
+        drop.style.display = 'block'; return;
+      }
+      drop.innerHTML = data.matters.map(m => `
+        <div class="sfr-drop-item"
+             data-matter-id="${m.id}"
+             data-matter-name="${(m.matter_name||'').replace(/"/g,'&quot;')}"
+             data-client-name="${(m.client_name||'').replace(/"/g,'&quot;')}"
+             onmousedown="sfrSelectFromEl(this, '${rowId}')">
+          <div style="font-weight:500;">${escHtml(m.matter_name)}</div>
+          <div style="font-size:10px;color:var(--muted);">${escHtml(m.client_name||'—')}${m.matter_number?' · '+escHtml(m.matter_number):''}</div>
+        </div>`).join('');
+      drop.style.display = 'block';
+    } catch(e) { drop.style.display = 'none'; }
+  }, 400);
+}
+
+function sfrSelectFromEl(el, rowId) {
+  const matterId   = el.dataset.matterId;
+  const matterName = el.dataset.matterName;
+  const clientName = el.dataset.clientName;
+  sfrSelect(rowId, matterId, matterName, clientName);
+}
+
+function sfrSelect(rowId, matterId, matterName, clientName) {
+  document.getElementById('sfri-' + rowId).value = matterName;
+  document.getElementById('sfrv-' + rowId).value = matterId;
+  document.getElementById('sfrd-' + rowId).style.display = 'none';
+  document.getElementById('sfrc-' + rowId).checked = true;
+  document.getElementById('map-summary').textContent = `${matterName} selected — commit when ready`;
+}
+
+function sfrHideDrop(rowId) {
+  setTimeout(() => {
+    const d = document.getElementById('sfrd-' + rowId);
+    if (d) d.style.display = 'none';
+  }, 400);
+}
+
+// ── Commit all checked rows ────────────────────────────────────────────────
+async function commitAllChecked() {
+  const st = document.getElementById('save-status');
+  const checks = document.querySelectorAll('.sfr-check:checked');
+  if (!checks.length) { st.style.color='#dc2626'; st.textContent='Check rows to commit.'; return; }
+
+  const items = [];
+  checks.forEach(cb => {
+    const rowId  = cb.id.replace('sfrc-','');
+    const row    = document.getElementById(rowId);
+    const matterVal = document.getElementById('sfrv-' + rowId)?.value;
+    const folderPath = row?.dataset.path;
+    const share     = row?.dataset.share || selectedFolder?.share;
+    if (matterVal && folderPath) {
+      items.push({
+        matter_id: matterVal,
+        disk_path: folderPath,
+        disk_root: CIFS_ROOTS[share] || '',
+        file_count: null,
+      });
+    }
+  });
+
+  if (!items.length) { st.style.color='#dc2626'; st.textContent='No valid rows — assign matters first.'; return; }
+
+  st.textContent = 'Saving...'; st.style.color = 'var(--muted)';
+  try {
+    const resp = await fetch('/tenant-admin/folder-reconciliation/accept-batch', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({items}),
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      st.style.color='#166534';
+      st.textContent = `✓ ${data.accepted} folders mapped`;
+      // Update row colors and mapped index
+      items.forEach(item => {
+        const rowId = 'sfr-' + item.disk_path.replace(/[^a-zA-Z0-9]/g,'_');
+        const row = document.getElementById(rowId);
+        if (row) { row.classList.remove('sfr-unmapped','sfr-mapped'); row.classList.add('sfr-committed'); }
+        if (!mappedFolders[item.disk_path]) mappedFolders[item.disk_path] = [];
+        mappedFolders[item.disk_path].push({matter_id: item.matter_id, matter_name: '✓'});
+        // Update tree node
+        document.querySelectorAll(`.tree-node[data-path="${item.disk_path}"]`).forEach(n => {
+          n.classList.add('mapped'); n.classList.remove('unmapped');
+        });
+      });
+      setTimeout(() => st.textContent = '', 3000);
+    } else { st.style.color='#dc2626'; st.textContent='Error: '+(data.detail||'failed'); }
+  } catch(e) { st.style.color='#dc2626'; st.textContent='Network error'; }
+}
+
+// ── Legacy single-folder commit (kept for direct mapping) ────────────────
+async function commitMapping() {
+  if (!selectedFolder || !selectedMatter) return;
+  await commitAllChecked();
+}
+
+function updateMapButton() {}  // no-op - replaced by commitAllChecked
+
+
+async function loadExistingMappings(matterId) {
+  const panel = document.getElementById('existing-mappings');
+  const list  = document.getElementById('existing-mappings-list');
+  try {
+    const resp = await fetch(`/tenant-admin/folder-reconciliation/matter-mappings/${matterId}`);
+    const data = await resp.json();
+    if (data.mappings && data.mappings.length) {
+      panel.style.display = 'block';
+      list.innerHTML = data.mappings.map(m => `
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 12px;font-size:11px;">
+          <span style="font-size:12px;">${m.disk_root && m.disk_root.includes('Docsend') ? '📮' : '📁'}</span>
+          <span style="font-family:monospace;color:var(--muted);flex-shrink:0;">${escHtml((m.disk_root||'').split('\\').pop())}\\</span>
+          <span style="font-family:monospace;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(m.folder_path)}</span>
+          <span style="color:${m.accepted?'#166534':'#f59e0b'};font-size:10px;">${m.accepted?'✓':'Pending'}</span>
+          <button onclick="removeAndRefresh('${m.id}', '${matterId}')"
+                  style="padding:1px 5px;font-size:10px;border:1px solid #fee2e2;border-radius:3px;cursor:pointer;background:#fff5f5;color:#dc2626;">✕</button>
+        </div>`).join('');
+    } else {
+      panel.style.display = 'none';
+    }
+  } catch(e) { panel.style.display = 'none'; }
+}
+
+async function removeAndRefresh(mappingId, matterId) {
+  if (!confirm('Remove this mapping?')) return;
+  await fetch(`/tenant-admin/folder-reconciliation/remove-mapping/${mappingId}`, {method:'DELETE'});
+  loadExistingMappings(matterId);
+  // Update mapped index
+  Object.keys(mappedFolders).forEach(key => {
+    mappedFolders[key] = mappedFolders[key].filter(m => m.mapping_id !== mappingId);
+    if (!mappedFolders[key].length) delete mappedFolders[key];
+  });
+}
+
+function updateMapButton() {
+  const btn = document.getElementById('map-btn');
+  const summary = document.getElementById('map-summary');
+  if (selectedFolder && selectedMatter) {
+    btn.disabled = false;
+    btn.style.opacity = '1';
+    summary.style.color = 'var(--text)';
+    summary.innerHTML = `<b>${escHtml(selectedFolder.name)}</b> → <b>${escHtml(selectedMatter.matter_name)}</b>`;
+  } else {
+    btn.disabled = true;
+    btn.style.opacity = '0.5';
+    summary.style.color = 'var(--muted)';
+    summary.textContent = selectedFolder ? 'Now select a matter on the right.' : 'Select a folder from the tree.';
+  }
+}
+
+// ── Commit mapping ────────────────────────────────────────────────────────
+async function commitMapping() {
+  if (!selectedFolder || !selectedMatter) return;
+  const st = document.getElementById('save-status');
+  st.textContent = 'Saving...'; st.style.color = 'var(--muted)';
+
+  try {
+    const resp = await fetch('/tenant-admin/folder-reconciliation/accept-batch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({items:[{
+        matter_id: selectedMatter.id,
+        disk_path: selectedFolder.path,
+        disk_root: selectedFolder.diskRoot,
+        file_count: null,
+      }]})
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      st.style.color = '#166534';
+      st.textContent = `✓ ${selectedFolder.name} → ${selectedMatter.matter_name}`;
+
+      // Update mapped index
+      if (!mappedFolders[selectedFolder.path]) mappedFolders[selectedFolder.path] = [];
+      mappedFolders[selectedFolder.path].push({matter_name: selectedMatter.matter_name, matter_id: selectedMatter.id});
+
+      // Update tree node to green
+      document.querySelectorAll('.tree-node.selected').forEach(n => {
+        n.classList.add('mapped');
+        if (!n.querySelector('.mapped-badge')) {
+          const badge = document.createElement('span');
+          badge.className = 'mapped-badge';
+          badge.style.cssText = 'font-size:9px;background:#dcfce7;color:#166534;padding:1px 4px;border-radius:8px;flex-shrink:0;';
+          badge.textContent = 'mapped';
+          n.appendChild(badge);
+        }
+      });
+
+      // Refresh existing mappings
+      loadExistingMappings(selectedMatter.id);
+
+      // Auto-advance: clear selection for next folder
+      setTimeout(() => { st.textContent = ''; }, 3000);
+    } else {
+      st.style.color = '#dc2626';
+      st.textContent = 'Error: ' + (data.detail || 'failed');
+    }
+  } catch(e) {
+    st.style.color = '#dc2626';
+    st.textContent = 'Network error';
+  }
+}
+
+// ── Filter tree ───────────────────────────────────────────────────────────
+function filterFolderTree(q) {
+  q = (q || '').toLowerCase();
+  document.querySelectorAll('#tree-container .tree-node').forEach(node => {
+    const name = (node.dataset.path || '').toLowerCase();
+    node.parentElement.style.display = !q || name.includes(q) ? '' : 'none';
+    if (q && name.includes(q)) {
+      // Expand parents
+      let p = node.parentElement?.parentElement;
+      while (p && p.id !== 'tree-container') {
+        const ch = p.querySelector('.tree-children');
+        const ar = p.querySelector('.tree-arrow');
+        if (ch) ch.classList.add('open');
+        if (ar) ar.classList.add('open');
+        p = p.parentElement?.parentElement;
+      }
+    }
+  });
+}
+
+function escHtml(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── Init ──────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadMappedIndex();
+  await loadShare('Clients');
+});
+</script>
+</div>
+{% endblock %}

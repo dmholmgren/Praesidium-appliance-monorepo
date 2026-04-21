@@ -1,0 +1,36 @@
+# eDiscovery Module Dependencies — COMP 1: Document Ingestion Pipeline
+# Install on both MAIN-PRD-WEB-01 and MAIN-PRD-PROC-01
+
+# Core framework
+fastapi>=0.109.0
+uvicorn>=0.27.0
+sqlalchemy>=2.0.0
+alembic>=1.13.0
+pydantic>=2.5.0
+rq>=1.16.0
+redis>=5.0.0
+jinja2>=3.1.0
+
+# Text extraction
+pdfplumber>=0.10.0
+python-docx>=1.0.0
+extract-msg>=0.48.0
+openpyxl>=3.1.0
+beautifulsoup4>=4.12.0
+
+# OCR
+pytesseract>=0.3.10
+Pillow>=10.0.0
+pdf2image>=1.16.0
+
+# Embeddings (PROC-01 only)
+sentence-transformers>=2.3.0
+numpy>=1.26.0
+faiss-cpu>=1.7.4
+
+# Hashing and file handling
+python-magic>=0.4.27
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

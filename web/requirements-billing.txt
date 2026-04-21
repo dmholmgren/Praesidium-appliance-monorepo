@@ -1,0 +1,35 @@
+# Praesidium Billing Module — Python dependencies
+# Core
+fastapi>=0.110.0
+uvicorn>=0.27.0
+sqlalchemy>=2.0.0
+alembic>=1.13.0
+pydantic>=2.6.0
+python-dotenv>=1.0.0
+
+# Database
+mysqlclient>=2.2.0  # MariaDB driver
+
+# Background jobs
+rq>=1.16.0
+redis>=5.0.0
+
+# HTTP client (ManicTime, FreePBX, LawPay, QBO, Zoom, Webex)
+httpx>=0.27.0
+
+# PDF generation (COMP 10 — invoices)
+reportlab>=4.1.0
+
+# Excel export (COMP 9, 16 — distributions, reports)
+openpyxl>=3.1.0
+
+# Templates
+jinja2>=3.1.0
+
+# Google API (COMP 4 — Google Meet)
+google-api-python-client>=2.100.0
+google-auth>=2.27.0
+
+# Testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

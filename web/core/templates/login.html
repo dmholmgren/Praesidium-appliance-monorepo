@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign In — {{ brand.platform_name if brand else 'Praesidium' }}</title>
+  {% if brand and brand.favicon_url %}
+  <link rel="icon" href="{{ brand.favicon_url }}" type="image/x-icon">
+  {% endif %}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Lora:wght@500;600&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --primary: {{ brand.primary_color if brand else '#0D1F3C' }};
+      --accent:  {{ brand.accent_color if brand else '#C8923A' }};
+      --border:  #E5E7EB;
+      --text:    #111827;
+      --muted:   #6B7280;
+      --bg:      #F9FAFB;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--bg);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .login-card {
+      background: #FFFFFF;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 36px 32px;
+      width: 100%;
+      max-width: 360px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.06);
+    }
+
+    .brand-name {
+      font-family: 'Lora', serif;
+      font-weight: 600;
+      font-size: 20px;
+      color: var(--primary);
+      letter-spacing: -0.01em;
+    }
+
+    .brand-tagline {
+      font-size: 11px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-top: 3px;
+    }
+
+    .form-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .form-input {
+      width: 100%;
+      padding: 9px 12px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: 13px;
+      font-family: 'DM Sans', sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      outline: none;
+      transition: border-color 120ms;
+    }
+
+    .form-input:focus {
+      border-color: var(--primary);
+      background: #FFFFFF;
+    }
+
+    .btn-submit {
+      width: 100%;
+      padding: 10px;
+      background: var(--primary);
+      color: #FFFFFF;
+      border: none;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 500;
+      font-family: 'DM Sans', sans-serif;
+      cursor: pointer;
+      transition: opacity 120ms;
+      margin-top: 4px;
+    }
+
+    .btn-submit:hover { opacity: 0.88; }
+
+    .error-banner {
+      padding: 10px 12px;
+      background: #FEF2F2;
+      border: 1px solid #FECACA;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #991B1B;
+      margin-bottom: 16px;
+    }
+
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 24px 0;
+    }
+
+    .attribution {
+      font-size: 10px;
+      color: #D1D5DB;
+      text-align: center;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div>
+    <!-- Brand above card -->
+    <div style="text-align:center; margin-bottom:24px;">
+      {% if brand and brand.logo_url %}
+      <img src="{{ brand.logo_url }}" alt="{{ brand.platform_name }}" style="height:32px; width:auto; margin:0 auto 6px;">
+      {% else %}
+      <div class="brand-name">{{ brand.platform_name if brand else 'PRAESIDIUM' }}</div>
+      {% endif %}
+      <div class="brand-tagline">{{ brand.tagline if brand and brand.tagline else 'Legal Intelligence' }}</div>
+    </div>
+
+    <div class="login-card">
+      <h2 style="font-family:'Lora',serif; font-size:15px; font-weight:600; color:var(--text); margin-bottom:20px;">Sign In</h2>
+
+      {% if error %}
+      <div class="error-banner">{{ error }}</div>
+      {% endif %}
+
+      <form method="POST" action="/auth/login">
+        <div style="margin-bottom:14px;">
+          <label for="username" class="form-label">Username</label>
+          <input type="text" id="username" name="username" autofocus required
+                 class="form-input" placeholder="Enter your username">
+        </div>
+        <div style="margin-bottom:20px;">
+          <label for="password" class="form-label">Password</label>
+          <input type="password" id="password" name="password" required
+                 class="form-input" placeholder="Enter your password">
+        </div>
+        <button type="submit" class="btn-submit">Sign In</button>
+      </form>
+    </div>
+
+    {% if not brand or not brand.suppress_attribution %}
+    <div class="attribution">Patent Pending — 64/020,027 — Dennis M. Holmgren, Reg. No. 54,168</div>
+    {% endif %}
+  </div>
+</body>
+</html>

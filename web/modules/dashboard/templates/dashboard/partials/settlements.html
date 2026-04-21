@@ -1,0 +1,37 @@
+{# COMP 11: Settlement History partial #}
+<div class="bg-white rounded-lg border border-gray-200 p-6">
+  <h2 class="text-lg font-semibold text-gray-900 mb-4">Settlement History</h2>
+  {% if settlements %}
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead><tr class="text-left text-xs text-gray-500 border-b">
+        <th class="pb-2 pr-4">Date</th><th class="pb-2 pr-4">Type</th>
+        <th class="pb-2 pr-4">Amount</th><th class="pb-2 pr-4">By</th>
+        <th class="pb-2">Terms</th>
+      </tr></thead>
+      <tbody class="divide-y divide-gray-50">
+        {% for s in settlements %}
+        <tr class="{% if s.offer_type == 'accepted' %}bg-green-50{% endif %}">
+          <td class="py-2 pr-4 text-gray-600">{{ s.offered_at }}</td>
+          <td class="py-2 pr-4">
+            <span class="px-2 py-0.5 rounded text-xs font-medium
+              {% if s.offer_type == 'demand' %}bg-red-100 text-red-700
+              {% elif s.offer_type == 'offer' %}bg-blue-100 text-blue-700
+              {% elif s.offer_type == 'counteroffer' %}bg-yellow-100 text-yellow-700
+              {% elif s.offer_type == 'accepted' %}bg-green-100 text-green-700
+              {% else %}bg-gray-100 text-gray-600{% endif %}">
+              {{ s.offer_type|title }}
+            </span>
+          </td>
+          <td class="py-2 pr-4 font-medium">${{ "{:,.2f}".format(s.amount) if s.amount else '—' }}</td>
+          <td class="py-2 pr-4 text-gray-600">{{ s.offered_by or '—' }}</td>
+          <td class="py-2 text-gray-500 truncate max-w-[200px]">{{ s.terms_summary or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="py-6 text-center text-gray-400 text-sm">No settlement activity</p>
+  {% endif %}
+</div>

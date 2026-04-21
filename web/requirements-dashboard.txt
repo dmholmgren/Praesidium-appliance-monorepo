@@ -1,0 +1,10 @@
+# Chat 4 — Case Dashboard — Python Dependencies
+# Install on WEB-01 and PROC-01:
+#   sudo pip install -r requirements-dashboard.txt --break-system-packages
+# Then append to Docker requirements:
+#   sudo bash -c 'cat requirements-dashboard.txt >> requirements.txt'
+rapidfuzz>=3.6.0
+PyMuPDF>=1.24.0
+python-docx>=1.1.0
+# tesseract-ocr and poppler-utils are system packages — see install guide
+pymysql>=1.1.0

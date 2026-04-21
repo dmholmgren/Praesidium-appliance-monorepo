@@ -1,0 +1,26 @@
+{# templates/drafting/partials/template_list.html #}
+{# HTMX partial — returned by GET /drafting/templates #}
+{% if templates %}
+<div style="max-height:280px; overflow-y:auto;">
+  {% for t in templates %}
+  <div style="padding:8px 10px; border-bottom:1px solid var(--border,#E5E7EB); cursor:pointer;
+              font-size:12px; transition:background 100ms;"
+       onclick="selectTemplate('{{ t.id }}', '{{ t.name | e }}')"
+       onmouseover="this.style.background='var(--bg,#F9FAFB)'"
+       onmouseout="this.style.background=''"
+       data-template-id="{{ t.id }}" data-template-name="{{ t.name }}">
+    <div style="font-weight:600; color:var(--navy,#0D1F3C);">{{ t.name }}</div>
+    <div style="color:var(--text-muted,#6B7280); font-size:11px;">
+      {{ t.document_type | replace('_',' ') | title }}
+      · {{ t.practice_area | title }}
+      · v{{ t.version }}
+      {% if t.scope == 'matter' %} · <em>matter-specific</em>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div style="text-align:center; padding:20px; color:var(--text-muted,#6B7280); font-size:12px;">
+  No templates found. Create templates via <a href="/tenant-admin/">Firm Settings</a>.
+</div>
+{% endif %}

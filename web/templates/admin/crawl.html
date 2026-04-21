@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% block title_suffix %} — File Crawl{% endblock %}
+{% block page_title %}File Crawl{% endblock %}
+
+{% block content %}
+<div class="space-y-5">
+
+  <!-- CIFS Bridge health -->
+  <div class="flex items-center gap-3 px-4 py-2 rounded-lg border
+       {% if cifs_health.status == 'healthy' %}border-green-800 bg-green-900/20
+       {% elif cifs_health.status == 'degraded' %}border-yellow-800 bg-yellow-900/20
+       {% else %}border-red-800 bg-red-900/20{% endif %}">
+    <div class="w-2 h-2 rounded-full
+         {% if cifs_health.status == 'healthy' %}bg-green-400
+         {% elif cifs_health.status == 'degraded' %}bg-yellow-400
+         {% else %}bg-red-400{% endif %}"></div>
+    <span class="text-sm font-medium
+         {% if cifs_health.status == 'healthy' %}text-green-300
+         {% elif cifs_health.status == 'degraded' %}text-yellow-300
+         {% else %}text-red-300{% endif %}">
+      CIFS Bridge: {{ cifs_health.status | title }}
+    </span>
+    {% if cifs_health.clients_accessible is defined %}
+    <span class="text-xs text-gray-500 ml-2">
+      clients: {{ '✓' if cifs_health.clients_accessible else '✗' }}
+      · docsend: {{ '✓' if cifs_health.docsend_accessible else '✗' }}
+      · praesidium: {{ '✓' if cifs_health.praesidium_accessible else '✗' }}
+    </span>
+    {% endif %}
+  </div>
+
+  <!-- Two-column layout: trigger form + share browser -->
+  <div class="grid grid-cols-2 gap-5">
+
+    <!-- Trigger form -->
+    <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+      <h2 class="text-sm font-semibold text-gray-300 mb-4">Trigger New Crawl</h2>
+      <form method="post" action="/admin/crawl/trigger" class="space-y-4">
+        <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+            Mount
+          </label>
+          <select name="mount" id="mount-select"
+                  hx-get="/admin/crawl/browse"
+                  hx-target="#browse-tree"
+                  hx-trigger="change"
+                  hx-include="[name='tenant_id']"
+                  class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-gray-100 text-sm focus:outline-none focus:border-blue-500">
+            {% for m in mount_options %}
+            <option value="{{ m.value }}">
+              {{ m.label }}{% if m.readonly %} (read-only){% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+            Root Path <span class="font-normal normal-case text-gray-600">(blank = mount root)</span>
+          </label>
+          <input type="text" name="root_path" placeholder="e.g. hjmm or leave blank"
+                 class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-gray-100 text-sm focus:outline-none focus:border-blue-500">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-1.5">
+            Depth Limit
+          </label>
+          <input type="number" name="depth_limit" value="10" min="1" max="50"
+                 class="w-32 px-3 py-2 bg-gray-800 border border-gray-700 rounded text-gray-100 text-sm focus:outline-none focus:border-blue-500">
+          <p class="text-xs text-gray-600 mt-1">Max directory depth to traverse.</p>
+        </div>
+
+        <button type="submit"
+                class="w-full px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded font-medium">
+          Start Crawl
+        </button>
+      </form>
+    </div>
+
+    <!-- Share browser -->
+    <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-semibold text-gray-300">Browse Share</h2>
+        <button hx-get="/admin/crawl/browse?mount=clients&tenant_id={{ tenant_id }}"
+                hx-target="#browse-tree"
+                class="text-xs text-blue-400 hover:text-blue-300">Refresh</button>
+      </div>
+      <div id="browse-tree"
+           hx-get="/admin/crawl/browse?mount=clients&tenant_id={{ tenant_id }}"
+           hx-trigger="load"
+           class="overflow-y-auto max-h-72 space-y-0.5">
+        <p class="text-xs text-gray-500">Loading...</p>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Job history -->
+  <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+    <div class="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
+      <h2 class="text-sm font-semibold text-gray-300">Crawl History</h2>
+      <span class="text-xs text-gray-500">Last 50 jobs</span>
+    </div>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-800 text-gray-400 text-xs uppercase tracking-wider">
+          <th class="text-left px-4 py-3">Mount</th>
+          <th class="text-left px-4 py-3">Root Path</th>
+          <th class="text-left px-4 py-3">Status</th>
+          <th class="text-left px-4 py-3">Queued</th>
+          <th class="text-right px-4 py-3">Discovered</th>
+          <th class="text-right px-4 py-3">Indexed</th>
+          <th class="text-left px-4 py-3">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for job in jobs %}
+        <tr class="hover:bg-gray-800/50">
+          <td class="px-4 py-3">
+            <span class="badge
+              {% if job.mount == 'clients' %}bg-blue-900 text-blue-200
+              {% elif job.mount == 'docsend' %}bg-purple-900 text-purple-200
+              {% else %}bg-teal-900 text-teal-200{% endif %}">
+              {{ job.mount }}
+            </span>
+          </td>
+          <td class="px-4 py-3 text-gray-400 text-xs font-mono">
+            /{{ job.root_path or '' }}
+          </td>
+          <td class="px-4 py-3">
+            <span class="badge
+              {% if job.status == 'complete' %}status-ok
+              {% elif job.status == 'running' %}bg-blue-900 text-blue-200
+              {% elif job.status == 'queued' %}bg-gray-700 text-gray-300
+              {% elif job.status == 'failed' %}status-err
+              {% else %}status-unk{% endif %}">
+              {{ job.status }}
+            </span>
+          </td>
+          <td class="px-4 py-3 text-gray-400 text-xs">
+            {% if job.queued_at %}
+              {{ job.queued_at.strftime('%b %d %H:%M') if job.queued_at else '—' }}
+            {% endif %}
+          </td>
+          <td class="px-4 py-3 text-right text-gray-300">{{ job.files_discovered }}</td>
+          <td class="px-4 py-3 text-right text-gray-300">{{ job.files_indexed }}</td>
+          <td class="px-4 py-3">
+            <div class="flex items-center gap-3">
+              <a href="/admin/crawl/{{ job.id }}?tenant_id={{ tenant_id }}"
+                 class="text-xs text-blue-400 hover:text-blue-300">View</a>
+              {% if job.status in ('queued', 'running') %}
+              <form method="post" action="/admin/crawl/{{ job.id }}/cancel"
+                    onsubmit="return confirm('Cancel this crawl?')">
+                <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+                <button type="submit" class="text-xs text-red-400 hover:text-red-300">
+                  Cancel
+                </button>
+              </form>
+              {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="px-4 py-8 text-center text-gray-500 text-sm">
+            No crawl jobs yet. Trigger one above.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</div>
+{% endblock %}

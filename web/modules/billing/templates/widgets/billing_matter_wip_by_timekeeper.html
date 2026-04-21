@@ -1,0 +1,44 @@
+{% if error %}
+<div style="padding:16px; font-size:12px; color:#dc2626;">Error: {{ error }}</div>
+{% elif not ts_linked %}
+<div style="padding:24px; text-align:center; color:var(--muted); font-size:12px;">
+  No Timeslips data linked for this matter.
+</div>
+{% elif not rows %}
+<div style="padding:24px; text-align:center; color:var(--muted); font-size:12px;">
+  No unbilled time on this matter.
+</div>
+{% else %}
+<table class="data-table" style="margin:0;">
+  <thead>
+    <tr>
+      <th>Timekeeper</th>
+      <th style="text-align:right;">WIP Hours</th>
+      <th style="text-align:right;">WIP Value</th>
+      <th style="text-align:right;">%</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      <td style="font-size:12px; font-weight:500;">{{ row.tk_name }}</td>
+      <td style="text-align:right; font-size:12px;">{{ "{:.2f}".format(row.wip_hours) }}</td>
+      <td style="text-align:right; font-size:12px; font-weight:600; color:#b45309;">
+        ${{ "{:,.2f}".format(row.wip_value) }}
+      </td>
+      <td style="text-align:right; font-size:11px; color:var(--muted);">{{ row.pct }}%</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+  <tfoot>
+    <tr style="border-top:2px solid var(--border); font-weight:600;">
+      <td style="font-size:12px;">Total</td>
+      <td style="text-align:right; font-size:12px;">{{ "{:.2f}".format(total_hours) }}</td>
+      <td style="text-align:right; font-size:12px; color:#b45309;">
+        ${{ "{:,.2f}".format(total_value) }}
+      </td>
+      <td></td>
+    </tr>
+  </tfoot>
+</table>
+{% endif %}

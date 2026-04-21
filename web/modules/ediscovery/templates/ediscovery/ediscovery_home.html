@@ -1,0 +1,135 @@
+{% extends "base.html" %}
+{% block title %}eDiscovery — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}eDiscovery{% endblock %}
+
+{% block header_right %}
+<a href="/ediscovery/collections/new" class="btn-primary" style="font-size:12px;">
+  <svg style="width:13px;height:13px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+  </svg>
+  New Collection
+</a>
+{% endblock %}
+
+{% block content %}
+<style>
+  .edisco-tabs {
+    display: flex;
+    gap: 2px;
+    border-bottom: 2px solid var(--border-color, #e2e8f0);
+    margin-bottom: 16px;
+    flex-shrink: 0;
+  }
+  .edisco-tab {
+    padding: 8px 18px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted, #64748b);
+    cursor: pointer;
+    border: none;
+    background: none;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -2px;
+    border-radius: 4px 4px 0 0;
+    transition: color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  }
+  .edisco-tab:hover {
+    color: var(--text, #1a202c);
+    background: #f8fafc;
+  }
+  .edisco-tab.active {
+    color: var(--primary, #1B2A4A);
+    border-bottom-color: var(--primary, #1B2A4A);
+    font-weight: 600;
+  }
+  .edisco-body {
+    min-height: 400px;
+  }
+</style>
+
+{# Context nav — cross-module links #}
+<div style="display:flex; align-items:center; gap:16px; margin-bottom:12px;
+            font-size:12px; color:var(--muted);">
+  <a href="/dashboard" style="color:var(--muted); text-decoration:none;"
+     onmouseenter="this.style.color='var(--primary)'"
+     onmouseleave="this.style.color='var(--muted)'">Dashboard</a>
+  <span style="color:var(--border);">·</span>
+  <a href="/dms/" style="color:var(--muted); text-decoration:none;"
+     onmouseenter="this.style.color='var(--primary)'"
+     onmouseleave="this.style.color='var(--muted)'">Documents</a>
+  <span style="color:var(--border);">·</span>
+  <span style="color:var(--primary); font-weight:500;">eDiscovery</span>
+  <span style="color:var(--border);">·</span>
+  <a href="/drafting/" style="color:var(--muted); text-decoration:none;"
+     onmouseenter="this.style.color='var(--primary)'"
+     onmouseleave="this.style.color='var(--muted)'">Drafting</a>
+</div>
+
+{# Tab bar #}
+<div class="edisco-tabs">
+  <button class="edisco-tab active" id="tab-overview"
+          onclick="switchEdiscoTab('overview')">Overview</button>
+  <button class="edisco-tab" id="tab-collections"
+          onclick="switchEdiscoTab('collections')">Collections</button>
+  <button class="edisco-tab" id="tab-review"
+          onclick="switchEdiscoTab('review')">Review</button>
+  <button class="edisco-tab" id="tab-productions"
+          onclick="switchEdiscoTab('productions')">Productions</button>
+  <a href="/ediscovery/search" class="edisco-tab"
+     style="text-decoration:none; display:inline-flex; align-items:center;">Search</a>
+  {% if is_admin %}
+  <button class="edisco-tab" id="tab-intelligence"
+          onclick="switchEdiscoTab('intelligence')">Intelligence</button>
+  {% endif %}
+</div>
+
+{# Body — HTMX swap target #}
+<div class="edisco-body" id="edisco-body">
+  <div style="padding:32px; text-align:center; font-size:12px; color:var(--muted);">
+    Loading…
+  </div>
+</div>
+
+<script>
+const EDISCO_TABS = {
+  overview:      '/ediscovery/overview',
+  collections:   '/ediscovery/partials/collections',
+  review:        '/ediscovery/partials/review',
+  productions:   '/ediscovery/partials/productions',
+  intelligence:  '/ediscovery/intelligence',
+};
+
+function switchEdiscoTab(tabSlug) {
+  // Update tab styles
+  document.querySelectorAll('.edisco-tab').forEach(t => t.classList.remove('active'));
+  const activeTab = document.getElementById('tab-' + tabSlug);
+  if (activeTab) activeTab.classList.add('active');
+
+  const url = EDISCO_TABS[tabSlug] || '/layouts/ediscovery_firm';
+
+  // HTMX swap
+  htmx.ajax('GET', url, {
+    target: '#edisco-body',
+    swap: 'innerHTML'
+  });
+
+  // Persist active tab
+  try { sessionStorage.setItem('edisco_active_tab', tabSlug); } catch(e) {}
+}
+
+// Restore last active tab or default to overview
+document.addEventListener('DOMContentLoaded', function() {
+  // Load overview on initial render via HTMX trigger
+  htmx.ajax('GET', '/ediscovery/overview', {
+    target: '#edisco-body',
+    swap: 'innerHTML'
+  });
+
+  try {
+    const last = sessionStorage.getItem('edisco_active_tab');
+    if (last && last !== 'overview') switchEdiscoTab(last);
+  } catch(e) {}
+});
+</script>
+{% endblock %}

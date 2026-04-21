@@ -1,0 +1,88 @@
+{% extends "base_tenant.html" %}
+{% block title %}Invoices — {{ brand.platform_name }}{% endblock %}
+{% block content %}
+<div class="px-6 py-4">
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="text-xl font-semibold text-gray-900">Invoices</h1>
+    <div class="flex gap-2">
+      <select id="status_filter" class="border rounded px-3 py-1.5 text-sm" onchange="loadInvoices()">
+        <option value="">All</option>
+        <option value="open">Open</option>
+        <option value="paid">Paid</option>
+        <option value="draft">Draft</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="bg-white border rounded overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50 border-b">
+        <tr>
+          <th class="px-4 py-2 text-left font-medium text-gray-600">Invoice #</th>
+          <th class="px-4 py-2 text-left font-medium text-gray-600">Matter</th>
+          <th class="px-4 py-2 text-left font-medium text-gray-600">Date</th>
+          <th class="px-4 py-2 text-right font-medium text-gray-600">Total</th>
+          <th class="px-4 py-2 text-right font-medium text-gray-600">Paid</th>
+          <th class="px-4 py-2 text-right font-medium text-gray-600">Balance</th>
+          <th class="px-4 py-2 font-medium text-gray-600">Status</th>
+        </tr>
+      </thead>
+      <tbody id="invoices-body">
+        <tr><td colspan="7" class="px-4 py-8 text-center text-gray-400">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+<script>
+async function loadInvoices() {
+  const status = document.getElementById('status_filter').value;
+  const params = new URLSearchParams();
+  if (status) params.set('status', status);
+  const res  = await fetch('/api/billing/invoices?' + params);
+  const data = await res.json();
+  const tbody = document.getElementById('invoices-body');
+  const all = [...data.invoices, ...data.ts_invoices];
+  if (!all.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-gray-400">No invoices</td></tr>';
+    return;
+  }
+  tbody.innerHTML = data.invoices.map(i => `
+    <tr class="border-b hover:bg-gray-50 cursor-pointer" onclick="location.href='/billing/invoices/${i.id}'">
+      <td class="px-4 py-2.5 font-medium text-blue-600">#${i.invoice_number}</td>
+      <td class="px-4 py-2.5 text-gray-700">${i.matter_name || i.client_code || '—'}</td>
+      <td class="px-4 py-2.5 text-gray-500">${i.invoice_date || ''}</td>
+      <td class="px-4 py-2.5 text-right">${fmtMoney(i.total_due)}</td>
+      <td class="px-4 py-2.5 text-right text-green-700">${fmtMoney(i.amount_paid)}</td>
+      <td class="px-4 py-2.5 text-right font-medium ${parseFloat(i.balance_due||0)>0?'text-red-700':'text-gray-400'}">
+        ${fmtMoney(i.balance_due)}
+      </td>
+      <td class="px-4 py-2.5">
+        <span class="px-2 py-0.5 rounded-full text-xs ${statusColor(i.status)}">${i.status}</span>
+      </td>
+    </tr>
+  `).join('') + (data.ts_invoices.length ? `
+    <tr class="bg-gray-50"><td colspan="7" class="px-4 py-1.5 text-xs text-gray-400 font-medium">
+      Timeslips Open Invoices (${data.ts_invoices.length})
+    </td></tr>
+  ` + data.ts_invoices.map(i => `
+    <tr class="border-b hover:bg-gray-50">
+      <td class="px-4 py-2.5 font-medium text-gray-500">#${i.invoice_number}</td>
+      <td class="px-4 py-2.5 text-gray-400 text-xs" colspan="3">Timeslips</td>
+      <td class="px-4 py-2.5 text-right"></td>
+      <td class="px-4 py-2.5 text-right font-medium text-red-700">${fmtMoney(i.balance_due)}</td>
+      <td class="px-4 py-2.5"><span class="px-2 py-0.5 rounded-full text-xs bg-gray-100 text-gray-500">open</span></td>
+    </tr>
+  `).join('') : '');
+}
+function statusColor(s) {
+  return s==='paid' ? 'bg-green-100 text-green-700' :
+         s==='open' ? 'bg-blue-100 text-blue-700' :
+         s==='draft'? 'bg-gray-100 text-gray-500' : 'bg-red-100 text-red-700';
+}
+function fmtMoney(v) {
+  const n = parseFloat(v||0);
+  return '$' + n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+loadInvoices();
+</script>
+{% endblock %}

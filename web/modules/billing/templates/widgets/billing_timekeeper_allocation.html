@@ -1,0 +1,48 @@
+{# widgets/billing_timekeeper_allocation.html
+   Timekeeper allocation bar chart — all time on this client.
+   Context vars (from widget_service.get_billing_timekeeper_allocation):
+     timekeepers — list of {tk_name, total_hours, total_value,
+                             wip_hours, billed_hours, pct}
+     total_hours — float
+     error       — str|None
+
+   Visualization only. Bar widths from precomputed pct.
+#}
+
+{% if error %}
+<div style="padding:10px 12px; font-size:11px; color:#dc2626;">⚠ {{ error }}</div>
+
+{% elif not timekeepers %}
+<div style="display:flex; align-items:center; justify-content:center;
+            text-align:center; color:var(--muted); padding:30px;">
+  <div>
+    <div style="font-size:22px; margin-bottom:6px;">⏱</div>
+    <div style="font-size:12px;">No time recorded</div>
+  </div>
+</div>
+
+{% else %}
+<div style="padding:12px;">
+  {% for tk in timekeepers %}
+  <div style="margin-bottom:14px;">
+    <div style="display:flex; justify-content:space-between;
+                font-size:12px; margin-bottom:3px;">
+      <span style="font-weight:500; color:var(--text);">{{ tk.tk_name }}</span>
+      <span style="color:var(--muted); font-variant-numeric:tabular-nums;">
+        {{ "{:.1f}".format(tk.total_hours) }}h ·
+        ${{ "{:,.0f}".format(tk.total_value) }}
+      </span>
+    </div>
+    <div style="background:#F3F4F6; border-radius:4px; height:6px; overflow:hidden;">
+      <div style="background:var(--primary); height:100%;
+                  width:{{ tk.pct }}%; border-radius:4px;
+                  transition:width 0.3s;"></div>
+    </div>
+    <div style="font-size:10px; color:var(--muted); margin-top:3px;">
+      {{ "{:.1f}".format(tk.wip_hours) }}h WIP ·
+      {{ "{:.1f}".format(tk.billed_hours) }}h billed
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

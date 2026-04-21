@@ -1,0 +1,16 @@
+<!-- partials/bank_row.html — HTMX fragment: bank status for one VM -->
+{% for bank_name, bank in banks.items() %}
+<div class="px-4 py-3 flex items-center gap-4 {% if bank.is_active %}bg-blue-950/20{% endif %} border-b border-gray-800/50">
+  <div class="w-20 font-mono text-xs text-gray-300">{{ bank_name }}</div>
+  <div class="flex gap-2">
+    {% if bank.is_active %}
+    <span class="badge status-ok">ACTIVE</span>
+    {% elif bank.pending_active %}
+    <span class="badge status-warn">PENDING</span>
+    {% else %}
+    <span class="badge status-unk">standby</span>
+    {% endif %}
+  </div>
+  <div class="flex-1 font-mono text-xs text-gray-500">{{ bank.version_tag or 'no firmware loaded' }}</div>
+</div>
+{% endfor %}

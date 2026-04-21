@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+{% block title %}Issue Map — {{ matter.matter_name if matter else 'Matter' }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block head_extra %}
+<style>
+  .claim-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px;
+    margin-bottom: 10px;
+  }
+  .element-row {
+    border-left: 2px solid var(--border);
+    padding-left: 12px;
+    margin-top: 8px;
+  }
+  .version-item {
+    border-left: 3px solid var(--border);
+    padding: 8px 12px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: border-left-color 120ms, background 120ms;
+    border-radius: 0 4px 4px 0;
+  }
+  .version-item:hover { border-left-color: var(--accent); background: var(--bg); }
+  .version-item.active { border-left-color: var(--accent); background: var(--bg); }
+</style>
+{% endblock %}
+
+{% block page_title %}Issue Map{% endblock %}
+
+{% block header_right %}
+<div style="display:flex; align-items:center; gap:12px;">
+  {% if version %}
+  <span style="font-size:11px; color:var(--muted);">{{ version_count }} version{{ 's' if version_count != 1 else '' }}</span>
+  {% endif %}
+  <button
+    hx-post="/ediscovery/matters/{{ matter_id }}/issue-map/trigger"
+    hx-headers='{"Content-Type": "application/json"}'
+    hx-swap="none"
+    hx-on::after-request="this.textContent='Queued ✓'; setTimeout(()=>this.textContent='Refresh Issue Map',3000)"
+    class="btn-primary"
+    title="Re-extract issue map from all pleadings and orders">
+    Refresh Issue Map
+  </button>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<div style="font-size:12px; color:var(--muted); margin-bottom:16px;">
+  <a href="/ediscovery/matters/{{ matter_id }}" style="color:var(--muted); text-decoration:none;">← {{ matter.matter_name if matter else 'Matter' }}</a>
+  <span style="margin:0 6px;">›</span>
+  <span style="color:var(--text);">Issue Map</span>
+</div>
+
+<div style="display:flex; gap:16px; min-height:0;">
+
+  <!-- Left sidebar: version history -->
+  <div style="width:200px; flex-shrink:0;">
+    <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:10px;">Version History</div>
+    {% if version_count == 0 %}
+      <p style="font-size:12px; color:var(--muted);">No versions yet. Add a pleading or click Refresh.</p>
+    {% else %}
+      <div hx-get="/ediscovery/matters/{{ matter_id }}/issue-map/versions" hx-trigger="load" hx-target="#version-list"></div>
+      <div id="version-list"></div>
+    {% endif %}
+  </div>
+
+  <!-- Main content -->
+  <div style="flex:1; min-width:0;">
+
+    {% if not version %}
+    <div class="card" style="max-width:500px; text-align:center; padding:40px 24px;">
+      <div style="font-size:40px; margin-bottom:12px;">⚖️</div>
+      <h2 style="font-family:'Lora',serif; font-size:16px; font-weight:600; color:var(--text); margin-bottom:8px;">No Issue Map Yet</h2>
+      <p style="font-size:12px; color:var(--muted); margin-bottom:16px; max-width:340px; margin-left:auto; margin-right:auto;">
+        The issue map is automatically built when you add a pleading, motion, order, or expert report to this matter. You can also trigger it manually.
+      </p>
+      <button
+        hx-post="/ediscovery/matters/{{ matter_id }}/issue-map/trigger"
+        hx-headers='{"Content-Type": "application/json"}'
+        hx-swap="none"
+        hx-on::after-request="this.textContent='Job queued — refresh in a moment'"
+        class="btn-primary">
+        Build Issue Map Now
+      </button>
+    </div>
+
+    {% else %}
+      {% set im = version.issue_map %}
+
+      <!-- Version metadata bar -->
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:20px; flex-wrap:wrap;">
+        <span style="font-size:13px; font-weight:600; color:var(--text);">Version {{ version.version_num }}</span>
+        <span class="badge badge-blue">{{ version.trigger_type | replace('_', ' ') | title }}</span>
+        {% set mag = version.magnitude | float %}
+        {% if mag < 0.05 %}<span class="badge badge-green">Δ {{ "%.0f"|format(mag*100) }}% change</span>
+        {% elif mag < 0.15 %}<span class="badge badge-yellow">Δ {{ "%.0f"|format(mag*100) }}% change</span>
+        {% else %}<span class="badge badge-red">Δ {{ "%.0f"|format(mag*100) }}% change</span>{% endif %}
+        <span style="font-size:11px; color:var(--muted); margin-left:auto;">{{ version.created_at.strftime('%b %d, %Y %H:%M') if version.created_at else '' }}</span>
+      </div>
+
+      <!-- Claims / Defenses -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px;">
+        <div class="card">
+          <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--accent); margin-bottom:12px;">Claims ({{ im.claims | length }})</div>
+          {% if im.claims %}
+            {% for claim in im.claims %}
+            <div class="claim-card">
+              <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
+                <div>
+                  <span style="font-size:13px; font-weight:600; color:var(--text);">{{ claim.claim_name }}</span>
+                  {% if claim.count_designation %}<span style="font-size:11px; color:var(--muted); margin-left:6px;">{{ claim.count_designation }}</span>{% endif %}
+                </div>
+                <span style="font-size:11px; color:var(--muted); flex-shrink:0;">{{ claim.elements | length }} elements</span>
+              </div>
+              {% for el in claim.elements %}
+              <div class="element-row">
+                <div style="font-size:11px; font-weight:600; color:var(--accent);">{{ el.element_name }}</div>
+                <div style="font-size:11px; color:var(--muted); margin-top:2px;">{{ el.facts_required }}</div>
+                {% if el.key_players %}<div style="font-size:11px; color:var(--muted); margin-top:1px;">Players: {{ el.key_players | join(', ') }}</div>{% endif %}
+              </div>
+              {% endfor %}
+            </div>
+            {% endfor %}
+          {% else %}
+            <p style="font-size:12px; color:var(--muted);">No claims extracted.</p>
+          {% endif %}
+        </div>
+
+        <div class="card">
+          <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--accent); margin-bottom:12px;">Defenses ({{ im.defenses | length }})</div>
+          {% if im.defenses %}
+            {% for defense in im.defenses %}
+            <div class="claim-card">
+              <div style="font-size:13px; font-weight:600; color:var(--text);">{{ defense.defense_name }}</div>
+              {% for el in defense.elements %}
+              <div class="element-row">
+                <div style="font-size:11px; font-weight:600; color:var(--accent);">{{ el.element_name }}</div>
+                <div style="font-size:11px; color:var(--muted); margin-top:2px;">{{ el.facts_required }}</div>
+              </div>
+              {% endfor %}
+            </div>
+            {% endfor %}
+          {% else %}
+            <p style="font-size:12px; color:var(--muted);">No defenses extracted.</p>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Key Players / Entities / Timeline -->
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; margin-bottom:16px;">
+        <div class="card">
+          <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--accent); margin-bottom:12px;">Key Players ({{ im.key_players | length }})</div>
+          {% for player in im.key_players %}
+          <div style="margin-bottom:8px;">
+            <div style="font-size:13px; font-weight:500; color:var(--text);">{{ player.name }}</div>
+            <div style="font-size:11px; color:var(--muted);">{{ player.role }}{% if player.organization %} · {{ player.organization }}{% endif %}</div>
+          </div>
+          {% else %}<p style="font-size:12px; color:var(--muted);">None extracted.</p>{% endfor %}
+        </div>
+
+        <div class="card">
+          <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--accent); margin-bottom:12px;">Key Entities ({{ im.key_entities | length }})</div>
+          {% for entity in im.key_entities %}
+          <div style="font-size:12px; color:var(--text); margin-bottom:4px;">{{ entity }}</div>
+          {% else %}<p style="font-size:12px; color:var(--muted);">None extracted.</p>{% endfor %}
+        </div>
+
+        <div class="card">
+          <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--accent); margin-bottom:8px;">Time Period</div>
+          {% if im.relevant_time_period %}
+            {% set tp = im.relevant_time_period %}
+            <div style="font-size:12px; color:var(--text); margin-bottom:4px;">{{ tp.start_date or '?' }} → {{ tp.end_date or 'present' }}</div>
+            {% if tp.description %}<div style="font-size:11px; color:var(--muted); margin-bottom:10px;">{{ tp.description }}</div>{% endif %}
+          {% endif %}
+          <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--accent); margin-top:8px; margin-bottom:8px;">Key Events ({{ im.key_events | length }})</div>
+          {% for event in im.key_events[:6] %}
+          <div style="margin-bottom:4px; font-size:11px;">
+            <span style="color:var(--accent); font-weight:500;">{{ event.date or '?' }}</span>
+            <span style="color:var(--muted); margin-left:4px;">{{ event.description }}</span>
+          </div>
+          {% else %}<p style="font-size:12px; color:var(--muted);">None extracted.</p>{% endfor %}
+          {% if im.key_events | length > 6 %}
+          <div style="font-size:11px; color:var(--muted); margin-top:2px;">+ {{ im.key_events | length - 6 }} more</div>
+          {% endif %}
+        </div>
+      </div>
+
+      <!-- Diff from prior version -->
+      {% if version.version_num > 1 %}
+        {% set diff = version.differential %}
+        <div class="card">
+          <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--accent); margin-bottom:12px;">Changes from Prior Version</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; font-size:12px;">
+            <div>
+              {% if diff.added %}
+                <div style="font-weight:600; color:#059669; margin-bottom:4px;">Added ({{ diff.added | length }})</div>
+                {% for item in diff.added %}<div style="color:#059669; margin-bottom:2px;">+ {{ item }}</div>{% endfor %}
+              {% endif %}
+              {% if diff.added_players %}
+                <div style="font-weight:600; color:#059669; margin-top:10px; margin-bottom:4px;">New Players</div>
+                {% for p in diff.added_players %}<div style="color:#059669; margin-bottom:2px;">+ {{ p }}</div>{% endfor %}
+              {% endif %}
+            </div>
+            <div>
+              {% if diff.removed %}
+                <div style="font-weight:600; color:#DC2626; margin-bottom:4px;">Removed ({{ diff.removed | length }})</div>
+                {% for item in diff.removed %}<div style="color:#DC2626; margin-bottom:2px;">− {{ item }}</div>{% endfor %}
+              {% endif %}
+              {% if diff.removed_players %}
+                <div style="font-weight:600; color:#DC2626; margin-top:10px; margin-bottom:4px;">Removed Players</div>
+                {% for p in diff.removed_players %}<div style="color:#DC2626; margin-bottom:2px;">− {{ p }}</div>{% endfor %}
+              {% endif %}
+            </div>
+          </div>
+          {% if not diff.added and not diff.removed and not diff.added_players and not diff.removed_players %}
+          <p style="font-size:12px; color:var(--muted);">No structural changes detected from prior version.</p>
+          {% endif %}
+        </div>
+      {% endif %}
+
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

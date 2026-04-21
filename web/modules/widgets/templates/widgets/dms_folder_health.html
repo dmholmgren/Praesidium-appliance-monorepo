@@ -1,0 +1,105 @@
+{#
+  dms_folder_health.html
+  OCR/extraction status summary for a matter's indexed files.
+  data_source: modules.dms.services.widget_service.get_folder_health
+
+  Context:
+    total_files      int
+    ocr_done         int
+    ocr_pending      int
+    ocr_failed       int
+    extracted        int
+    folders          list[{folder_label, file_count, ocr_done, disk_root}]
+    matter_id        str|None
+    ocr_pct          int   (0–100)
+    scope            dict
+#}
+
+<div style="padding: 10px 12px;
+            border-bottom: 1px solid var(--border-color, #f1f5f9);
+            display: flex; align-items: center; justify-content: space-between;">
+  <span style="font-size: 11px; font-weight: 700; color: var(--muted);
+               text-transform: uppercase; letter-spacing: .05em;">Folder Health</span>
+  {% if total_files %}
+    <span style="font-size: 10px; color: var(--muted);">{{ "{:,}".format(total_files) }} files</span>
+  {% endif %}
+</div>
+
+{% if total_files %}
+
+  {# OCR progress bar #}
+  <div style="padding: 10px 12px 6px 12px;">
+    <div style="display: flex; justify-content: space-between;
+                font-size: 10px; color: var(--muted); margin-bottom: 4px;">
+      <span>OCR Coverage</span>
+      <span>{{ ocr_pct }}%</span>
+    </div>
+    <div style="height: 6px; background: #f1f5f9; border-radius: 3px; overflow: hidden;">
+      <div style="height: 100%;
+                  width: {{ ocr_pct }}%;
+                  background: {% if ocr_pct >= 90 %}#16a34a{% elif ocr_pct >= 50 %}#d97706{% else %}#dc2626{% endif %};
+                  border-radius: 3px;
+                  transition: width 0.4s ease;"></div>
+    </div>
+
+    {# Stat chips #}
+    <div style="display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap;">
+      {% if ocr_done %}
+        <span style="font-size: 10px; background: #dcfce7; color: #166534;
+                     padding: 2px 7px; border-radius: 10px;">
+          {{ "{:,}".format(ocr_done) }} done
+        </span>
+      {% endif %}
+      {% if ocr_pending %}
+        <span style="font-size: 10px; background: #fef9c3; color: #854d0e;
+                     padding: 2px 7px; border-radius: 10px;">
+          {{ "{:,}".format(ocr_pending) }} pending
+        </span>
+      {% endif %}
+      {% if ocr_failed %}
+        <span style="font-size: 10px; background: #fee2e2; color: #991b1b;
+                     padding: 2px 7px; border-radius: 10px;">
+          {{ "{:,}".format(ocr_failed) }} failed
+        </span>
+      {% endif %}
+    </div>
+  </div>
+
+  {# Per-folder breakdown #}
+  {% if folders %}
+    <div style="border-top: 1px solid #f1f5f9; overflow-y: auto; max-height: 180px;">
+      {% for f in folders %}
+        <div style="padding: 5px 12px;
+                    border-bottom: 1px solid #f8fafc;
+                    display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 12px;">
+            {% if f.disk_root %}📁{% else %}🗂{% endif %}
+          </span>
+          <span style="flex: 1; font-size: 11px; color: var(--text);
+                       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+            {{ f.folder_label }}
+          </span>
+          <span style="font-size: 10px; color: var(--muted); flex-shrink: 0;">
+            {{ f.file_count }}
+          </span>
+          {% if f.ocr_done is defined and f.file_count %}
+            {% set pct = ((f.ocr_done / f.file_count) * 100) | int %}
+            <span style="font-size: 9px;
+                         background: {% if pct >= 90 %}#dcfce7{% elif pct >= 50 %}#fef9c3{% else %}#fee2e2{% endif %};
+                         color: {% if pct >= 90 %}#166534{% elif pct >= 50 %}#854d0e{% else %}#991b1b{% endif %};
+                         padding: 1px 5px; border-radius: 3px; flex-shrink: 0;">
+              {{ pct }}%
+            </span>
+          {% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
+{% else %}
+  <div style="padding: 24px 16px; text-align: center;
+              font-size: 12px; color: var(--muted);">
+    <div style="font-size: 28px; margin-bottom: 6px;">🗂</div>
+    No indexed files yet.
+  </div>
+{% endif %}

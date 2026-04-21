@@ -1,0 +1,25 @@
+{% extends "base_tenant.html" %}
+{% block title %}Invoice — {{ brand.platform_name }}{% endblock %}
+{% block content %}
+<div class="px-6 py-4 max-w-3xl">
+  <div class="flex items-center gap-2 text-sm text-gray-400 mb-4">
+    <a href="/billing/invoices" class="hover:text-gray-600">Invoices</a>
+    <span>›</span>
+    <span id="inv-title" class="text-gray-700">Loading…</span>
+  </div>
+  <div id="invoice-body" class="bg-white border rounded p-6">
+    <div class="text-gray-400 text-center py-8">Loading…</div>
+  </div>
+</div>
+<script>
+const INVOICE_ID = "{{ invoice_id }}";
+// Invoice detail rendering would call /api/billing/invoices/{id}
+// (add GET /api/billing/invoices/{id} to routes.py)
+document.getElementById('inv-title').textContent = `Invoice ${INVOICE_ID}`;
+document.getElementById('invoice-body').innerHTML = `
+  <div class="text-center text-gray-400 py-8">
+    Invoice detail view — add GET /api/billing/invoices/{id} to routes.py to populate.
+  </div>
+`;
+</script>
+{% endblock %}

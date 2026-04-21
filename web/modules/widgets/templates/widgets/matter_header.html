@@ -1,0 +1,151 @@
+{#
+  matter_header.html
+  Shared matter context strip — appears at the top of every matter-scoped surface.
+  Used by: /dms/matter/{id}, /dashboard/matter/{id}
+
+  Context:
+    matter_name        str
+    matter_number      str|None
+    client_name        str|None
+    status             str
+    responsible_attorney str|None
+    originating_attorney str|None
+    practice_area      str|None
+    open_date          str|None
+    matter_id          str
+    scope              dict
+    config             dict  — may contain: context (dms|dashboard|ediscovery)
+#}
+
+{% set ctx = config.get('context', 'dashboard') %}
+
+<div style="padding: 12px 16px;
+            background: var(--surface, #fff);
+            border-bottom: 2px solid var(--border-color, #e2e8f0);">
+
+  {# Breadcrumb #}
+  <nav style="font-size: 11px; color: var(--muted); margin-bottom: 6px;
+              display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
+    {% if ctx == 'dms' %}
+      <a href="/dms/" style="color: var(--muted); text-decoration: none;">Documents</a>
+    {% elif ctx == 'ediscovery' %}
+      <a href="/ediscovery/" style="color: var(--muted); text-decoration: none;">eDiscovery</a>
+    {% else %}
+      <a href="/dashboard" style="color: var(--muted); text-decoration: none;">Dashboard</a>
+    {% endif %}
+    <span style="color: var(--border-color, #cbd5e1);">›</span>
+    {% if client_name %}
+      <span>{{ client_name }}</span>
+      <span style="color: var(--border-color, #cbd5e1);">›</span>
+    {% endif %}
+    <span style="color: var(--text);">{{ matter_name }}</span>
+  </nav>
+
+  {# Matter identity row #}
+  <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+
+    {# Name + number #}
+    <div style="flex: 1; min-width: 0;">
+      <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+        <span style="font-family: 'Lora', serif;
+                     font-size: 17px;
+                     font-weight: 600;
+                     color: var(--text);
+                     white-space: nowrap;
+                     overflow: hidden;
+                     text-overflow: ellipsis;
+                     max-width: 480px;">{{ matter_name }}</span>
+
+        {% if matter_number %}
+          <span style="font-size: 11px;
+                       color: var(--muted);
+                       font-family: monospace;
+                       background: #f1f5f9;
+                       padding: 1px 6px;
+                       border-radius: 3px;">{{ matter_number }}</span>
+        {% endif %}
+
+        {# Status badge #}
+        {% if status == 'active' %}
+          <span style="font-size: 10px; font-weight: 600;
+                       background: #dcfce7; color: #166534;
+                       padding: 2px 7px; border-radius: 10px;">Active</span>
+        {% elif status == 'closed' %}
+          <span style="font-size: 10px; font-weight: 600;
+                       background: #f1f5f9; color: #64748b;
+                       padding: 2px 7px; border-radius: 10px;">Closed</span>
+        {% elif status %}
+          <span style="font-size: 10px; font-weight: 600;
+                       background: #fef9c3; color: #854d0e;
+                       padding: 2px 7px; border-radius: 10px;">{{ status | title }}</span>
+        {% endif %}
+
+        {% if practice_area %}
+          <span style="font-size: 10px; color: var(--muted);
+                       background: #f1f5f9; padding: 2px 7px;
+                       border-radius: 10px;">{{ practice_area }}</span>
+        {% endif %}
+      </div>
+
+      {# Secondary line: attorney + open date #}
+      <div style="font-size: 11px; color: var(--muted); margin-top: 3px;
+                  display: flex; gap: 12px; flex-wrap: wrap;">
+        {% if responsible_attorney %}
+          <span>⚖ {{ responsible_attorney }}</span>
+        {% endif %}
+        {% if open_date %}
+          <span>Opened {{ open_date }}</span>
+        {% endif %}
+      </div>
+    </div>
+
+    {# Context-specific action buttons — rendered via config #}
+    <div style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
+      {% if ctx == 'dms' %}
+        <button onclick="openUploadModal()"
+                style="padding: 5px 14px; font-size: 12px; font-weight: 500;
+                       background: var(--primary, #1B2A4A); color: #fff;
+                       border: none; border-radius: 5px; cursor: pointer;">
+          &#8679; Upload
+        </button>
+        <a href="/dashboard/matter/{{ matter_id }}"
+           style="padding: 5px 12px; font-size: 12px;
+                  border: 1px solid var(--border-color, #e2e8f0);
+                  border-radius: 5px; color: var(--text); text-decoration: none;">
+          Dashboard
+        </a>
+        <a href="/ediscovery/matters/{{ matter_id }}/issue-map"
+           style="padding: 5px 12px; font-size: 12px;
+                  border: 1px solid var(--border-color, #e2e8f0);
+                  border-radius: 5px; color: var(--text); text-decoration: none;">
+          Issue Map
+        </a>
+        <a href="/drafting/matters/{{ matter_id }}"
+           style="padding: 5px 12px; font-size: 12px;
+                  border: 1px solid var(--border-color, #e2e8f0);
+                  border-radius: 5px; color: var(--text); text-decoration: none;">
+          Drafting
+        </a>
+      {% elif ctx == 'dashboard' %}
+        <a href="/dms/matter/{{ matter_id }}"
+           style="padding: 5px 12px; font-size: 12px;
+                  border: 1px solid var(--border-color, #e2e8f0);
+                  border-radius: 5px; color: var(--text); text-decoration: none;">
+          Documents
+        </a>
+        <a href="/ediscovery/matters/{{ matter_id }}/issue-map"
+           style="padding: 5px 12px; font-size: 12px;
+                  border: 1px solid var(--border-color, #e2e8f0);
+                  border-radius: 5px; color: var(--text); text-decoration: none;">
+          Issue Map
+        </a>
+        <a href="/drafting/matters/{{ matter_id }}"
+           style="padding: 5px 12px; font-size: 12px;
+                  border: 1px solid var(--border-color, #e2e8f0);
+                  border-radius: 5px; color: var(--text); text-decoration: none;">
+          Drafting
+        </a>
+      {% endif %}
+    </div>
+  </div>
+</div>

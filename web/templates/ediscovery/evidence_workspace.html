@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% block title %}Evidence Workspace — {{ matter.name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block page_title %}Evidence Assembly Workspace{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<div style="font-size:12px; color:var(--muted); margin-bottom:16px;">
+  <a href="/matters" style="color:var(--muted); text-decoration:none;">Matters</a>
+  <span style="margin:0 6px;">›</span>
+  <a href="/matters/{{ matter.id }}" style="color:var(--muted); text-decoration:none;">{{ matter.name }}</a>
+  <span style="margin:0 6px;">›</span>
+  <a href="/ediscovery/matters/{{ matter.id }}/productions" style="color:var(--muted); text-decoration:none;">Productions</a>
+  <span style="margin:0 6px;">›</span>
+  <span style="color:var(--text);">Evidence Workspace</span>
+</div>
+
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+  <p style="font-size:12px; color:var(--muted);">
+    {{ item_count }} item{{ 's' if item_count != 1 else '' }} across {{ sections | length }} section{{ 's' if sections | length != 1 else '' }}
+  </p>
+  <button onclick="document.getElementById('add-item-modal').style.display='flex'" class="btn-primary">
+    <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+    Add Document
+  </button>
+</div>
+
+{% if sections %}
+  {% for section_name, items in sections.items() %}
+  <div style="margin-bottom:24px;" id="section-{{ loop.index }}">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <h2 style="font-family:'Lora',serif; font-size:14px; font-weight:600; color:var(--text);">{{ section_name }}</h2>
+        <span class="badge badge-gray">{{ items | length }} doc{{ 's' if items | length != 1 else '' }}</span>
+      </div>
+      <button onclick="addToSection('{{ section_name | replace("'", "\\'") }}')"
+              style="font-size:11px; color:var(--primary); background:none; border:none; cursor:pointer;">+ Add to section</button>
+    </div>
+
+    <div style="display:flex; flex-direction:column; gap:4px;">
+      {% for item in items %}
+      <div class="card" style="padding:12px 16px; display:flex; align-items:flex-start; gap:12px;" id="item-{{ item.id }}">
+        <!-- Drag handle -->
+        <div style="flex-shrink:0; margin-top:1px; cursor:grab; color:#D1D5DB;">
+          <svg width="14" height="14" fill="currentColor" viewBox="0 0 24 24">
+            <path d="M8 6a2 2 0 100-4 2 2 0 000 4zm0 8a2 2 0 100-4 2 2 0 000 4zm0 8a2 2 0 100-4 2 2 0 000 4zm8-16a2 2 0 100-4 2 2 0 000 4zm0 8a2 2 0 100-4 2 2 0 000 4zm0 8a2 2 0 100-4 2 2 0 000 4z"/>
+          </svg>
+        </div>
+        <!-- Doc info -->
+        <div style="flex:1; min-width:0;">
+          <p style="font-size:13px; font-weight:500; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            {{ item.display_label or item.original_filename or item.document_id }}
+          </p>
+          <div style="display:flex; align-items:center; gap:12px; font-size:11px; color:var(--muted); margin-top:2px;">
+            {% if item.bates_begin %}
+            <span style="font-family:monospace; color:var(--primary);">{{ item.bates_begin }}{% if item.bates_end %} – {{ item.bates_end }}{% endif %}</span>
+            {% endif %}
+            {% if item.doc_type %}<span>{{ item.doc_type }}</span>{% endif %}
+            {% if item.source %}<span>{{ item.source | replace('_', ' ') | capitalize }}</span>{% endif %}
+          </div>
+          {% if item.notes %}<p style="font-size:11px; color:var(--muted); margin-top:3px; font-style:italic;">{{ item.notes }}</p>{% endif %}
+        </div>
+        <!-- Sort order + remove -->
+        <div style="flex-shrink:0; display:flex; align-items:center; gap:10px;">
+          <span style="font-size:11px; color:var(--muted);">#{{ item.sort_order + 1 }}</span>
+          <button onclick="removeItem('{{ item.id }}')" title="Remove from workspace"
+                  style="background:none; border:none; cursor:pointer; padding:2px; color:#D1D5DB; transition:color 150ms;"
+                  onmouseover="this.style.color='#EF4444'" onmouseout="this.style.color='#D1D5DB'">
+            <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+
+{% else %}
+<div class="empty-state card" style="padding:48px 24px;">
+  <svg width="40" height="40" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin:0 auto 12px; display:block; color:#D1D5DB;">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+  </svg>
+  <p style="font-weight:500; color:var(--text); margin-bottom:4px;">Workspace is empty</p>
+  <p style="font-size:12px; max-width:360px; margin:0 auto;">Add documents from your eDiscovery corpus to organize them for depositions, motions, or trial.</p>
+  <div style="margin-top:16px;">
+    <button onclick="document.getElementById('add-item-modal').style.display='flex'" class="btn-primary">Add First Document</button>
+  </div>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts_extra %}
+<!-- Add Item Modal -->
+<div id="add-item-modal"
+     style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.35); align-items:center; justify-content:center; z-index:50;">
+  <div class="card" style="width:100%; max-width:500px; box-shadow:0 20px 60px rgba(0,0,0,0.12);">
+    <h2 style="font-family:'Lora',serif; font-size:16px; font-weight:600; color:var(--text); margin-bottom:18px;">Add Document to Workspace</h2>
+
+    <div style="display:flex; flex-direction:column; gap:14px;">
+      <div>
+        <label style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); display:block; margin-bottom:6px;">Document ID *</label>
+        <input id="item-doc-id" type="text" placeholder="UUID from ediscovery_documents"
+          style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:12px; font-family:monospace; color:var(--text); outline:none; box-sizing:border-box;">
+        <p style="font-size:11px; color:var(--muted); margin-top:4px;">Found on the document detail page or review UI.</p>
+      </div>
+      <div>
+        <label style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); display:block; margin-bottom:6px;">Section</label>
+        <input id="item-section" type="text" placeholder="e.g. Depo of Smith, Motion Exhibits, Trial List A"
+          style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:'DM Sans',sans-serif; color:var(--text); outline:none; box-sizing:border-box;">
+        <p style="font-size:11px; color:var(--muted); margin-top:4px;">Leave blank for General.</p>
+      </div>
+      <div>
+        <label style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); display:block; margin-bottom:6px;">Display Label</label>
+        <input id="item-label" type="text" placeholder="e.g. Acme Contract — Exhibit 5"
+          style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:'DM Sans',sans-serif; color:var(--text); outline:none; box-sizing:border-box;">
+      </div>
+      <div>
+        <label style="font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); display:block; margin-bottom:6px;">Notes</label>
+        <textarea id="item-notes" rows="2" placeholder="Optional attorney notes"
+          style="width:100%; padding:8px 10px; border:1px solid var(--border); border-radius:6px; font-size:13px; font-family:'DM Sans',sans-serif; color:var(--text); outline:none; box-sizing:border-box; resize:none;"></textarea>
+      </div>
+    </div>
+
+    <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
+      <button onclick="closeAddModal()" class="btn-secondary">Cancel</button>
+      <button id="add-btn" onclick="addItem()" class="btn-primary">Add to Workspace</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const matterId = '{{ matter.id }}';
+
+function closeAddModal() {
+  document.getElementById('add-item-modal').style.display = 'none';
+  ['item-doc-id','item-section','item-label','item-notes'].forEach(id => document.getElementById(id).value = '');
+}
+
+document.getElementById('add-item-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeAddModal();
+});
+
+function addToSection(sectionName) {
+  document.getElementById('item-section').value = sectionName;
+  document.getElementById('add-item-modal').style.display = 'flex';
+  document.getElementById('item-doc-id').focus();
+}
+
+async function addItem() {
+  const docId = document.getElementById('item-doc-id').value.trim();
+  if (!docId) { alert('Document ID is required'); return; }
+  const btn = document.getElementById('add-btn');
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    const resp = await fetch(`/ediscovery/matters/${matterId}/evidence-workspace`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        document_id: docId,
+        workspace_section: document.getElementById('item-section').value.trim() || null,
+        display_label: document.getElementById('item-label').value.trim() || null,
+        notes: document.getElementById('item-notes').value.trim() || null,
+        sort_order: 0,
+      })
+    });
+    if (!resp.ok) {
+      const e = await resp.json();
+      alert('Error: ' + (e.detail || 'Unknown error'));
+      btn.disabled = false; btn.textContent = 'Add to Workspace';
+      return;
+    }
+    window.location.reload();
+  } catch(err) {
+    alert('Network error: ' + err.message);
+    btn.disabled = false; btn.textContent = 'Add to Workspace';
+  }
+}
+
+async function removeItem(itemId) {
+  if (!confirm('Remove this document from the workspace?')) return;
+  try {
+    const resp = await fetch(`/ediscovery/evidence-workspace/${itemId}`, {method: 'DELETE'});
+    if (resp.ok) { const el = document.getElementById('item-' + itemId); if (el) el.remove(); }
+    else { const e = await resp.json(); alert('Error: ' + (e.detail || 'Unknown error')); }
+  } catch(err) { alert('Network error: ' + err.message); }
+}
+</script>
+{% endblock %}

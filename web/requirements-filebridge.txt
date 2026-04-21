@@ -1,0 +1,24 @@
+# ═══════════════════════════════════════════════════════════════
+# Praesidium Platform — File Bridge Dependencies
+# Minimal set for CIFS mount + WebDAV endpoint
+# ═══════════════════════════════════════════════════════════════
+
+# Web framework (WebDAV endpoint)
+fastapi>=0.110,<0.116
+uvicorn[standard]>=0.29,<0.35
+
+# Database (document sync to DB)
+sqlalchemy>=2.0,<2.1
+pymysql>=1.1,<2.0
+cryptography>=42.0,<44.0
+
+# Redis (job queue)
+redis>=5.0,<6.0
+rq>=1.16,<2.0
+
+# HTTP client
+httpx>=0.27,<1.0
+
+# Utilities
+python-dotenv>=1.0,<2.0
+pydantic>=2.7,<3.0

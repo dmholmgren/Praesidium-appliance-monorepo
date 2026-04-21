@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title_suffix %} — Backups{% endblock %}
+{% block page_title %}Config Backups{% endblock %}
+
+{% block content %}
+<div class="space-y-5">
+
+  <!-- Trigger backup -->
+  <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+    <h2 class="text-gray-300 font-medium text-sm mb-3">Create Backup</h2>
+    <form hx-post="/admin/htmx/backup/trigger"
+          hx-target="#backup-result"
+          hx-swap="innerHTML"
+          class="flex gap-3 items-end">
+      <div class="flex-1">
+        <label class="block text-gray-500 text-xs mb-1">Label (optional)</label>
+        <input type="text" name="label" placeholder="e.g. pre-upgrade-v1.2.0"
+               class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+      </div>
+      <button type="submit"
+              class="px-4 py-2 bg-blue-700 hover:bg-blue-600 rounded text-sm text-white font-medium transition-colors flex-shrink-0">
+        Trigger Backup
+      </button>
+    </form>
+    <div id="backup-result" class="mt-3"></div>
+  </div>
+
+  <!-- Backup list -->
+  <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-800 bg-gray-800/50">
+      <h2 class="text-gray-300 font-medium text-sm">Backup History</h2>
+    </div>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-800">
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase tracking-wide font-medium">Label</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase tracking-wide font-medium">Created</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase tracking-wide font-medium">By</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase tracking-wide font-medium">Type</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase tracking-wide font-medium">Alembic</th>
+          <th class="text-left px-4 py-2.5 text-gray-500 text-xs uppercase tracking-wide font-medium">Tenants</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in backups %}
+        <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+          <td class="px-4 py-2.5 text-gray-200 text-xs font-mono">{{ b.label or '—' }}</td>
+          <td class="px-4 py-2.5 text-gray-400 text-xs">{{ b.backup_at }}</td>
+          <td class="px-4 py-2.5 text-gray-400 text-xs">{{ b.triggered_by or '—' }}</td>
+          <td class="px-4 py-2.5">
+            {% if b.is_auto %}
+            <span class="badge status-warn">auto</span>
+            {% else %}
+            <span class="badge status-unk">manual</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-2.5 font-mono text-xs text-gray-500">{{ b.alembic_head or '—' }}</td>
+          <td class="px-4 py-2.5 text-gray-400 text-xs">{{ b.tenant_count or 0 }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="6" class="px-4 py-6 text-center text-gray-500">No backups yet</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+</div>
+{% endblock %}

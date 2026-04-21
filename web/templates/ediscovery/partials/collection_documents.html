@@ -1,0 +1,108 @@
+{% set filter = request.query_params.get('filter') %}
+{% set show_docs = docs | selectattr('upload_status', 'equalto', filter) | list if filter else docs %}
+
+{% if not show_docs %}
+  {% if filter == 'dms_duplicate' %}
+  <p class="text-xs text-gray-400">No DMS-flagged files.</p>
+  {% else %}
+  <p class="text-sm text-gray-400 py-4">No documents yet. Drop files into the upload zone.</p>
+  {% endif %}
+{% else %}
+
+{% if filter == 'dms_duplicate' %}
+  <!-- DMS override queue (right panel) -->
+  <div class="space-y-3">
+    {% for doc in show_docs %}
+    <div class="border border-amber-300 bg-amber-50 rounded-lg p-3">
+      <p class="text-sm font-medium text-gray-800 truncate" title="{{ doc.original_filename }}">
+        {{ doc.original_filename }}
+      </p>
+      {% if doc.dms_match_confidence %}
+      <p class="text-xs text-amber-600 mt-0.5">
+        Confidence: {{ "%.0f"|format(doc.dms_match_confidence * 100) }}%
+      </p>
+      {% endif %}
+      <div class="mt-2 flex gap-2">
+        <button onclick="confirmOverride('{{ collection_id }}', '{{ doc.id }}')"
+          class="flex-1 text-xs px-2 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700">
+          Proceed Anyway
+        </button>
+        <button onclick="discardDocument('{{ collection_id }}', '{{ doc.id }}')"
+          class="flex-1 text-xs px-2 py-1.5 border border-gray-300 text-gray-600 rounded hover:bg-gray-100">
+          Discard
+        </button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+{% else %}
+  <!-- Full document list (center panel) -->
+  <div class="space-y-1 mt-2">
+    {% for doc in show_docs %}
+    <div class="flex items-center gap-3 px-3 py-2 rounded-md hover:bg-gray-50 border border-transparent hover:border-gray-200">
+
+      <!-- File icon -->
+      <div class="flex-shrink-0 w-8 h-8 flex items-center justify-center rounded bg-gray-100">
+        {% set ext = doc.original_filename.rsplit('.', 1)[-1].lower() if '.' in doc.original_filename else '' %}
+        {% if ext == 'pdf' %}
+        <span class="text-xs font-bold text-red-500">PDF</span>
+        {% elif ext in ['doc','docx'] %}
+        <span class="text-xs font-bold text-blue-500">DOC</span>
+        {% elif ext in ['eml','msg'] %}
+        <span class="text-xs font-bold text-purple-500">EML</span>
+        {% else %}
+        <span class="text-xs font-bold text-gray-400">{{ ext.upper()[:3] }}</span>
+        {% endif %}
+      </div>
+
+      <!-- Filename + size -->
+      <div class="flex-1 min-w-0">
+        <p class="text-sm text-gray-800 truncate" title="{{ doc.original_filename }}">
+          {{ doc.original_filename }}
+        </p>
+        <p class="text-xs text-gray-400">
+          {% if doc.file_size_bytes %}
+            {% if doc.file_size_bytes > 1048576 %}
+              {{ "%.1f"|format(doc.file_size_bytes / 1048576) }} MB
+            {% elif doc.file_size_bytes > 1024 %}
+              {{ "%.0f"|format(doc.file_size_bytes / 1024) }} KB
+            {% else %}
+              {{ doc.file_size_bytes }} B
+            {% endif %}
+          {% endif %}
+        </p>
+      </div>
+
+      <!-- Status badge -->
+      <div class="flex-shrink-0">
+        {% if doc.upload_status == 'ingested' %}
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">
+          Ingested
+        </span>
+        {% elif doc.upload_status == 'processing' %}
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">
+          Processing
+        </span>
+        {% elif doc.upload_status == 'pending' %}
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">
+          Pending
+        </span>
+        {% elif doc.upload_status == 'dms_duplicate' %}
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700">
+          ⚠ DMS Match
+        </span>
+        {% elif doc.upload_status == 'rejected' %}
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-600"
+              title="{{ doc.rejection_reason or '' }}">
+          Rejected
+        </span>
+        {% endif %}
+      </div>
+
+    </div>
+    {% endfor %}
+  </div>
+{% endif %}
+
+{% endif %}

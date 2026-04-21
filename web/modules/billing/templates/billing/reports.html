@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+{% block title %}Billing Reports — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Billing Reports{% endblock %}
+{% block content %}
+
+{# ── Header ──────────────────────────────────────────────────────────────────── #}
+<div style="margin-bottom:16px;">
+  <h2 style="font-family:'Lora',serif; font-size:20px; font-weight:600; color:var(--text); margin:0 0 4px 0;">
+    Billing Reports
+  </h2>
+  <p style="font-size:12px; color:var(--muted); margin:0;">
+    Standard billing reports — WIP, AR aging, collections, distribution
+  </p>
+</div>
+
+{# ── Report Grid ──────────────────────────────────────────────────────────────── #}
+<div style="display:grid; grid-template-columns:220px 1fr; gap:16px; margin-bottom:16px;">
+
+  {# ── Left: Report Categories ─────────────────────────────────────────────── #}
+  <div class="card" style="padding:0; overflow:hidden; align-self:start;">
+    <div style="padding:12px 16px; border-bottom:1px solid var(--border);">
+      <div style="font-size:13px; font-weight:600;">Report Categories</div>
+    </div>
+    <div style="padding:8px 0;">
+
+      {% set categories = [
+        ('wip',          'WIP Summary',         'Unbilled time by client and attorney'),
+        ('ar_aging',     'AR Aging',             'Outstanding invoices by age bracket'),
+        ('collections',  'Collections',          'Payments received by period'),
+        ('slip',         'Time Entry Detail',    'All time entries with narrative'),
+        ('distribution', 'Distribution',         'Origination and working attorney credits'),
+        ('invoice',      'Invoice Register',     'All invoices by date range'),
+      ] %}
+
+      {% for slug, label, desc in categories %}
+      <div onclick="loadReport('{{ slug }}')"
+           id="cat-{{ slug }}"
+           style="padding:10px 16px; cursor:pointer; border-left:3px solid transparent;"
+           onmouseenter="if(currentReport!=='{{ slug }}')this.style.background='#F8FAFF'"
+           onmouseleave="if(currentReport!=='{{ slug }}')this.style.background=''">
+        <div style="font-size:13px; font-weight:500; color:var(--text);">{{ label }}</div>
+        <div style="font-size:11px; color:var(--muted); margin-top:1px;">{{ desc }}</div>
+      </div>
+      {% endfor %}
+
+    </div>
+  </div>
+
+  {# ── Right: Filters + Report Output ─────────────────────────────────────── #}
+  <div style="display:flex; flex-direction:column; gap:12px;">
+
+    {# Filters bar #}
+    <div class="card" style="padding:14px 16px; display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
+
+      <div>
+        <div style="font-size:11px; font-weight:500; color:var(--muted); margin-bottom:3px;">DATE FROM</div>
+        <input type="date" id="rpt-date-from"
+               style="border:1px solid #D1D5DB; border-radius:5px; padding:5px 10px;
+                      font-size:12px; font-family:inherit;">
+      </div>
+
+      <div>
+        <div style="font-size:11px; font-weight:500; color:var(--muted); margin-bottom:3px;">DATE TO</div>
+        <input type="date" id="rpt-date-to"
+               style="border:1px solid #D1D5DB; border-radius:5px; padding:5px 10px;
+                      font-size:12px; font-family:inherit;">
+      </div>
+
+      <div>
+        <div style="font-size:11px; font-weight:500; color:var(--muted); margin-bottom:3px;">CLIENT</div>
+        <select id="rpt-client"
+                style="border:1px solid #D1D5DB; border-radius:5px; padding:5px 10px;
+                       font-size:12px; background:#fff; min-width:160px;">
+          <option value="">All Clients</option>
+          {% for c in clients %}
+          <option value="{{ c.id }}">{{ c.client_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div>
+        <div style="font-size:11px; font-weight:500; color:var(--muted); margin-bottom:3px;">ATTORNEY</div>
+        <select id="rpt-attorney"
+                style="border:1px solid #D1D5DB; border-radius:5px; padding:5px 10px;
+                       font-size:12px; background:#fff; min-width:140px;">
+          <option value="">All Attorneys</option>
+          {% for a in attorneys %}
+          <option value="{{ a.id }}">{{ a.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <button onclick="runReport()"
+              style="padding:6px 18px; background:var(--primary); color:#fff;
+                     border:none; border-radius:5px; font-size:12px;
+                     font-weight:500; cursor:pointer;">
+        Run Report
+      </button>
+
+      <button onclick="exportReport()" id="export-btn"
+              style="display:none; padding:6px 14px; background:#fff; color:var(--primary);
+                     border:1px solid var(--primary); border-radius:5px; font-size:12px; cursor:pointer;">
+        Export CSV
+      </button>
+
+    </div>
+
+    {# Report output panel #}
+    <div class="card" style="padding:0; overflow:hidden; min-height:280px;">
+      <div id="report-header"
+           style="display:none; padding:12px 16px; border-bottom:1px solid var(--border);">
+        <span id="report-title" style="font-size:13px; font-weight:600;"></span>
+        <span id="report-subtitle" style="font-size:12px; color:var(--muted); margin-left:8px;"></span>
+      </div>
+      <div id="report-output"
+           style="padding:60px; text-align:center; color:var(--muted); font-size:13px;">
+        Select a report category from the left to get started.
+      </div>
+    </div>
+
+  </div>
+</div>
+
+{# ── Billing AI Chat — pinned across bottom ───────────────────────────────────── #}
+<div class="card" style="padding:0; overflow:hidden;">
+  <div style="padding:10px 16px; border-bottom:1px solid var(--border);
+              display:flex; justify-content:space-between; align-items:center;">
+    <div style="font-size:13px; font-weight:600;">Billing Intelligence</div>
+    <div style="font-size:11px; color:var(--muted);">Ask about WIP, AR, collections, UTBMS codes</div>
+  </div>
+  <div style="height:220px;"
+       hx-get="/widgets/billing_ai_chat"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+    <div style="padding:20px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+  </div>
+</div>
+
+<script>
+var currentReport = null;
+
+// Stub responses for reports not yet implemented
+var REPORT_STUBS = {
+  wip:          { title: 'WIP Summary',       desc: 'Unbilled time by client and attorney — full report coming next build.' },
+  ar_aging:     { title: 'AR Aging',          desc: 'Outstanding invoices by age bracket — full report coming next build.' },
+  collections:  { title: 'Collections',       desc: 'Payments received by period — full report coming next build.' },
+  slip:         { title: 'Time Entry Detail', desc: 'All time entries with narrative — full report coming next build.' },
+  distribution: { title: 'Distribution',      desc: 'Origination and working attorney credits — full report coming next build.' },
+  invoice:      { title: 'Invoice Register',  desc: 'All invoices by date range — full report coming next build.' },
+};
+
+// Set default date range — current month
+(function() {
+  var today    = new Date();
+  var firstDay = new Date(today.getFullYear(), today.getMonth(), 1);
+  document.getElementById('rpt-date-from').value = firstDay.toISOString().split('T')[0];
+  document.getElementById('rpt-date-to').value   = today.toISOString().split('T')[0];
+})();
+
+function loadReport(slug) {
+  currentReport = slug;
+
+  // Highlight selected
+  document.querySelectorAll('[id^="cat-"]').forEach(function(el) {
+    el.style.background = '';
+    el.style.borderLeftColor = 'transparent';
+  });
+  var active = document.getElementById('cat-' + slug);
+  if (active) {
+    active.style.background = '#EFF6FF';
+    active.style.borderLeftColor = 'var(--primary)';
+  }
+
+  runReport();
+}
+
+function runReport() {
+  if (!currentReport) return;
+
+  var header  = document.getElementById('report-header');
+  var output  = document.getElementById('report-output');
+  var expBtn  = document.getElementById('export-btn');
+  var stub    = REPORT_STUBS[currentReport];
+
+  // Show header
+  header.style.display = 'block';
+  document.getElementById('report-title').textContent =
+    stub ? stub.title : currentReport;
+  document.getElementById('report-subtitle').textContent =
+    document.getElementById('rpt-date-from').value + ' – ' +
+    document.getElementById('rpt-date-to').value;
+
+  output.style.padding = '40px';
+
+  // Try real API first — fall back to stub gracefully
+  var params = new URLSearchParams({
+    category:    currentReport,
+    date_from:   document.getElementById('rpt-date-from').value,
+    date_to:     document.getElementById('rpt-date-to').value,
+    client_id:   document.getElementById('rpt-client').value,
+    attorney_id: document.getElementById('rpt-attorney').value,
+  });
+
+  output.innerHTML = '<div style="color:var(--muted); font-size:12px;">Loading…</div>';
+
+  fetch('/api/v1/billing/reports?' + params.toString())
+    .then(function(r) {
+      if (!r.ok) throw new Error('not_implemented');
+      return r.json();
+    })
+    .then(function(data) {
+      if (!data.rows || !data.rows.length) {
+        showStub(stub, true);
+        return;
+      }
+      expBtn.style.display = 'inline-block';
+      renderTable(data);
+    })
+    .catch(function() {
+      showStub(stub, false);
+    });
+}
+
+function showStub(stub, noData) {
+  var output = document.getElementById('report-output');
+  output.style.padding = '40px';
+  output.innerHTML =
+    '<div style="display:inline-flex; align-items:center; gap:10px; padding:14px 20px;\n' +
+    '            background:#F8FAFF; border:1px solid #BFDBFE; border-radius:8px;\n' +
+    '            max-width:480px; text-align:left;">' +
+    '  <span style="font-size:20px;">📋</span>' +
+    '  <div>' +
+    '    <div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:3px;">' +
+         (stub ? stub.title : 'Report') + '</div>' +
+    '    <div style="font-size:12px; color:var(--muted);">' +
+         (stub ? stub.desc : 'Report implementation coming soon.') + '</div>' +
+    '  </div>' +
+    '</div>';
+}
+
+function renderTable(data) {
+  var output = document.getElementById('report-output');
+  output.style.padding = '0';
+  var cols = data.columns || Object.keys(data.rows[0]);
+  var html = '<table class="data-table" style="margin:0;"><thead><tr>';
+  cols.forEach(function(c) {
+    html += '<th>' + c.replace(/_/g,' ').replace(/\b\w/g,function(l){return l.toUpperCase();}) + '</th>';
+  });
+  html += '</tr></thead><tbody>';
+  data.rows.forEach(function(row) {
+    html += '<tr>';
+    cols.forEach(function(c) {
+      var val = row[c];
+      if (val === null || val === undefined) val = '—';
+      html += '<td style="font-size:12px;">' + val + '</td>';
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  output.innerHTML = html;
+}
+
+function exportReport() {
+  if (!currentReport) return;
+  var params = new URLSearchParams({
+    category:    currentReport,
+    date_from:   document.getElementById('rpt-date-from').value,
+    date_to:     document.getElementById('rpt-date-to').value,
+    client_id:   document.getElementById('rpt-client').value,
+    attorney_id: document.getElementById('rpt-attorney').value,
+    format:      'csv',
+  });
+  window.location.href = '/api/v1/billing/reports/export?' + params.toString();
+}
+</script>
+
+{% endblock %}

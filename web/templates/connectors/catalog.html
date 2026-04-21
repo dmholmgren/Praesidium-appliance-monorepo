@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Add Connector — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Add Connector{% endblock %}
+{% block content %}
+<div style="display:flex; margin:-24px; min-height:calc(100vh - 52px);">
+
+  {# ── Sidebar ── #}
+  <nav style="width:190px; flex-shrink:0; border-right:1px solid var(--border); padding:16px 10px; background:var(--surface);">
+    <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.1em; color:var(--muted); margin-bottom:8px; padding:0 6px;">Firm Settings</div>
+    {% for href, label in [
+      ('/tenant-admin/', 'Overview'),
+      ('/tenant-admin/profile', 'Firm Profile'),
+      ('/tenant-admin/users', 'Users'),
+      ('/tenant-admin/connectors', 'Connectors'),
+      ('/tenant-admin/features', 'Features'),
+      ('/tenant-admin/ssl', 'SSL & Domain'),
+      ('/tenant-admin/byok', 'API Keys (BYOK)'),
+    ] %}
+    <a href="{{ href }}" style="display:block; padding:6px 8px; border-radius:5px; font-size:13px; text-decoration:none; margin-bottom:1px;
+      {% if request.url.path == href or (href != '/tenant-admin/' and request.url.path.startswith(href)) %}color:var(--primary); background:#EFF6FF; font-weight:500;
+      {% else %}color:var(--muted);{% endif %}">{{ label }}</a>
+    {% endfor %}
+    <div style="margin-top:12px; padding-top:10px; border-top:1px solid var(--border);">
+      <a href="/tenant-admin/break-glass" style="display:block; padding:6px 8px; font-size:13px; text-decoration:none; color:var(--muted);">Emergency Access</a>
+    </div>
+  </nav>
+
+  {# ── Main ── #}
+  <div style="flex:1; padding:24px; overflow-y:auto;">
+
+    <div style="margin-bottom:20px;">
+      <a href="/tenant-admin/connectors" style="font-size:12px; color:var(--muted); text-decoration:none;">← Connectors</a>
+    </div>
+
+    <div style="margin-bottom:24px;">
+      <h2 style="font-size:16px; font-weight:600; color:var(--text); margin:0 0 4px 0;">Add Connector</h2>
+      <p style="font-size:12px; color:var(--muted); margin:0;">Select a connector type to configure for this tenant.</p>
+    </div>
+
+    {# ── No available connectors ── #}
+    {% if not catalog_groups %}
+    <div style="border:1px dashed var(--border); border-radius:8px; padding:40px; text-align:center; background:var(--surface);">
+      <div style="font-size:14px; font-weight:500; color:var(--text); margin-bottom:8px;">All available connectors are configured</div>
+      <p style="font-size:12px; color:var(--muted); margin:0 0 16px 0;">All connector types in the registry have been added to this tenant.</p>
+      <a href="/tenant-admin/connectors" class="btn-secondary">Back to Connectors</a>
+    </div>
+    {% endif %}
+
+    {# ── Catalog groups ── #}
+    {% for group in catalog_groups %}
+    <div style="margin-bottom:32px;">
+      <div style="display:flex; align-items:baseline; gap:10px; margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid var(--border);">
+        <h3 style="font-size:13px; font-weight:600; color:var(--text); margin:0;">{{ group.label }}</h3>
+        <span style="font-size:12px; color:var(--muted);">{{ group.description }}</span>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(280px,1fr)); gap:14px;">
+        {% for c in group.connectors %}
+        <div class="card">
+          <div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:10px;">
+            <div>
+              <div style="font-size:14px; font-weight:500; color:var(--text);">{{ c.display_name }}</div>
+              <div style="font-size:11px; color:var(--muted); margin-top:2px;">{{ c.sync_type_label }}</div>
+            </div>
+            <span class="badge badge-gray">Available</span>
+          </div>
+
+          {% if c.description %}
+          <p style="font-size:12px; color:var(--muted); margin:0 0 14px 0; line-height:1.5;">{{ c.description }}</p>
+          {% endif %}
+
+          <a href="/tenant-admin/connectors/{{ c.connector_type }}/configure"
+             class="btn-primary" style="font-size:12px; display:block; text-align:center;">
+            Add &amp; Configure
+          </a>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+
+  </div>
+</div>
+{% endblock %}

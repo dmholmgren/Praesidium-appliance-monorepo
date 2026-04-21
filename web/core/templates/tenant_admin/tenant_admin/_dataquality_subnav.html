@@ -1,0 +1,16 @@
+{#
+  Sub-navigation shown within the Data Quality tab.
+  Include at the top of folder_reconciliation.html and client_matter_cleanup.html.
+  Usage: {% include "tenant_admin/_dataquality_subnav.html" %}
+#}
+{% set p = request.url.path %}
+<div style="display:flex; gap:0; margin-bottom:16px; border-bottom:1px solid var(--border); padding-bottom:0;">
+  <a href="/tenant-admin/folder-reconciliation"
+     style="padding:6px 16px; font-size:12px; text-decoration:none; border-bottom:2px solid {% if p.startswith('/tenant-admin/folder-reconciliation') %}var(--primary){% else %}transparent{% endif %}; margin-bottom:-1px; color:{% if p.startswith('/tenant-admin/folder-reconciliation') %}var(--primary){% else %}var(--muted){% endif %}; font-weight:{% if p.startswith('/tenant-admin/folder-reconciliation') %}600{% else %}400{% endif %};">
+    Folder Reconciliation
+  </a>
+  <a href="/tenant-admin/client-matter-cleanup"
+     style="padding:6px 16px; font-size:12px; text-decoration:none; border-bottom:2px solid {% if p.startswith('/tenant-admin/client-matter-cleanup') or p.startswith('/tenant-admin/client-merge') %}var(--primary){% else %}transparent{% endif %}; margin-bottom:-1px; color:{% if p.startswith('/tenant-admin/client-matter-cleanup') or p.startswith('/tenant-admin/client-merge') %}var(--primary){% else %}var(--muted){% endif %}; font-weight:{% if p.startswith('/tenant-admin/client-matter-cleanup') or p.startswith('/tenant-admin/client-merge') %}600{% else %}400{% endif %};">
+    Client Matter Cleanup
+  </a>
+</div>

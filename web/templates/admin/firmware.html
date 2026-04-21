@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title_suffix %} — Firmware{% endblock %}
+{% block page_title %}Firmware Banks{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+
+  <div class="bg-amber-900/30 border border-amber-700/50 rounded-lg px-4 py-3 text-amber-200 text-xs">
+    <strong>Bank Swap Procedure:</strong>
+    Set pending → review → confirm → rebuild runs automatically → health check → commit or auto-rollback.
+    A config backup is always created before any bank operation.
+  </div>
+
+  {% for vm_name, vm in vms.items() %}
+  <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden" id="vm-{{ vm_name | replace('-', '_') }}">
+    <div class="px-4 py-3 bg-gray-800/50 border-b border-gray-800 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <span class="font-mono text-sm text-white">{{ vm_name }}</span>
+        <span class="badge status-unk text-xs">{{ vm.role or '—' }}</span>
+      </div>
+      <button
+        hx-get="/admin/htmx/bank-status/{{ vm_name }}"
+        hx-target="#banks-{{ vm_name | replace('-', '_') }}"
+        hx-swap="innerHTML"
+        class="text-xs text-blue-400 hover:text-blue-300"
+      >Refresh</button>
+    </div>
+
+    <div id="banks-{{ vm_name | replace('-', '_') }}" class="divide-y divide-gray-800">
+      {% for bank_name, bank in vm.banks.items() %}
+      <div class="px-4 py-3 flex items-center gap-4 {% if bank.is_active %}bg-blue-950/20{% endif %}">
+        <div class="w-20 font-mono text-xs text-gray-300">{{ bank_name }}</div>
+        <div class="flex gap-2">
+          {% if bank.is_active %}
+            <span class="badge status-ok">ACTIVE</span>
+          {% elif bank.pending_active %}
+            <span class="badge status-warn">PENDING</span>
+          {% else %}
+            <span class="badge status-unk">standby</span>
+          {% endif %}
+        </div>
+        <div class="flex-1 font-mono text-xs text-gray-500">
+          {{ bank.version_tag or 'no firmware loaded' }}
+        </div>
+        <div class="flex gap-2">
+          {% if not bank.is_active and not bank.pending_active %}
+          <form hx-post="/admin/htmx/bank/set"
+                hx-target="#bank-action-{{ vm_name | replace('-', '_') }}"
+                hx-swap="innerHTML"
+                class="inline">
+            <input type="hidden" name="vm_name" value="{{ vm_name }}">
+            <input type="hidden" name="target_bank" value="{{ bank_name }}">
+            <button type="submit"
+                    class="px-2 py-1 bg-blue-800 hover:bg-blue-700 rounded text-xs text-blue-100 transition-colors"
+                    onclick="return confirm('Set {{ bank_name }} as pending for {{ vm_name }}?')">
+              Set Pending
+            </button>
+          </form>
+          {% elif bank.pending_active %}
+          <form hx-post="/admin/htmx/bank/confirm"
+                hx-target="#bank-action-{{ vm_name | replace('-', '_') }}"
+                hx-swap="innerHTML"
+                class="inline">
+            <input type="hidden" name="vm_name" value="{{ vm_name }}">
+            <input type="hidden" name="target_bank" value="{{ bank_name }}">
+            <button type="submit"
+                    class="px-2 py-1 bg-amber-700 hover:bg-amber-600 rounded text-xs text-amber-100 transition-colors"
+                    onclick="return confirm('CONFIRM bank swap for {{ vm_name }}? Container will rebuild.')">
+              Confirm Swap
+            </button>
+          </form>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Action result area -->
+    <div id="bank-action-{{ vm_name | replace('-', '_') }}" class="px-4"></div>
+  </div>
+  {% else %}
+  <div class="text-gray-500 text-sm py-8 text-center">No firmware bank records found.</div>
+  {% endfor %}
+
+</div>
+{% endblock %}

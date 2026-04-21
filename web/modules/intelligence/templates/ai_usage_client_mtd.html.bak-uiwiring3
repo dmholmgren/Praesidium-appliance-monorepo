@@ -1,0 +1,29 @@
+{# widgets/ai_usage_client_mtd.html
+   Compact client-scoped AI MTD widget — fits KPI card slot.
+   Data source: modules.intelligence.widget_service.get_firm_ai_usage
+                (called with client_id scope)
+#}
+<div class="card" style="padding:14px; min-height:80px;
+                         border-radius:8px; background:var(--surface,#fff);
+                         border:1px solid var(--border,#e2e8f0);
+                         display:flex; flex-direction:column;
+                         justify-content:space-between;">
+  <div>
+    <div style="font-size:10px; font-weight:600; color:var(--muted);
+                text-transform:uppercase; letter-spacing:0.05em;">
+      AI Usage (MTD)
+    </div>
+    <div style="font-size:9px; color:var(--muted); margin-top:1px;">
+      Month to date
+    </div>
+  </div>
+  <div style="display:flex; align-items:baseline; gap:10px;">
+    <div style="font-size:17px; font-weight:700; color:var(--text);
+                font-variant-numeric:tabular-nums; line-height:1;">
+      {% if empty_state %}$0.00{% else %}${{ "{:,.2f}".format(month.total) }}{% endif %}
+    </div>
+    <div style="font-size:10px; color:var(--muted);">
+      {% if empty_state %}0 calls{% else %}{{ month.calls }} call{{ 's' if month.calls != 1 else '' }}{% endif %}
+    </div>
+  </div>
+</div>

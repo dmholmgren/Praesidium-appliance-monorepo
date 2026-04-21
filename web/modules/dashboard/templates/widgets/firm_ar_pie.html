@@ -1,0 +1,111 @@
+{#
+  firm_ar_pie.html
+  AR by matter — doughnut chart, top matters by outstanding invoices.
+  Click slice navigates to matter billing page.
+#}
+<div style="padding:10px 12px; height:100%; display:flex; flex-direction:column; min-height:0; overflow:hidden;">
+
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              margin-bottom:6px; flex-shrink:0;">
+    <span style="font-size:11px; font-weight:600; color:var(--text,#1a202c);
+                 text-transform:uppercase; letter-spacing:0.05em;">AR by Matter</span>
+    {% if not error and total_ar %}
+    <span style="font-size:11px; color:var(--muted,#64748b);">
+      ${{ "{:,.0f}".format(total_ar) }}
+    </span>
+    {% endif %}
+  </div>
+
+  {% if error %}
+  <div style="font-size:11px; color:#dc2626;">{{ error }}</div>
+
+  {% elif not matters or total_ar == 0 %}
+  <div style="flex:1; display:flex; align-items:center; justify-content:center;
+              font-size:11px; color:var(--muted,#64748b);">
+    No outstanding AR.
+  </div>
+
+  {% else %}
+  <div style="flex:1; min-height:0; display:flex; flex-direction:column; align-items:center; overflow:hidden;">
+
+    {# Donut chart #}
+    <div style="position:relative; width:130px; height:130px; flex-shrink:0;">
+      <canvas id="ar-pie-canvas" width="130" height="130"></canvas>
+      <div style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+                  text-align:center; pointer-events:none;">
+        <div style="font-size:12px; font-weight:700; color:var(--text,#1a202c);">
+          ${{ "{:,.0f}".format(total_ar) }}</div>
+        <div style="font-size:9px; color:var(--muted,#64748b);">AR</div>
+      </div>
+    </div>
+
+    {# Legend — scrollable #}
+    <div style="width:100%; margin-top:6px; overflow-y:auto; flex:1; min-height:0;">
+      {% set palette = ['#1B2A4A','#2563eb','#0891b2','#059669','#ca8a04','#dc2626','#7c3aed','#db2777'] %}
+      {% for m in matters %}
+      <a href="/billing/clients/{{ m.client_id }}/matters/{{ m.matter_id }}"
+         style="display:flex; align-items:center; gap:6px; text-decoration:none;
+                padding:2px 4px; border-radius:4px;"
+         onmouseover="this.style.background='#f8fafc'"
+         onmouseout="this.style.background=''">
+        <span style="width:8px; height:8px; border-radius:50%; flex-shrink:0;
+                     background:{{ palette[loop.index0 % palette|length] }};"></span>
+        <span style="font-size:10px; color:var(--text,#1a202c); flex:1; overflow:hidden;
+                     text-overflow:ellipsis; white-space:nowrap;"
+              title="{{ m.matter_name }}">{{ m.matter_name }}</span>
+        <span style="font-size:10px; color:var(--muted,#64748b); flex-shrink:0;">
+          ${{ "{:,.0f}".format(m.ar_balance) }}</span>
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+
+  <script>
+  (function() {
+    var palette = ['#1B2A4A','#2563eb','#0891b2','#059669','#ca8a04','#dc2626','#7c3aed','#db2777'];
+    var data   = [{% for m in matters %}{{ m.ar_balance }},{% endfor %}];
+    var labels = [{% for m in matters %}'{{ m.matter_name | replace("'","") }}',{% endfor %}];
+    var hrefs  = [{% for m in matters %}'/billing/clients/{{ m.client_id }}/matters/{{ m.matter_id }}',{% endfor %}];
+    var colors = data.map(function(_,i){ return palette[i % palette.length]; });
+
+    function loadChart() {
+      if (typeof Chart === 'undefined') { setTimeout(loadChart, 100); return; }
+      var canvas = document.getElementById('ar-pie-canvas');
+      if (!canvas) return;
+      new Chart(canvas.getContext('2d'), {
+        type: 'doughnut',
+        data: {
+          labels: labels,
+          datasets: [{ data: data, backgroundColor: colors, borderWidth: 2,
+                       borderColor: '#fff', hoverOffset: 5 }]
+        },
+        options: {
+          cutout: '65%', responsive: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: function(ctx) {
+                  return ' $' + ctx.parsed.toLocaleString('en-US',{maximumFractionDigits:0});
+                }
+              }
+            }
+          },
+          onClick: function(e, els) {
+            if (els.length > 0 && hrefs[els[0].index]) {
+              window.location.href = hrefs[els[0].index];
+            }
+          }
+        }
+      });
+    }
+    if (typeof Chart === 'undefined') {
+      var s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js';
+      s.onload = loadChart;
+      document.head.appendChild(s);
+    } else { loadChart(); }
+  })();
+  </script>
+  {% endif %}
+</div>

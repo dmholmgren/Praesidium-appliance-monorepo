@@ -1,0 +1,258 @@
+{# widgets/legacy_share_browser.html
+   Legacy Share Browser widget — fully JS-scoped per instance
+   Config params (via query string or config JSON):
+     share         — 'Clients' | 'Docsend' | 'Praesidium' (default: Clients)
+     include_files — 'true' | 'false' (default: false)
+     show_tabs     — 'true' | 'false' (default: true for Clients/Docsend, false for Praesidium)
+#}
+{% set cfg_share = config.share if config and config.share else 'Clients' %}
+{% set cfg_include_files = 'true' if (config and config.include_files in ('true', true)) else 'false' %}
+{% set cfg_show_tabs = 'false' if cfg_share == 'Praesidium' else 'true' %}
+{% set inst_id = range(100000, 999999) | random %}
+
+<div style="display:flex; flex-direction:column; height:100%; min-height:0;"
+     id="lsb-{{ inst_id }}">
+
+  {% if cfg_show_tabs == 'true' %}
+  {# Share tabs — only for legacy browser #}
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              padding:6px 10px; border-bottom:1px solid var(--border-color,#f1f5f9);
+              flex-shrink:0; background:#f8fafc;">
+    <div style="display:flex; gap:4px;">
+      <button onclick="lsb{{ inst_id }}.loadShare(this,'Clients')"
+              class="lsb-btn-{{ inst_id }}"
+              data-share="Clients"
+              style="padding:2px 8px; font-size:10px; font-weight:600; border-radius:4px;
+                     border:1px solid #1B2A4A; background:#1B2A4A; color:#fff; cursor:pointer;">
+        📁 Clients
+      </button>
+      <button onclick="lsb{{ inst_id }}.loadShare(this,'Docsend')"
+              class="lsb-btn-{{ inst_id }}"
+              data-share="Docsend"
+              style="padding:2px 8px; font-size:10px; font-weight:600; border-radius:4px;
+                     border:1px solid var(--border-color,#e2e8f0);
+                     background:var(--surface,#fff); color:var(--text); cursor:pointer;">
+        📮 Docsend
+      </button>
+    </div>
+    <span id="lsb-status-{{ inst_id }}" style="font-size:10px; color:var(--muted);">Loading…</span>
+  </div>
+  {% else %}
+  {# Single share header #}
+  <div style="padding:5px 10px; border-bottom:1px solid #f1f5f9; flex-shrink:0; background:#f8fafc;
+              display:flex; align-items:center; justify-content:space-between;">
+    <span id="lsb-status-{{ inst_id }}" style="font-size:10px; color:var(--muted);">Loading…</span>
+  </div>
+  {% endif %}
+
+  {# Filter #}
+  <div style="padding:5px 8px; border-bottom:1px solid #f1f5f9; flex-shrink:0;">
+    <input type="text" placeholder="Filter…"
+           oninput="lsb{{ inst_id }}.filter(this.value)"
+           style="width:100%; padding:3px 7px; font-size:11px;
+                  border:1px solid var(--border-color,#e2e8f0); border-radius:4px;
+                  box-sizing:border-box; background:var(--surface,#fff); color:var(--text);">
+  </div>
+
+  {# Tree #}
+  <div id="lsb-tree-{{ inst_id }}"
+       style="flex:1; overflow-y:auto; padding:4px 0; min-height:0;">
+    <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+  </div>
+
+  {# Hint #}
+  <div style="padding:4px 10px; border-top:1px solid #f1f5f9; flex-shrink:0;
+              font-size:10px; color:var(--muted); text-align:center;">
+    Drag folders or files to the drop zone →
+  </div>
+
+</div>
+
+<style>
+.lsb-node-{{ inst_id }} {
+  display:flex; align-items:center; gap:4px;
+  padding:3px 5px; cursor:pointer; border-radius:4px;
+  font-size:11px; user-select:none; margin:1px 3px;
+}
+.lsb-node-{{ inst_id }}:hover { background:#f1f5f9; }
+.lsb-node-{{ inst_id }}.dragging { opacity:0.5; }
+.lsb-file-{{ inst_id }}:hover { background:#eff6ff !important; }
+.lsb-arrow-{{ inst_id }} {
+  font-size:9px; color:var(--muted); transition:transform 0.12s;
+  flex-shrink:0; width:10px; display:inline-block;
+}
+.lsb-arrow-{{ inst_id }}.open { transform:rotate(90deg); }
+.lsb-children-{{ inst_id }} { display:none; }
+.lsb-children-{{ inst_id }}.open { display:block; }
+</style>
+
+<script>
+window['lsb{{ inst_id }}'] = (function(){
+  const INST      = '{{ inst_id }}';
+  const SHARE     = '{{ cfg_share }}';
+  const INC_FILES = {{ cfg_include_files }};
+  const DISK_ROOTS = {
+    Clients:    'D:\\Public\\Clients',
+    Docsend:    'D:\\Public\\Docsend',
+    Praesidium: '\\\\SERVER1\\praesidium',
+  };
+
+  let currentShare = SHARE;
+  const root   = document.getElementById('lsb-' + INST);
+  const tree   = document.getElementById('lsb-tree-' + INST);
+  const status = document.getElementById('lsb-status-' + INST);
+
+  function fileIcon(name) {
+    const ext = (name.split('.').pop()||'').toLowerCase();
+    if (['zip','gz','tar','rar','7z'].includes(ext)) return '🗜️';
+    if (ext==='pdf') return '📄';
+    if (['doc','docx'].includes(ext)) return '📝';
+    if (['xls','xlsx','csv'].includes(ext)) return '📊';
+    if (['jpg','jpeg','png','gif','tif','tiff'].includes(ext)) return '🖼️';
+    if (['msg','eml'].includes(ext)) return '✉️';
+    return '📄';
+  }
+
+  async function loadLevel(prefix, share, container, depth) {
+    try {
+      const url = `/tenant-admin/folder-reconciliation/browse?share=${encodeURIComponent(share)}&prefix=${encodeURIComponent(prefix)}&include_files=${INC_FILES}`;
+      const resp = await fetch(url);
+      const data = await resp.json();
+      container.innerHTML = '';
+      const folders = data.folders || [];
+      const files   = data.files   || [];
+      if (!folders.length && !files.length) {
+        container.innerHTML = '<div style="padding:4px 10px;color:var(--muted);font-size:10px;font-style:italic;">Empty</div>';
+        return;
+      }
+      folders.forEach(f => renderFolder(container, f, share, depth));
+      files.forEach(f   => renderFile(container, f, share, depth));
+    } catch(e) {
+      container.innerHTML = '<div style="padding:6px;color:#dc2626;font-size:11px;">Load failed</div>';
+    }
+  }
+
+  function renderFolder(container, f, share, depth) {
+    const wrapper = document.createElement('div');
+    wrapper.dataset.filterName = f.name.toLowerCase();
+
+    const node = document.createElement('div');
+    node.className = `lsb-node-${INST}`;
+    node.style.paddingLeft = (5 + depth * 12) + 'px';
+    node.draggable = true;
+    node.innerHTML = `
+      <span class="lsb-arrow-${INST}" style="flex-shrink:0;">▶</span>
+      <span style="font-size:13px;flex-shrink:0;">📁</span>
+      <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
+            title="${f.path}">${f.name}</span>`;
+
+    node.addEventListener('dragstart', e => {
+      node.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('application/x-praesidium-path', JSON.stringify({
+        path: f.path, name: f.name, share,
+        diskRoot: DISK_ROOTS[share]||'', type:'folder',
+      }));
+    });
+    node.addEventListener('dragend', () => node.classList.remove('dragging'));
+
+    const children = document.createElement('div');
+    children.className = `lsb-children-${INST}`;
+    children.style.paddingLeft = '10px';
+
+    node.querySelector(`.lsb-arrow-${INST}`).addEventListener('click', async e => {
+      e.stopPropagation();
+      const arrow = node.querySelector(`.lsb-arrow-${INST}`);
+      if (!children.dataset.loaded) {
+        children.innerHTML = '<div style="padding:4px;color:var(--muted);font-size:10px;">Loading…</div>';
+        children.classList.add('open');
+        arrow.classList.add('open');
+        await loadLevel(f.path, share, children, depth + 1);
+        children.dataset.loaded = '1';
+      } else {
+        children.classList.toggle('open');
+        arrow.classList.toggle('open');
+      }
+    });
+
+    node.addEventListener('click', e => {
+      if (e.target.classList.contains(`lsb-arrow-${INST}`)) return;
+      document.dispatchEvent(new CustomEvent('lsb:folderSelected', {
+        detail: { path: f.path, name: f.name, share, diskRoot: DISK_ROOTS[share]||'' }
+      }));
+    });
+
+    wrapper.appendChild(node);
+    wrapper.appendChild(children);
+    container.appendChild(wrapper);
+  }
+
+  function renderFile(container, f, share, depth) {
+    const wrapper = document.createElement('div');
+    wrapper.dataset.filterName = f.name.toLowerCase();
+
+    const node = document.createElement('div');
+    node.className = `lsb-node-${INST} lsb-file-${INST}`;
+    node.style.paddingLeft = (5 + depth * 12 + 10) + 'px';
+    node.draggable = true;
+
+    const size = f.size > 0
+      ? (f.size > 1048576 ? (f.size/1048576).toFixed(1)+'MB' : Math.round(f.size/1024)+'KB')
+      : '';
+
+    node.innerHTML = `
+      <span style="width:10px;flex-shrink:0;"></span>
+      <span style="font-size:13px;flex-shrink:0;">${fileIcon(f.name)}</span>
+      <span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;"
+            title="${f.path}">${f.name}</span>
+      ${size ? `<span style="font-size:9px;color:var(--muted);flex-shrink:0;margin-left:4px;">${size}</span>` : ''}`;
+
+    node.addEventListener('dragstart', e => {
+      node.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'copy';
+      e.dataTransfer.setData('application/x-praesidium-path', JSON.stringify({
+        path: f.path, name: f.name, share,
+        diskRoot: DISK_ROOTS[share]||'', type:'file', size: f.size,
+      }));
+    });
+    node.addEventListener('dragend', () => node.classList.remove('dragging'));
+
+    wrapper.appendChild(node);
+    container.appendChild(wrapper);
+  }
+
+  function loadShare(btn, share) {
+    currentShare = share;
+    root?.querySelectorAll(`.lsb-btn-${INST}`).forEach(b => {
+      b.style.borderColor = 'var(--border-color,#e2e8f0)';
+      b.style.background  = 'var(--surface,#fff)';
+      b.style.color       = 'var(--text)';
+    });
+    if (btn) {
+      btn.style.borderColor = '#1B2A4A';
+      btn.style.background  = '#1B2A4A';
+      btn.style.color       = '#fff';
+    }
+    if (tree) tree.innerHTML = '<div style="padding:12px;text-align:center;color:var(--muted);font-size:12px;">Loading…</div>';
+    if (status) status.textContent = share;
+    loadLevel('', share, tree, 0).then(() => {
+      if (status) status.textContent = share;
+    });
+  }
+
+  function filter(q) {
+    q = (q||'').toLowerCase();
+    tree?.querySelectorAll('[data-filter-name]').forEach(wrapper => {
+      const name = wrapper.dataset.filterName || '';
+      wrapper.style.display = !q || name.includes(q) ? '' : 'none';
+    });
+  }
+
+  // Auto-init
+  loadLevel('', currentShare, tree, 0).then(() => {
+    if (status) status.textContent = currentShare;
+  });
+
+  return { loadShare, filter };
+})();
+</script>

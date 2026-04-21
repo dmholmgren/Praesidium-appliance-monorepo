@@ -1,0 +1,12 @@
+<div class="card" style="padding:12px; overflow-x:auto;">
+  {% if gantt_svg %}
+    {{ gantt_svg | safe }}
+  {% else %}
+    <div class="empty-state">
+      <svg style="width:28px;height:28px;color:#D1D5DB;margin:0 auto 10px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+      </svg>
+      No deadlines to display for this matter.
+    </div>
+  {% endif %}
+</div>

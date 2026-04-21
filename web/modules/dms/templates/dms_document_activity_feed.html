@@ -1,0 +1,69 @@
+{# widgets/dms_document_activity_feed.html
+   Widget partial — DMS Document Activity Feed
+   Context: activity (list), matter_id
+   Each activity: {id, file_name, doc_type, action, updated_str, icon}
+#}
+<div style="display:flex; flex-direction:column; height:100%;">
+
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              padding:8px 12px; border-bottom:1px solid var(--border-color,#f1f5f9);
+              flex-shrink:0;">
+    <span style="font-size:10px; font-weight:700; color:var(--muted,#64748b);
+                 text-transform:uppercase; letter-spacing:0.06em;">
+      Recent Activity
+    </span>
+    {% if matter_id %}
+    <a href="/dms/matter/{{ matter_id }}"
+       style="font-size:10px; color:var(--primary,#1B2A4A); text-decoration:none;">
+      View all →
+    </a>
+    {% endif %}
+  </div>
+
+  <div style="flex:1; overflow-y:auto;">
+    {% if activity %}
+    {% for item in activity %}
+    <div style="display:flex; align-items:flex-start; gap:8px;
+                padding:7px 12px; border-bottom:1px solid #f8fafc;
+                cursor:pointer;"
+         onmouseover="this.style.background='#f8fafc'"
+         onmouseout="this.style.background=''"
+         {% if item.id %}
+         onclick="window.location='/dms/document/{{ item.id }}'"
+         {% endif %}>
+      <span style="font-size:14px; flex-shrink:0; margin-top:1px;">{{ item.icon }}</span>
+      <div style="flex:1; min-width:0;">
+        <div style="font-size:11px; font-weight:500; color:var(--text,#1a202c);
+                    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"
+             title="{{ item.file_name }}">
+          {{ item.file_name }}
+        </div>
+        <div style="display:flex; align-items:center; gap:4px; margin-top:2px;">
+          <span style="font-size:9px; padding:1px 5px; border-radius:3px;
+                       background:{{ '#dcfce7' if item.action == 'Added' else '#f1f5f9' }};
+                       color:{{ '#166534' if item.action == 'Added' else '#64748b' }};
+                       font-weight:600;">
+            {{ item.action }}
+          </span>
+          {% if item.doc_type %}
+          <span style="font-size:9px; background:#f1f5f9; color:var(--muted,#64748b);
+                       padding:1px 4px; border-radius:3px;">
+            {{ item.doc_type }}
+          </span>
+          {% endif %}
+        </div>
+      </div>
+      <div style="flex-shrink:0; text-align:right;">
+        <div style="font-size:10px; color:var(--muted,#94a3b8);">{{ item.updated_str }}</div>
+      </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div style="padding:20px 12px; text-align:center; font-size:11px;
+                color:var(--muted,#94a3b8);">
+      No recent activity.
+    </div>
+    {% endif %}
+  </div>
+
+</div>

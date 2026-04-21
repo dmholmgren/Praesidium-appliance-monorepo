@@ -1,0 +1,232 @@
+{% extends "base.html" %}
+{% block title %}New Matter Intake — {{ brand.platform_name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-6">
+  <h1 class="text-2xl font-bold text-gray-900 mb-6">New Matter Intake</h1>
+
+  {# ── Step 1: Upload / Drop Zone ─────────────────── #}
+  <div id="intake-step-upload">
+    <div id="drop-zone"
+         class="border-2 border-dashed border-gray-300 rounded-xl p-12 text-center
+                hover:border-blue-400 hover:bg-blue-50/30 transition-colors cursor-pointer"
+         ondragover="event.preventDefault(); this.classList.add('border-blue-500','bg-blue-50')"
+         ondragleave="this.classList.remove('border-blue-500','bg-blue-50')"
+         ondrop="handleDrop(event)"
+         onclick="document.getElementById('file-input').click()">
+      <svg class="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+      </svg>
+      <p class="text-lg font-medium text-gray-700">Drop documents here</p>
+      <p class="text-sm text-gray-500 mt-1">Petition, complaint, contract, scheduling order — any format</p>
+      <p class="text-xs text-gray-400 mt-2">PDF (text or image), Word, or plain text</p>
+    </div>
+    <input id="file-input" type="file" multiple accept=".pdf,.doc,.docx,.txt" class="hidden"
+           onchange="handleFiles(this.files)">
+
+    <div id="file-list" class="mt-4 space-y-2 hidden"></div>
+    <div id="upload-actions" class="mt-4 flex gap-3 hidden">
+      <button id="btn-process" onclick="startProcessing()"
+              class="px-4 py-2 rounded-md text-white text-sm font-medium"
+              style="background-color: {{ brand.primary_color }}">
+        Process Documents
+      </button>
+      <button onclick="resetIntake()" class="px-4 py-2 rounded-md bg-gray-200 text-gray-700 text-sm">
+        Clear
+      </button>
+    </div>
+  </div>
+
+  {# ── Step 2: QC Review (split screen) ──────────── #}
+  <div id="intake-step-qc" class="hidden">
+    <div class="grid grid-cols-2 gap-6">
+      {# Left: Document viewer #}
+      <div class="bg-gray-100 rounded-lg p-4 min-h-[500px]">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Source Document</h3>
+        <div id="doc-viewer" class="bg-white rounded p-3 text-sm text-gray-600 whitespace-pre-wrap max-h-[600px] overflow-y-auto">
+          Loading…
+        </div>
+      </div>
+      {# Right: Extracted fields #}
+      <div class="bg-white rounded-lg border border-gray-200 p-4">
+        <h3 class="text-sm font-semibold text-gray-700 mb-3">Extracted Fields</h3>
+        <form id="qc-form" class="space-y-3">
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Client Name</label>
+            <input name="client_name" id="field-client_name"
+                   class="w-full rounded-md border-gray-300 text-sm px-3 py-2">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Matter Type</label>
+            <select name="matter_type" id="field-matter_type"
+                    class="w-full rounded-md border-gray-300 text-sm px-3 py-2">
+              <option value="litigation">Litigation</option>
+              <option value="transactional">Transactional</option>
+              <option value="real_estate">Real Estate</option>
+              <option value="family">Family</option>
+              <option value="probate">Probate</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Court</label>
+            <input name="court_name" id="field-court_name"
+                   class="w-full rounded-md border-gray-300 text-sm px-3 py-2">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Case Number</label>
+            <input name="case_number" id="field-case_number"
+                   class="w-full rounded-md border-gray-300 text-sm px-3 py-2">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Judge</label>
+            <input name="judge_name" id="field-judge_name"
+                   class="w-full rounded-md border-gray-300 text-sm px-3 py-2">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Adverse Parties (comma-separated)</label>
+            <textarea name="adverse_parties" id="field-adverse_parties" rows="2"
+                      class="w-full rounded-md border-gray-300 text-sm px-3 py-2"></textarea>
+          </div>
+          <div class="pt-3 flex gap-3">
+            <button type="button" onclick="confirmIntake()"
+                    class="px-4 py-2 rounded-md text-white text-sm font-medium"
+                    style="background-color: {{ brand.primary_color }}">
+              Confirm &amp; Create Matter
+            </button>
+            <button type="button" onclick="cancelIntake()"
+                    class="px-4 py-2 rounded-md bg-gray-200 text-gray-700 text-sm">
+              Cancel
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  {# ── Step 3: Conflict check result ─────────────── #}
+  <div id="intake-step-conflict" class="hidden">
+    <div class="bg-red-50 border border-red-200 rounded-lg p-6 text-center">
+      <h3 class="text-lg font-semibold text-red-800 mb-2">Conflict Detected</h3>
+      <p id="conflict-message" class="text-sm text-red-600 mb-4"></p>
+      <p class="text-xs text-gray-500">A super administrator must provide a documented waiver to proceed.</p>
+    </div>
+  </div>
+
+  {# ── Step 4: Success ───────────────────────────── #}
+  <div id="intake-step-success" class="hidden">
+    <div class="bg-green-50 border border-green-200 rounded-lg p-6 text-center">
+      <svg class="mx-auto h-12 w-12 text-green-500 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+      </svg>
+      <h3 class="text-lg font-semibold text-green-800 mb-2">Matter Created</h3>
+      <p id="success-message" class="text-sm text-green-600 mb-4"></p>
+      <a id="success-link" href="#"
+         class="inline-flex items-center px-4 py-2 rounded-md text-white text-sm"
+         style="background-color: {{ brand.primary_color }}">
+        Open Dashboard →
+      </a>
+    </div>
+  </div>
+</div>
+
+<script>
+let intakeId = null;
+let uploadedFiles = [];
+const portalUrl = '';
+
+function handleDrop(e) {
+  e.preventDefault();
+  e.target.closest('#drop-zone').classList.remove('border-blue-500', 'bg-blue-50');
+  handleFiles(e.dataTransfer.files);
+}
+
+function handleFiles(files) {
+  uploadedFiles = Array.from(files);
+  const list = document.getElementById('file-list');
+  list.innerHTML = '';
+  list.classList.remove('hidden');
+  uploadedFiles.forEach(f => {
+    const div = document.createElement('div');
+    div.className = 'flex items-center gap-2 text-sm text-gray-700 py-1';
+    div.innerHTML = '<span class="text-gray-400">📄</span> ' + f.name +
+      ' <span class="text-xs text-gray-400">(' + (f.size/1024).toFixed(1) + ' KB)</span>';
+    list.appendChild(div);
+  });
+  document.getElementById('upload-actions').classList.remove('hidden');
+}
+
+async function startProcessing() {
+  const btn = document.getElementById('btn-process');
+  btn.disabled = true;
+  btn.textContent = 'Processing…';
+
+  // Start intake session
+  const startRes = await fetch(portalUrl + '/dashboard/intake/start', {method: 'POST'});
+  const startData = await startRes.json();
+  intakeId = startData.intake_id;
+
+  // Upload files
+  const fd = new FormData();
+  uploadedFiles.forEach(f => fd.append('files', f));
+  await fetch(portalUrl + '/dashboard/intake/' + intakeId + '/upload', {method: 'POST', body: fd});
+
+  // Extract fields via AI
+  const extractRes = await fetch(portalUrl + '/dashboard/intake/' + intakeId + '/extract', {method: 'POST'});
+  const fields = await extractRes.json();
+
+  // Populate QC form
+  populateFields(fields);
+  document.getElementById('intake-step-upload').classList.add('hidden');
+  document.getElementById('intake-step-qc').classList.remove('hidden');
+}
+
+function populateFields(fields) {
+  const map = {client_name: 'client_name', matter_type: 'matter_type',
+               court_name: 'court_name', case_number: 'case_number', judge_name: 'judge_name'};
+  for (const [key, id] of Object.entries(map)) {
+    const el = document.getElementById('field-' + id);
+    if (el && fields[key]) el.value = fields[key];
+  }
+  if (fields.adverse_parties && Array.isArray(fields.adverse_parties)) {
+    document.getElementById('field-adverse_parties').value = fields.adverse_parties.join(', ');
+  }
+}
+
+async function confirmIntake() {
+  const form = document.getElementById('qc-form');
+  const data = {
+    client_name: form.client_name.value,
+    matter_type: form.matter_type.value,
+    court_name: form.court_name.value,
+    case_number: form.case_number.value,
+    judge_name: form.judge_name.value,
+    adverse_parties: form.adverse_parties.value.split(',').map(s => s.trim()).filter(Boolean),
+  };
+
+  const res = await fetch(portalUrl + '/dashboard/intake/' + intakeId + '/confirm', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(data),
+  });
+  const result = await res.json();
+
+  document.getElementById('intake-step-qc').classList.add('hidden');
+  if (result.status === 'blocked') {
+    document.getElementById('conflict-message').textContent = result.message;
+    document.getElementById('intake-step-conflict').classList.remove('hidden');
+  } else {
+    document.getElementById('success-message').textContent = 'Matter #' + result.matter_id + ' created successfully.';
+    document.getElementById('success-link').href = portalUrl + '/dashboard/matter/' + result.matter_id;
+    document.getElementById('intake-step-success').classList.remove('hidden');
+  }
+}
+
+function cancelIntake() { location.reload(); }
+function resetIntake() {
+  uploadedFiles = [];
+  document.getElementById('file-list').innerHTML = '';
+  document.getElementById('file-list').classList.add('hidden');
+  document.getElementById('upload-actions').classList.add('hidden');
+}
+</script>
+{% endblock %}

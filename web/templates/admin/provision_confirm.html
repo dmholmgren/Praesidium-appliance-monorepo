@@ -1,0 +1,75 @@
+{% extends "admin/base.html" %}
+{% block title %}Confirm Provisioning — {{ form.firm_name }}{% endblock %}
+{% block content %}
+<div class="max-w-2xl mx-auto py-10 px-4">
+
+  <h1 class="text-2xl font-bold text-yellow-400 mb-1">Confirm New Tenant</h1>
+  <p class="text-gray-400 mb-6">Review the configuration below. Click <strong>Provision Tenant</strong> to execute.</p>
+
+  <!-- Summary table -->
+  <div class="bg-gray-800 rounded-lg overflow-hidden mb-6">
+    <table class="w-full text-sm">
+      <tbody class="divide-y divide-gray-700">
+        {% set rows = [
+          ('Slug', form.slug),
+          ('Firm Name', form.firm_name),
+          ('Tier', form.tier|title),
+          ('Channel', form.deployment_channel|title),
+          ('Domain', form.domain),
+          ('SSL Mode', form.ssl_mode),
+          ('First Admin', form.first_user_email),
+        ] %}
+        {% for label, val in rows %}
+        <tr>
+          <td class="px-4 py-2 text-gray-400 font-medium w-40">{{ label }}</td>
+          <td class="px-4 py-2 text-white">{{ val }}</td>
+        </tr>
+        {% endfor %}
+        <tr>
+          <td class="px-4 py-2 text-gray-400 font-medium">Temp Password</td>
+          <td class="px-4 py-2 text-yellow-300 font-mono">{{ form.first_user_password }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Feature flags summary -->
+  <div class="bg-gray-800 rounded-lg p-4 mb-6">
+    <h3 class="text-sm font-semibold text-gray-300 mb-3">Feature Flags</h3>
+    <div class="grid grid-cols-2 gap-1 text-xs">
+      {% for key, enabled in feature_overrides.items() %}
+      <div class="flex items-center gap-2">
+        <span class="{% if enabled %}text-green-400{% else %}text-gray-600{% endif %}">
+          {% if enabled %}✓{% else %}✗{% endif %}
+        </span>
+        <span class="{% if enabled %}text-gray-200{% else %}text-gray-600{% endif %}">
+          {{ key.replace('_', ' ')|title }}
+        </span>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="bg-yellow-900/30 border border-yellow-700 rounded p-3 text-yellow-300 text-sm mb-6">
+    ⚠ This will create the tenant DB record, seed users, create storage, write nginx config, and trigger SSL provisioning.
+    This operation cannot be automatically reversed.
+  </div>
+
+  <!-- Execute form — embeds all data as hidden fields -->
+  <form method="post" action="/admin/provision/execute" class="flex gap-3">
+    {% for k in ['slug','firm_name','tier','deployment_channel','domain','ssl_mode','first_user_email','first_user_password'] %}
+      <input type="hidden" name="{{ k }}" value="{{ form[k] or '' }}" />
+    {% endfor %}
+    <input type="hidden" name="feature_overrides_json" value="{{ feature_overrides | tojson }}" />
+
+    <a href="/admin/provision/new" class="flex-1 text-center border border-gray-600 text-gray-300 py-2 rounded hover:bg-gray-800">
+      ← Start Over
+    </a>
+    <button type="submit"
+            class="flex-1 bg-yellow-500 hover:bg-yellow-400 text-gray-900 font-bold py-2 rounded">
+      ⚡ Provision Tenant
+    </button>
+  </form>
+
+</div>
+{% endblock %}

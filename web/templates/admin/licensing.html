@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title_suffix %} — Licensing{% endblock %}
+{% block page_title %}Licensing & Feature Management{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+  <!-- Tenant license summary -->
+  <section>
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-gray-300 font-medium text-sm uppercase tracking-wide">Tenant Licenses</h2>
+      <button
+        hx-get="/admin/htmx/license-grid"
+        hx-target="#license-grid-body"
+        hx-swap="innerHTML"
+        hx-indicator="#global-spinner"
+        class="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+        Refresh
+      </button>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-gray-800 bg-gray-800/50">
+            <th class="text-left px-4 py-2.5 text-gray-400 font-medium text-xs uppercase tracking-wide">Tenant</th>
+            <th class="text-left px-4 py-2.5 text-gray-400 font-medium text-xs uppercase tracking-wide">Tier</th>
+            <th class="text-left px-4 py-2.5 text-gray-400 font-medium text-xs uppercase tracking-wide">Features</th>
+            <th class="text-left px-4 py-2.5 text-gray-400 font-medium text-xs uppercase tracking-wide">Status</th>
+            <th class="text-left px-4 py-2.5 text-gray-400 font-medium text-xs uppercase tracking-wide">Expires</th>
+            <th class="text-left px-4 py-2.5 text-gray-400 font-medium text-xs uppercase tracking-wide">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="license-grid-body">
+          {% for t in tenants %}
+          <tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+            <td class="px-4 py-2.5 font-mono text-xs text-white font-medium">{{ t.slug }}</td>
+            <td class="px-4 py-2.5">
+              {% if t.tier %}
+              <span class="badge {% if t.tier == 'intelligence' %}status-ok{% elif t.tier == 'enterprise' %}bg-purple-900 text-purple-200{% elif t.tier == 'litigation' %}bg-blue-900 text-blue-200{% else %}status-unk{% endif %}">
+                {{ t.tier }}
+              </span>
+              {% else %}
+              <span class="badge status-err">unlicensed</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2.5 text-xs text-gray-400">
+              {{ t.enabled_count }} / {{ t.total_features }} enabled
+            </td>
+            <td class="px-4 py-2.5">
+              {% if t.status == 'active' %}
+              <span class="badge status-ok">active</span>
+              {% else %}
+              <span class="badge status-unk">{{ t.status or '—' }}</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2.5 text-xs text-gray-500">{{ t.expires_at or 'no expiry' }}</td>
+            <td class="px-4 py-2.5">
+              <a href="/admin/tenant/{{ t.id }}"
+                 class="text-xs text-blue-400 hover:text-blue-300">Manage →</a>
+            </td>
+          </tr>
+          {% else %}
+          <tr><td colspan="6" class="px-4 py-6 text-center text-gray-500">No tenants found</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Global feature overrides -->
+  <section>
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-gray-300 font-medium text-sm uppercase tracking-wide">Global Feature Overrides</h2>
+      <span class="text-gray-500 text-xs">Kill switches — override all tenant licenses</span>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+      <div class="px-4 py-3 border-b border-gray-800 bg-amber-900/20">
+        <p class="text-amber-300 text-xs">⚠ Setting enabled_globally=false disables a feature for ALL tenants regardless of their license. Use with caution.</p>
+      </div>
+      {% if overrides %}
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-gray-800">
+            <th class="text-left px-4 py-2.5 text-gray-400 font-medium text-xs uppercase tracking-wide">Feature Flag</th>
+            <th class="text-left px-4 py-2.5 text-gray-400 font-medium text-xs uppercase tracking-wide">Global State</th>
+            <th class="text-left px-4 py-2.5 text-gray-400 font-medium text-xs uppercase tracking-wide">Reason</th>
+            <th class="text-left px-4 py-2.5 text-gray-400 font-medium text-xs uppercase tracking-wide">Updated</th>
+            <th class="text-left px-4 py-2.5 text-gray-400 font-medium text-xs uppercase tracking-wide">Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for flag, ov in overrides.items() %}
+          <tr class="border-b border-gray-800/50">
+            <td class="px-4 py-2.5 font-mono text-xs text-gray-300">{{ flag }}</td>
+            <td class="px-4 py-2.5">
+              {% if ov.enabled_globally %}
+              <span class="badge status-ok">enabled</span>
+              {% else %}
+              <span class="badge status-err">DISABLED GLOBALLY</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2.5 text-xs text-gray-500">{{ ov.reason or '—' }}</td>
+            <td class="px-4 py-2.5 text-xs text-gray-500">{{ ov.updated_at }}</td>
+            <td class="px-4 py-2.5">
+              <button onclick="removeOverride('{{ flag }}')"
+                      class="text-xs text-red-400 hover:text-red-300">Remove</button>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <div class="px-4 py-4 text-gray-500 text-sm">No global overrides set — all features governed by tenant licenses.</div>
+      {% endif %}
+    </div>
+  </section>
+
+  <!-- Add override form -->
+  <section>
+    <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+      <h3 class="text-gray-300 font-medium text-sm mb-3">Add Global Override</h3>
+      <div class="flex gap-3 items-end flex-wrap">
+        <div>
+          <label class="block text-gray-500 text-xs mb-1">Feature Flag</label>
+          <select id="override-flag" class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+            {% for flag, label, tier in all_features %}
+            <option value="{{ flag }}">{{ label }} ({{ flag }})</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div>
+          <label class="block text-gray-500 text-xs mb-1">State</label>
+          <select id="override-state" class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+            <option value="true">Enabled globally</option>
+            <option value="false">DISABLED globally</option>
+          </select>
+        </div>
+        <div class="flex-1">
+          <label class="block text-gray-500 text-xs mb-1">Reason</label>
+          <input type="text" id="override-reason" placeholder="e.g. Maintenance window"
+                 class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+        </div>
+        <button onclick="setOverride()" class="px-4 py-2 bg-amber-700 hover:bg-amber-600 rounded text-sm text-white font-medium transition-colors flex-shrink-0">
+          Set Override
+        </button>
+      </div>
+      <div id="override-result" class="mt-2 text-xs"></div>
+    </div>
+  </section>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function setOverride() {
+  const flag = document.getElementById('override-flag').value;
+  const enabled = document.getElementById('override-state').value === 'true';
+  const reason = document.getElementById('override-reason').value;
+  const result = document.getElementById('override-result');
+  try {
+    const resp = await fetch('/admin/api/licensing/overrides', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({feature_flag: flag, enabled_globally: enabled, reason})
+    });
+    const data = await resp.json();
+    result.textContent = resp.ok ? '✓ Override set' : '✗ Error: ' + data.detail;
+    result.className = 'mt-2 text-xs ' + (resp.ok ? 'text-green-400' : 'text-red-400');
+    if (resp.ok) setTimeout(() => location.reload(), 1000);
+  } catch(e) { result.textContent = '✗ ' + e.message; result.className = 'mt-2 text-xs text-red-400'; }
+}
+
+async function removeOverride(flag) {
+  if (!confirm('Remove global override for ' + flag + '?')) return;
+  const resp = await fetch('/admin/api/licensing/overrides/' + flag, {method: 'DELETE'});
+  const data = await resp.json();
+  if (data.ok) location.reload();
+  else alert('Error: ' + (data.detail || 'unknown'));
+}
+</script>
+{% endblock %}

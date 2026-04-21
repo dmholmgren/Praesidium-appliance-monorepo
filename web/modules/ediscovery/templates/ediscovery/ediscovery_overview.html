@@ -1,0 +1,190 @@
+{# ediscovery/ediscovery_overview.html
+   Three-column eDiscovery Overview — HTMX partial
+   Left:         File browser (Praesidium share + Legacy shares)
+   Middle:       Drop zone + Collection status
+   Right:        Ingest run status + Production run status
+#}
+
+<div style="display:flex; flex-direction:column; gap:0;
+            height:calc(100vh - 210px); min-height:0; overflow:hidden;">
+
+  {# ── Top row ───────────────────────────────────────────────────────────── #}
+  <div style="display:flex; flex:1; min-height:0; gap:10px; overflow:hidden;">
+
+    {# ── LEFT PANEL: File browsers ────────────────────────────────────────── #}
+    <div id="edz-left-panel"
+         style="width:280px; min-width:180px; max-width:420px; flex-shrink:0;
+                display:flex; flex-direction:column; gap:8px; overflow:hidden;">
+
+      {# Praesidium share browser #}
+      <div style="flex:0 0 45%; min-height:0;
+                  border:1px solid var(--border-color,#e2e8f0); border-radius:8px;
+                  background:var(--surface,#fff); overflow:hidden;
+                  display:flex; flex-direction:column;">
+        <div style="padding:6px 12px; border-bottom:1px solid #f1f5f9; background:#f8fafc;
+                    display:flex; align-items:center; justify-content:space-between; flex-shrink:0;">
+          <span style="font-size:10px; font-weight:700; color:var(--muted);
+                       text-transform:uppercase; letter-spacing:0.06em;">
+            📁 Praesidium
+          </span>
+          <span style="font-size:9px; color:#166534; font-weight:600;">● Active Share</span>
+        </div>
+        <div hx-get="/widgets/legacy_share_browser?share=Praesidium&include_files=true"
+             hx-trigger="load"
+             hx-swap="innerHTML"
+             style="flex:1; min-height:0; display:flex; flex-direction:column;">
+          <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+        </div>
+      </div>
+
+      {# Legacy share browser #}
+      <div style="flex:1; min-height:0;
+                  border:1px solid var(--border-color,#e2e8f0); border-radius:8px;
+                  background:var(--surface,#fff); overflow:hidden;
+                  display:flex; flex-direction:column;">
+        <div style="padding:6px 12px; border-bottom:1px solid #f1f5f9; background:#f8fafc;
+                    display:flex; align-items:center; justify-content:space-between; flex-shrink:0;">
+          <span style="font-size:10px; font-weight:700; color:var(--muted);
+                       text-transform:uppercase; letter-spacing:0.06em;">
+            Legacy Shares
+          </span>
+          <span style="font-size:9px; color:var(--muted);">Read-only</span>
+        </div>
+        <div hx-get="/widgets/legacy_share_browser?share=Clients&include_files=true"
+             hx-trigger="load"
+             hx-swap="innerHTML"
+             style="flex:1; min-height:0; display:flex; flex-direction:column;">
+          <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+        </div>
+      </div>
+
+    </div>
+
+    {# Resize handle #}
+    <div id="edz-rh"
+         onmousedown="edzStartResize(event)"
+         style="width:4px; background:transparent; cursor:col-resize; flex-shrink:0;"
+         onmouseover="this.style.background='rgba(27,42,74,0.2)'"
+         onmouseout="this.style.background='transparent'">
+    </div>
+
+    {# ── MIDDLE PANEL: Drop zone + Collections ─────────────────────────────── #}
+    <div style="flex:1; min-width:0; display:flex; flex-direction:column;
+                gap:10px; overflow:hidden;">
+
+      {# Drop zone #}
+      <div style="flex-shrink:0; height:260px;
+                  border:1px solid var(--border-color,#e2e8f0); border-radius:8px;
+                  background:var(--surface,#fff); overflow:hidden;">
+        <div hx-get="/widgets/ediscovery_drop_zone"
+             hx-trigger="load"
+             hx-swap="innerHTML"
+             style="height:100%; display:flex; flex-direction:column;">
+          <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+        </div>
+      </div>
+
+      {# Collection status #}
+      <div style="flex:1; min-height:0;
+                  border:1px solid var(--border-color,#e2e8f0); border-radius:8px;
+                  background:var(--surface,#fff); overflow:hidden;
+                  display:flex; flex-direction:column;">
+        <div hx-get="/widgets/ediscovery_collection_status"
+             hx-trigger="load"
+             hx-swap="innerHTML"
+             id="widget-ediscovery_collection_status"
+             style="flex:1; min-height:0; display:flex; flex-direction:column;">
+          <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+        </div>
+      </div>
+
+    </div>
+
+    {# ── RIGHT PANEL: Ingest status + Production status ───────────────────── #}
+    <div style="width:260px; min-width:200px; flex-shrink:0;
+                display:flex; flex-direction:column; gap:10px; overflow:hidden;">
+
+      {# Ingest Run Status #}
+      <div style="flex:1; min-height:0;
+                  border:1px solid var(--border-color,#e2e8f0); border-radius:8px;
+                  background:var(--surface,#fff); overflow:hidden;
+                  display:flex; flex-direction:column;">
+        <div style="padding:7px 12px; border-bottom:1px solid #f1f5f9; background:#f8fafc;
+                    display:flex; align-items:center; justify-content:space-between; flex-shrink:0;">
+          <span style="font-size:10px; font-weight:700; color:var(--muted);
+                       text-transform:uppercase; letter-spacing:0.06em;">Ingest Queue</span>
+          <span style="font-size:9px; color:var(--muted);">live</span>
+        </div>
+        <div hx-get="/widgets/ediscovery_ingest_status"
+             hx-trigger="load, every 10s"
+             hx-swap="innerHTML"
+             id="widget-ingest-status"
+             style="flex:1; min-height:0; overflow-y:auto;">
+          <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+        </div>
+      </div>
+
+      {# Production Run Status #}
+      <div style="flex:1; min-height:0;
+                  border:1px solid var(--border-color,#e2e8f0); border-radius:8px;
+                  background:var(--surface,#fff); overflow:hidden;
+                  display:flex; flex-direction:column;">
+        <div style="padding:7px 12px; border-bottom:1px solid #f1f5f9; background:#f8fafc;
+                    display:flex; align-items:center; justify-content:space-between; flex-shrink:0;">
+          <span style="font-size:10px; font-weight:700; color:var(--muted);
+                       text-transform:uppercase; letter-spacing:0.06em;">Productions</span>
+          <span style="font-size:9px; color:var(--muted);">live</span>
+        </div>
+        <div hx-get="/widgets/ediscovery_production_status"
+             hx-trigger="load, every 15s"
+             hx-swap="innerHTML"
+             id="widget-production-status"
+             style="flex:1; min-height:0; overflow-y:auto;">
+          <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  {# ── Bottom: Legal Intelligence Chat ─────────────────────────────────────── #}
+  <div style="flex-shrink:0; height:200px; margin-top:10px;
+              border:1px solid var(--border-color,#e2e8f0); border-radius:8px;
+              background:var(--surface,#fff); overflow:hidden;
+              display:flex; flex-direction:column;">
+    <div style="padding:6px 12px; border-bottom:1px solid #f1f5f9; background:#f8fafc;
+                display:flex; align-items:center; justify-content:space-between; flex-shrink:0;">
+      <span style="font-size:10px; font-weight:700; color:var(--muted);
+                   text-transform:uppercase; letter-spacing:0.06em;">Legal Intelligence</span>
+      <span style="font-size:9px; color:var(--muted);">AI-assisted search &amp; ingestion</span>
+    </div>
+    <div hx-get="/widgets/legal_intelligence_chat?context=collection&matter_id={{ matter_id or '' }}"
+         hx-trigger="load"
+         hx-swap="innerHTML"
+         style="flex:1; min-height:0; overflow:hidden;">
+      <div style="padding:16px; text-align:center; color:var(--muted); font-size:12px;">Loading…</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let edzRs = null;
+function edzStartResize(e) {
+  e.preventDefault();
+  edzRs = { x0: e.clientX, w0: document.getElementById('edz-left-panel').offsetWidth };
+  document.addEventListener('mousemove', edzDoResize);
+  document.addEventListener('mouseup', edzEndResize);
+}
+function edzDoResize(e) {
+  if (!edzRs) return;
+  const w = Math.max(180, Math.min(420, edzRs.w0 + e.clientX - edzRs.x0));
+  document.getElementById('edz-left-panel').style.width = w + 'px';
+}
+function edzEndResize() {
+  edzRs = null;
+  document.removeEventListener('mousemove', edzDoResize);
+  document.removeEventListener('mouseup', edzEndResize);
+}
+</script>

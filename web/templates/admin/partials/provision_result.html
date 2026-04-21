@@ -1,0 +1,16 @@
+<!-- partials/provision_result.html — HTMX fragment: provision result -->
+{% if ok %}
+<div class="flex items-center gap-2 px-3 py-2 bg-green-900/30 border border-green-700/50 rounded text-xs text-green-300">
+  <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+  </svg>
+  <span>
+    License provisioned: <strong>{{ tier }}</strong> tier — {{ enabled_count }} features enabled.
+    <a href="/admin/tenant/{{ tenant_id }}" class="underline ml-1">View →</a>
+  </span>
+</div>
+{% else %}
+<div class="px-3 py-2 bg-red-900/30 border border-red-700/50 rounded text-xs text-red-300">
+  Provision failed — check application logs.
+</div>
+{% endif %}

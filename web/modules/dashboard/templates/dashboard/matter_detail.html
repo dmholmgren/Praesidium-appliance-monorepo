@@ -1,0 +1,84 @@
+{#
+  dashboard/matter_detail.html
+  Matter Detail Page — widget grid surface.
+  Replaces dashboard/matter.html (old dashboard_panel_registry model).
+
+  Extends base.html.
+  The body is a full-width widget grid loaded via /layouts/matter_detail.
+  The matter_header widget is loaded separately at the top.
+
+  Context:
+    matter_id    str
+    matter_name  str  (for <title> only — header content comes from widget)
+    brand        dict
+    request      Request
+#}
+{% extends "base.html" %}
+
+{% block title %}{{ matter_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block content %}
+
+{#
+  Matter header — loaded via widget route so it follows the same
+  scope contract as every other surface.
+  context=dashboard tells the template which action buttons to render.
+#}
+<div id="matter-header-slot"
+     hx-get="/widgets/matter_header?matter_id={{ matter_id }}&context=dashboard"
+     hx-trigger="load"
+     hx-swap="innerHTML"
+     style="margin: -20px -20px 16px -20px;">
+  <div style="height: 72px; background: var(--surface, #fff);
+              border-bottom: 2px solid var(--border-color, #e2e8f0);
+              display: flex; align-items: center; padding: 0 16px;
+              font-size: 12px; color: var(--muted);">
+    Loading matter…
+  </div>
+</div>
+
+{#
+  Tab row — driven by layout_tabs for layout_slug=matter_detail
+  Mirrors the pattern in practice_intelligence.html exactly.
+#}
+<div id="matter-tabs"
+     hx-get="/dashboard/matter/{{ matter_id }}/tabs"
+     hx-trigger="load"
+     hx-swap="innerHTML"
+     style="margin-bottom: 14px;">
+</div>
+
+{#
+  Widget grid body — loaded by the active tab.
+  Default tab is matter_overview. The tab renderer will swap this target.
+#}
+<div id="matter-grid-body"
+     hx-get="/layouts/matter_detail?tab_slug=overview&matter_id={{ matter_id }}"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+  <div style="padding: 24px; text-align: center;
+              font-size: 12px; color: var(--muted);">
+    Loading…
+  </div>
+</div>
+
+<script>
+// Tab switching — same pattern as practice_intelligence.html
+function switchMatterTab(tabSlug, el) {
+  document.querySelectorAll('.matter-tab-btn').forEach(b => {
+    b.style.borderBottom = '2px solid transparent';
+    b.style.color = 'var(--muted)';
+    b.style.fontWeight = '400';
+  });
+  el.style.borderBottom = '2px solid var(--primary, #1B2A4A)';
+  el.style.color = 'var(--primary, #1B2A4A)';
+  el.style.fontWeight = '600';
+
+  htmx.ajax('GET',
+    '/layouts/matter_detail?tab_slug=' + tabSlug + '&matter_id={{ matter_id }}',
+    { target: '#matter-grid-body', swap: 'innerHTML' }
+  );
+}
+</script>
+
+{% endblock %}

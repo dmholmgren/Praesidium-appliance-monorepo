@@ -1,0 +1,117 @@
+{# Collection list — HTMX partial or full page #}
+{% extends "base.html" %}
+{% block title %}eDiscovery Collections — {{ brand.portal_name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto py-8 px-4">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">eDiscovery Collections</h1>
+    <a href="/ediscovery/collections/new"
+       class="px-4 py-2 text-sm font-medium text-white bg-blue-600
+              rounded-md shadow-sm hover:bg-blue-700">
+      New Collection
+    </a>
+  </div>
+
+  {% if collections %}
+  <div class="bg-white shadow overflow-hidden rounded-lg">
+    <table class="min-w-full divide-y divide-gray-200">
+      <thead class="bg-gray-50">
+        <tr>
+          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Collection</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Received</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Progress</th>
+          <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-200">
+        {% for c in collections %}
+        <tr class="hover:bg-gray-50"
+            hx-get="/api/v1/ediscovery/collections/{{ c.id }}"
+            hx-trigger="click"
+            hx-target="#collection-detail"
+            hx-swap="innerHTML">
+          <td class="px-4 py-3">
+            <div class="text-sm font-medium text-gray-900">{{ c.collection_name }}</div>
+            <div class="text-xs text-gray-500">ID: {{ c.id }}</div>
+          </td>
+          <td class="px-4 py-3">
+            <div class="text-sm text-gray-700">{{ c.source_party or '—' }}</div>
+            <div class="text-xs text-gray-500">
+              {% if c.source_type.value == 'client_collection_dms' %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Client (DMS)</span>
+              {% elif c.source_type.value == 'client_collection_dedicated' %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Client (Bulk)</span>
+              {% elif c.source_type.value == 'opposing_production' %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">Opposing</span>
+              {% elif c.source_type.value == 'third_party_subpoena' %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">Third Party</span>
+              {% else %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">Internal</span>
+              {% endif %}
+            </div>
+          </td>
+          <td class="px-4 py-3 text-sm text-gray-600">
+            {{ c.received_date or '—' }}
+            {% if c.received_method %}
+            <div class="text-xs text-gray-400">via {{ c.received_method }}</div>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3">
+            {% if c.status.value == 'collecting' %}
+              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">Collecting</span>
+            {% elif c.status.value == 'processing' %}
+              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">Processing</span>
+            {% elif c.status.value == 'review_ready' %}
+              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Review Ready</span>
+            {% elif c.status.value == 'review_complete' %}
+              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">Review Complete</span>
+            {% elif c.status.value == 'produced' %}
+              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">Produced</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3">
+            <div class="text-sm text-gray-700">
+              {{ c.reviewed_docs or 0 }} / {{ c.total_docs or 0 }}
+            </div>
+            {% if c.total_docs and c.total_docs > 0 %}
+            <div class="w-full bg-gray-200 rounded-full h-1.5 mt-1">
+              <div class="bg-blue-600 h-1.5 rounded-full"
+                   style="width: {{ ((c.reviewed_docs or 0) / c.total_docs * 100)|int }}%"></div>
+            </div>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3 text-sm">
+            <a href="/ediscovery/review/{{ c.id }}"
+               class="text-blue-600 hover:text-blue-800 font-medium">
+              Review
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="text-center py-12 bg-white rounded-lg shadow">
+    <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+    </svg>
+    <h3 class="mt-2 text-sm font-medium text-gray-900">No collections</h3>
+    <p class="mt-1 text-sm text-gray-500">Get started by creating a new eDiscovery collection.</p>
+    <div class="mt-6">
+      <a href="/ediscovery/collections/new"
+         class="px-4 py-2 text-sm font-medium text-white bg-blue-600
+                rounded-md shadow-sm hover:bg-blue-700">
+        New Collection
+      </a>
+    </div>
+  </div>
+  {% endif %}
+
+  <div id="collection-detail" class="mt-6"></div>
+</div>
+{% endblock %}

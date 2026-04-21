@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}WIAM — {{ matter.name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block page_title %}What Am I Missing?{% endblock %}
+
+{% block header_right %}
+<button
+  hx-post="/ediscovery/matters/{{ matter_id }}/wiam/sessions"
+  hx-vals='{"triggered_by": "manual"}'
+  hx-target="#session-list"
+  hx-swap="outerHTML"
+  class="btn-primary" style="font-size:12px; padding:5px 12px;">
+  Run WIAM Analysis
+</button>
+{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<div style="font-size:12px; color:var(--muted); margin-bottom:16px;">
+  <a href="/ediscovery/matters/{{ matter_id }}/issue-map" style="color:var(--muted); text-decoration:none;">← Issue Map</a>
+  <span style="margin:0 6px;">›</span>
+  <span style="color:var(--text);">WIAM — {{ matter.name | trim }}</span>
+</div>
+
+<!-- Four dimensions explainer -->
+<div class="card" style="margin-bottom:20px;">
+  <div style="font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); margin-bottom:14px;">Four Dimensions of Analysis</div>
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+    <div style="display:flex; align-items:flex-start; gap:10px;">
+      <span style="font-size:16px; margin-top:1px; flex-shrink:0;">①</span>
+      <div>
+        <div style="font-size:13px; font-weight:500; color:var(--text);">Opposing Counsel Gaps</div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px;">Elements pleaded without evidentiary support</div>
+      </div>
+    </div>
+    <div style="display:flex; align-items:flex-start; gap:10px;">
+      <span style="font-size:16px; margin-top:1px; flex-shrink:0; color:var(--accent);">②</span>
+      <div>
+        <div style="font-size:13px; font-weight:500; color:var(--text);">Your Case Gaps</div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px;">Elements you've pleaded that need more record support</div>
+      </div>
+    </div>
+    <div style="display:flex; align-items:flex-start; gap:10px;">
+      <span style="font-size:16px; margin-top:1px; flex-shrink:0; color:#059669;">③</span>
+      <div>
+        <div style="font-size:13px; font-weight:500; color:var(--text);">External Context</div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px;">Industry standards and legal authority not yet in record</div>
+      </div>
+    </div>
+    <div style="display:flex; align-items:flex-start; gap:10px;">
+      <span style="font-size:16px; margin-top:1px; flex-shrink:0; color:#DC2626;">④</span>
+      <div>
+        <div style="font-size:13px; font-weight:500; color:var(--text);">Drift Gaps</div>
+        <div style="font-size:11px; color:var(--muted); margin-top:2px;">Case developments not yet reflected in strategy</div>
+      </div>
+    </div>
+  </div>
+  <div style="font-size:11px; color:var(--muted); margin-top:14px; padding-top:12px; border-top:1px solid var(--border);">
+    All findings require citations (doc_id · page · line). Findings without citations are rejected as system errors.
+  </div>
+</div>
+
+<!-- Session list -->
+<div id="session-list">
+  <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px;">
+    <h2 style="font-family:'Lora',serif; font-size:15px; font-weight:600; color:var(--text);">Analysis Sessions</h2>
+    {% if sessions %}<span style="font-size:12px; color:var(--muted);">({{ sessions | length }})</span>{% endif %}
+  </div>
+
+  {% if sessions %}
+  <div style="display:flex; flex-direction:column; gap:8px;">
+    {% for s in sessions %}
+    <div class="card" style="padding:12px 16px; display:flex; align-items:center; justify-content:space-between;">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <span style="width:8px; height:8px; border-radius:50%; flex-shrink:0; display:inline-block;
+          background:{% if s.status == 'complete' %}#10B981{% elif s.status == 'running' %}#F59E0B{% else %}#EF4444{% endif %};"></span>
+        <div>
+          <span style="font-size:12px; font-family:monospace; color:var(--text);">{{ s.id[:8] }}…</span>
+          <span style="font-size:11px; color:var(--muted); margin-left:10px;">{{ s.triggered_by }}</span>
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:14px;">
+        {% if s.status == 'complete' %}<span class="badge badge-green">complete</span>
+        {% elif s.status == 'running' %}<span class="badge badge-yellow">running</span>
+        {% else %}<span class="badge badge-red">{{ s.status }}</span>{% endif %}
+        <span style="font-size:11px; color:var(--muted);">{{ s.created_at.strftime('%Y-%m-%d %H:%M') if s.created_at else '' }}</span>
+        <a href="/ediscovery/matters/{{ matter_id }}/wiam/sessions/{{ s.id }}"
+           style="font-size:12px; color:var(--primary); text-decoration:none; font-weight:500;">View →</a>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% else %}
+  <div class="card empty-state">
+    <p style="color:var(--text); font-weight:500; margin-bottom:4px;">No WIAM sessions yet.</p>
+    <p style="font-size:12px;">Click "Run WIAM Analysis" to begin adversarial gap analysis.</p>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

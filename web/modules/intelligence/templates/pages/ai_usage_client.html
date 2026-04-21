@@ -1,0 +1,127 @@
+{# Client AI Usage Drill-Down
+   Rendered by GET /billing/ai-usage/client/{client_id}
+#}
+{% extends "base.html" %}
+{% block title %}AI Usage — {{ client.display_name }}{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-6">
+
+  <nav class="text-sm text-gray-500 mb-2">
+    <a href="/billing" class="hover:text-indigo-600">Billing</a>
+    <span class="mx-1">/</span>
+    <a href="/billing/ai-usage/unallocated" class="hover:text-indigo-600">
+      AI Usage
+    </a>
+    <span class="mx-1">/</span>
+    <span class="text-gray-700">{{ client.display_name }}</span>
+  </nav>
+
+  <div class="flex items-start justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-semibold text-gray-900">
+        {{ client.display_name }}
+      </h1>
+      {% if client.client_number %}
+      <p class="text-sm text-gray-500">Client #{{ client.client_number }}</p>
+      {% endif %}
+      <p class="text-xs text-gray-400 mt-1">{{ period_label }}</p>
+    </div>
+    <div class="text-right">
+      <p class="text-xs text-gray-400 uppercase tracking-wide">Month to date</p>
+      <p class="text-3xl font-semibold text-gray-800">
+        ${{ '%.2f' | format(totals.month) }}
+      </p>
+      <p class="text-sm text-gray-500">
+        today: ${{ '%.2f' | format(totals.today) }}
+      </p>
+    </div>
+  </div>
+
+  <div class="bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="bg-gray-50">
+        <tr class="text-xs text-gray-500 uppercase tracking-wide">
+          <th class="text-left font-medium px-4 py-3">Matter</th>
+          <th class="text-right font-medium px-4 py-3">MTD</th>
+          <th class="text-right font-medium px-4 py-3">Today</th>
+          <th class="text-right font-medium px-4 py-3">Calls</th>
+          <th class="text-right font-medium px-4 py-3">Flags</th>
+          <th class="text-right font-medium px-4 py-3">Status</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100">
+        {% for m in matters %}
+        <tr class="hover:bg-gray-50">
+          <td class="px-4 py-3">
+            <a href="/ediscovery/matters/{{ m.matter_id }}"
+               class="text-gray-800 hover:text-indigo-600 font-medium">
+              {{ m.matter_name }}
+            </a>
+            <div class="text-xs text-gray-400">{{ m.matter_number }}</div>
+          </td>
+          <td class="px-4 py-3 text-right text-gray-800 font-medium">
+            ${{ '%.2f' | format(m.month_usd) }}
+            {% if m.reallocated_usd > 0 %}
+            <div class="text-xs text-gray-400">
+              (${{ '%.2f' | format(m.reallocated_usd) }} reallocated)
+            </div>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3 text-right text-gray-600">
+            ${{ '%.2f' | format(m.today_usd) }}
+          </td>
+          <td class="px-4 py-3 text-right text-gray-500">
+            {{ m.calls_month }}
+          </td>
+          <td class="px-4 py-3 text-right">
+            {% if m.overrides_month > 0 %}
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full
+                         text-xs font-medium bg-red-100 text-red-700 ml-1"
+                  title="Overrides">
+              {{ m.overrides_month }} override
+            </span>
+            {% endif %}
+            {% if m.fallbacks_month > 0 %}
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full
+                         text-xs font-medium bg-blue-100 text-blue-700 ml-1"
+                  title="Fallbacks">
+              {{ m.fallbacks_month }} fallback
+            </span>
+            {% endif %}
+            {% if m.pending_exceptions > 0 %}
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full
+                         text-xs font-medium bg-amber-100 text-amber-700 ml-1">
+              {{ m.pending_exceptions }} pending
+            </span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3 text-right text-xs">
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full
+                         font-medium
+                         {% if m.status == 'active' %}
+                           bg-green-100 text-green-700
+                         {% else %}
+                           bg-gray-100 text-gray-600
+                         {% endif %}">
+              {{ m.status or 'unknown' }}
+            </span>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="px-4 py-8 text-center text-sm text-gray-400">
+            No matters with AI usage for this client.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <p class="text-xs text-gray-400 mt-3 text-right">
+    As of {{ as_of }}
+  </p>
+
+</div>
+{% endblock %}

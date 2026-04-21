@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}SSL & Domain{% endblock %}
+{% block content %}
+<div style="padding:0;">
+
+  {% include "tenant_admin/_topnav.html" %}
+
+
+    <h1 class="text-2xl font-bold text-white mb-1">SSL & Domain</h1>
+    <p class="text-gray-400 text-sm mb-6">Your SSL certificate and domain configuration.</p>
+
+    {% if ssl %}
+    <div class="bg-gray-800 border border-gray-700 rounded-lg p-6 mb-6">
+      <table class="w-full text-sm">
+        <tbody class="divide-y divide-gray-700">
+          <tr>
+            <td class="py-3 pr-6 text-gray-400 font-medium w-40">Domain</td>
+            <td class="py-3 text-white font-mono">{{ ssl.ssl_domain or '—' }}</td>
+          </tr>
+          <tr>
+            <td class="py-3 pr-6 text-gray-400 font-medium">SSL Mode</td>
+            <td class="py-3">
+              {% if ssl.ssl_mode == 'letsencrypt' %}
+              <span class="bg-green-900/40 text-green-400 text-xs px-2 py-1 rounded">
+                🔒 Let's Encrypt (Auto-Renew)
+              </span>
+              {% else %}
+              <span class="bg-blue-900/40 text-blue-400 text-xs px-2 py-1 rounded">
+                📄 Custom Certificate
+              </span>
+              {% endif %}
+            </td>
+          </tr>
+          {% if ssl.ssl_cert_path %}
+          <tr>
+            <td class="py-3 pr-6 text-gray-400 font-medium">Cert Path</td>
+            <td class="py-3 text-gray-300 font-mono text-xs">{{ ssl.ssl_cert_path }}</td>
+          </tr>
+          {% endif %}
+          <tr>
+            <td class="py-3 pr-6 text-gray-400 font-medium">Cert Expiry</td>
+            <td class="py-3">
+              {% if cert_expiry %}
+                <span class="text-white">{{ cert_expiry }}</span>
+              {% elif ssl.ssl_mode == 'letsencrypt' %}
+                <span class="text-gray-500">Auto-managed — check RPRX-01 directly</span>
+              {% else %}
+                <span class="text-yellow-400">Unable to read — contact platform admin</span>
+              {% endif %}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    {% if ssl.ssl_mode == 'letsencrypt' %}
+    <div class="bg-green-900/20 border border-green-800 rounded p-4 text-sm text-green-300">
+      ✓ Your certificate is managed by Let's Encrypt and renews automatically.
+      No action required.
+    </div>
+    {% elif ssl.ssl_mode == 'custom' %}
+    <div class="bg-yellow-900/20 border border-yellow-800 rounded p-4 text-sm text-yellow-300 mb-4">
+      ⚠ Custom certificates must be renewed manually.
+      Contact your platform administrator to upload a new certificate before expiry.
+    </div>
+    <p class="text-gray-400 text-sm">
+      To renew your certificate, provide your updated <code>fullchain.pem</code> and <code>privkey.pem</code>
+      to your platform administrator. They will upload the new files via the GlassBreak provisioning console.
+    </p>
+    {% endif %}
+
+    {% else %}
+    <div class="text-gray-500">No SSL configuration found for this tenant.</div>
+    {% endif %}
+
+</div>
+{% endblock %}

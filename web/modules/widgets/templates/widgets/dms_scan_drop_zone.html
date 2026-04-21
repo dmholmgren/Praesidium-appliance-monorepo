@@ -1,0 +1,86 @@
+{# dms_scan_drop_zone — document file drop zone widget
+   POST target: /scan/upload (scanning_portal route, unchanged)
+   AI intervention point (future): content-type dispatch — zip+loadfile → eDiscovery,
+   single file → scan intake. Wired when Anthropic adapter live.
+#}
+<div class="card" style="padding:14px 16px; height:100%;">
+  <div style="font-size:12px; font-weight:600; color:var(--text); margin-bottom:10px;">
+    Upload Scanned Document
+  </div>
+
+  <div id="scan-drop-zone"
+       ondragover="event.preventDefault(); this.style.borderColor='var(--primary)'; this.style.background='#EFF6FF';"
+       ondragleave="this.style.borderColor='var(--border)'; this.style.background='';"
+       ondrop="handleScanDrop(event)"
+       onclick="document.getElementById('scan-file-input').click()"
+       style="border:2px dashed var(--border); border-radius:6px; padding:20px 12px;
+              text-align:center; cursor:pointer; transition:all 150ms;">
+    <svg style="width:24px;height:24px;color:#9CA3AF;margin:0 auto 6px;display:block;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+    </svg>
+    <div style="font-size:12px; font-weight:500; color:var(--text);">Drop document here</div>
+    <div style="font-size:11px; color:var(--muted); margin-top:2px;">PDF, image, Word · click to browse</div>
+  </div>
+  <input id="scan-file-input" type="file"
+         accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.tiff,.tif"
+         style="display:none;" onchange="dmsWidgetScanForm(this)">
+
+  <div style="margin-top:10px; display:flex; gap:6px;">
+    <select id="scan-matter"
+            style="flex:1; font-size:11px; padding:5px 8px; border:1px solid var(--border);
+                   border-radius:5px; background:var(--surface); font-family:inherit;">
+      <option value="">— Assign to matter (optional) —</option>
+      {% for m in matters %}
+      <option value="{{ m.id }}">
+        {%- if m.client_name %}{{ m.client_name }} · {% endif -%}
+        {{ m.matter_number or '' }} {{ m.matter_name }}
+      </option>
+      {% endfor %}
+    </select>
+    <select id="scan-source"
+            style="font-size:11px; padding:5px 8px; border:1px solid var(--border);
+                   border-radius:5px; background:var(--surface); font-family:inherit;">
+      <option value="scanner">Scanner</option>
+      <option value="email">Email</option>
+      <option value="fax">Fax</option>
+      <option value="mobile">Mobile</option>
+      <option value="upload">Upload</option>
+    </select>
+  </div>
+  <input id="scan-doc-type" type="text" placeholder="Document type (optional)"
+         style="width:100%; margin-top:6px; font-size:11px; padding:5px 8px;
+                border:1px solid var(--border); border-radius:5px;
+                font-family:inherit; box-sizing:border-box;">
+  <div id="scan-upload-result" style="margin-top:6px; min-height:14px;"></div>
+</div>
+
+<script>
+function handleScanDrop(e) {
+  e.preventDefault();
+  var zone = document.getElementById('scan-drop-zone');
+  zone.style.borderColor = 'var(--border)';
+  zone.style.background = '';
+  var file = e.dataTransfer.files[0];
+  if (file) dmsWidgetScanUpload(file);
+}
+function dmsWidgetScanForm(input) {
+  if (input.files[0]) dmsWidgetScanUpload(input.files[0]);
+}
+async function dmsWidgetScanUpload(file) {
+  var fd = new FormData();
+  fd.append('file', file);
+  fd.append('matter_id', document.getElementById('scan-matter').value);
+  fd.append('source',    document.getElementById('scan-source').value);
+  fd.append('doc_type',  document.getElementById('scan-doc-type').value);
+  var result = document.getElementById('scan-upload-result');
+  result.innerHTML = '<span style="font-size:11px;color:var(--muted);">Uploading…</span>';
+  try {
+    var resp = await fetch('/scan/upload', {method: 'POST', body: fd});
+    result.innerHTML = await resp.text();
+    if (resp.ok) setTimeout(function() { location.reload(); }, 1500);
+  } catch(err) {
+    result.innerHTML = '<span style="color:#EF4444;font-size:11px;">Upload failed</span>';
+  }
+}
+</script>

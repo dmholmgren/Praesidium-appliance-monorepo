@@ -1,0 +1,110 @@
+# ============================================
+# Praesidium .gitignore
+# ============================================
+
+# === Secrets & Environment ===
+.env
+.env.*
+!.env.example
+!.env.dms.example
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+*.so
+
+# === Virtual Environments ===
+venv/
+.venv/
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === Docker ===
+docker-compose.override.yml
+
+# === OS ===
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# === Coverage & Testing ===
+htmlcov/
+.coverage
+.coverage.*
+.pytest_cache/
+
+# === Logs ===
+*.log
+
+# === Database dumps ===
+*.sql
+*.dump
+
+# === Backups ===
+backups/
+
+# === Deployment bundles & tarballs ===
+bundles/
+*.tar
+*.tar.gz
+*.zip
+
+# === Shell command artifacts (accidental files) ===
+Accept:
+GET
+Host:
+User-Agent:
+WHERE
+END
+Checking
+Verifying
+Waiting
+26.0.1
+.status_code
+available
+use
+async
+tid
+op
+for
+if
+else:
+=
+exporting
+naming
+resolving
+unpacking
+{name,
+--include=*.env*
+
+# === One-off migration/fix scripts ===
+fix_schema_p1.py
+fix_capbreach.py
+schema_audit.py
+refactor_call_sites.py
+chat_wire_up_v*.py
+ui_wiring_pass*.py
+timeslips_configure_routes.py
+reimport_client_matters.py
+widget_service.py
+praesidium_ai_layer_v1.tar
+
+# === Deploy/diagnostic scripts (keep in scripts/ instead) ===
+billing_deploy.sh
+billing_diag.sh
+billing_fix.sh
+
+# === Backup requirements files ===
+requirements.txt.bk
+requirements.tx

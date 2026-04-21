@@ -1,0 +1,57 @@
+{# DMS Folder Browser — HTMX partial loaded into collection_create.html #}
+<div style="border:1px solid var(--border); border-radius:6px; overflow:hidden;">
+  <div style="padding:10px 14px; background:var(--bg); border-bottom:1px solid var(--border);">
+    <p style="font-size:13px; font-weight:500; color:var(--text);">
+      Select folder to import
+      <span style="font-weight:400; color:var(--muted);">({{ files_count }} files in current directory)</span>
+    </p>
+    <p style="font-size:11px; color:var(--muted); margin-top:2px; font-family:monospace;">{{ current_path }}</p>
+  </div>
+
+  <div style="max-height:220px; overflow-y:auto;">
+    {% if folders %}
+    <ul style="margin:0; padding:0; list-style:none;">
+      <!-- Select current directory -->
+      <li class="dms-folder-item"
+          style="padding:9px 14px; display:flex; align-items:center; justify-content:space-between; cursor:pointer; border-left:3px solid transparent; transition:background 100ms;"
+          onmouseover="this.style.background='#EFF6FF'"
+          onmouseout="if(document.getElementById('dms_folder_path').value !== '{{ current_path }}') this.style.background=''"
+          onclick="selectDmsFolder('{{ current_path }}')">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="#EAB308"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/></svg>
+          <span style="font-size:12px; font-weight:500; color:var(--text);">[Select this folder — {{ files_count }} files]</span>
+        </div>
+        <span style="font-size:11px; color:var(--muted);">current</span>
+      </li>
+
+      {% for folder in folders %}
+      <li class="dms-folder-item"
+          style="padding:9px 14px; display:flex; align-items:center; justify-content:space-between; cursor:pointer; border-left:3px solid transparent; border-top:1px solid var(--border); transition:background 100ms;"
+          onmouseover="this.style.background='#EFF6FF'"
+          onmouseout="if(document.getElementById('dms_folder_path').value !== '{{ folder.full_path }}') this.style.background=''"
+          onclick="selectDmsFolder('{{ folder.full_path }}')"
+          hx-get="/api/v1/ediscovery/dms-folders/{{ matter_id }}?path={{ folder.path }}"
+          hx-trigger="dblclick"
+          hx-target="#dms-folder-browser"
+          hx-swap="innerHTML">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="#FCD34D"><path d="M2 6a2 2 0 012-2h5l2 2h5a2 2 0 012 2v6a2 2 0 01-2 2H4a2 2 0 01-2-2V6z"/></svg>
+          <span style="font-size:12px; color:var(--text);">{{ folder.name }}</span>
+        </div>
+        <span style="font-size:11px; color:var(--muted);">double-click to open</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <div style="padding:16px; text-align:center; font-size:12px; color:var(--muted);">
+      No subfolders found. Select this directory to import its files.
+    </div>
+    {% endif %}
+  </div>
+
+  <div style="padding:8px 14px; background:var(--bg); border-top:1px solid var(--border);">
+    <p style="font-size:11px; color:var(--muted);">
+      <strong>Single click:</strong> select folder &nbsp;·&nbsp; <strong>Double click:</strong> browse into subfolder
+    </p>
+  </div>
+</div>

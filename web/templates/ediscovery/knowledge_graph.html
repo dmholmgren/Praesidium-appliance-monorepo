@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Knowledge Graph — {{ matter.name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block page_title %}Knowledge Graph{% endblock %}
+
+{% block header_right %}
+<a href="/ediscovery/matters/{{ matter_id }}/wiam" class="btn-primary" style="font-size:12px; padding:5px 12px;">→ WIAM Analysis</a>
+{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<div style="font-size:12px; color:var(--muted); margin-bottom:16px;">
+  <a href="/ediscovery/matters/{{ matter_id }}/issue-map" style="color:var(--muted); text-decoration:none;">← Issue Map</a>
+  <span style="margin:0 6px;">›</span>
+  <span style="color:var(--text);">Knowledge Graph — {{ matter.name | trim }}</span>
+</div>
+
+<!-- Entity summary -->
+<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:20px;">
+  {% for etype, label in [('person','Persons'),('organization','Organizations'),('admission','Admissions'),('contradiction','Contradictions')] %}
+  {% set count = entities | selectattr('entity_type', 'eq', etype) | list | length %}
+  <div class="card" style="text-align:center;">
+    <div style="font-size:24px; font-weight:600; color:var(--text);">{{ count }}</div>
+    <div style="font-size:11px; color:var(--muted); margin-top:2px;">{{ label }}</div>
+  </div>
+  {% endfor %}
+</div>
+
+<!-- Entities table -->
+<div class="card" style="padding:0; overflow:hidden; margin-bottom:16px;">
+  <div style="padding:12px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
+    <span style="font-size:13px; font-weight:500; color:var(--text);">Entities ({{ entities | length }})</span>
+    <span style="font-size:11px; color:var(--muted);">AI-extracted + human-confirmed</span>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Name</th>
+        <th>Type</th>
+        <th>Confidence</th>
+        <th>Source</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in entities %}
+      <tr>
+        <td style="font-weight:500; color:var(--text);">{{ e.canonical_name }}</td>
+        <td>
+          {% if e.entity_type == 'admission' %}<span class="badge badge-yellow">{{ e.entity_type }}</span>
+          {% elif e.entity_type == 'contradiction' %}<span class="badge badge-red">{{ e.entity_type }}</span>
+          {% elif e.entity_type == 'person' %}<span class="badge badge-blue">{{ e.entity_type }}</span>
+          {% elif e.entity_type == 'organization' %}<span class="badge badge-gray">{{ e.entity_type }}</span>
+          {% else %}<span class="badge badge-gray">{{ e.entity_type }}</span>{% endif %}
+        </td>
+        <td style="font-family:monospace; font-size:12px; color:var(--muted);">{{ "%.0f"|format(e.confidence * 100) }}%</td>
+        <td>
+          {% if e.attribution == 'human' %}
+          <span style="font-size:12px; color:#059669; font-weight:500;">✓ human</span>
+          {% else %}
+          <span style="font-size:12px; color:var(--muted);">ai</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="4" class="empty-state" style="border-bottom:none;">
+          No entities yet. The KG extraction job runs automatically when documents are ingested.
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<!-- Relationships -->
+{% if relationships %}
+<div class="card" style="padding:0; overflow:hidden;">
+  <div style="padding:12px 16px; border-bottom:1px solid var(--border);">
+    <span style="font-size:13px; font-weight:500; color:var(--text);">Relationships ({{ relationships | length }})</span>
+  </div>
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Entity A</th>
+        <th>Relationship</th>
+        <th>Entity B</th>
+        <th>Confidence</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in relationships %}
+      <tr>
+        <td style="color:var(--text);">{{ r.entity_a }}</td>
+        <td style="font-family:monospace; font-size:11px; color:var(--muted);">{{ r.relationship_type }}</td>
+        <td style="color:var(--text);">{{ r.entity_b }}</td>
+        <td style="font-family:monospace; font-size:12px; color:var(--muted);">{{ "%.0f"|format(r.confidence * 100) }}%</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

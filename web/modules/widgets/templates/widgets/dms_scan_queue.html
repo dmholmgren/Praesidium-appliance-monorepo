@@ -1,0 +1,119 @@
+{# dms_scan_queue — pending scan items with assign/file/delete actions
+   AI intervention point (future): when matter_id IS NULL and status = ocr_complete,
+   AI suggests matter from OCR text. Confidence badge replaces manual dropdown
+   above threshold. Below threshold → manual assign with AI suggestion pre-selected.
+#}
+<div class="card" style="padding:0; overflow:hidden; height:100%;">
+  <div style="padding:10px 14px; border-bottom:1px solid var(--border);
+              display:flex; justify-content:space-between; align-items:center;">
+    <div style="font-size:12px; font-weight:600; color:var(--text);">Scan Queue</div>
+    <span style="font-size:11px; color:var(--muted);">
+      {{ scan_queue | length }} item{{ 's' if scan_queue | length != 1 else '' }}
+    </span>
+  </div>
+
+  {% if scan_queue %}
+  <div style="overflow-y:auto; max-height:320px;" id="scan-queue-list">
+    {% for item in scan_queue %}
+    <div id="scan-item-{{ item.id }}"
+         style="padding:10px 14px; border-bottom:1px solid var(--border);">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:8px;">
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:12px; font-weight:500; color:var(--text);
+                      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+            {{ item.filename }}
+          </div>
+          <div style="font-size:10px; color:var(--muted); margin-top:2px;">
+            {{ item.source | title if item.source else '' }}
+            {% if item.matter_name %} · {{ item.matter_name }}{% endif %}
+            · {{ item.created_at.strftime('%b %d %I:%M %p') if item.created_at and item.created_at.strftime is defined else item.created_at }}
+          </div>
+        </div>
+        <div style="flex-shrink:0;">
+          {% if item.status == 'pending' %}
+            <span class="badge badge-yellow">Pending</span>
+          {% elif item.status == 'ocr_complete' %}
+            <span class="badge badge-blue">OCR Done</span>
+          {% elif item.status == 'filed' %}
+            <span class="badge badge-green">Filed</span>
+          {% elif item.status == 'ocr_failed' %}
+            <span class="badge badge-red">OCR Failed</span>
+          {% else %}
+            <span class="badge badge-gray">{{ item.status | title }}</span>
+          {% endif %}
+        </div>
+      </div>
+
+      {# Assign form — unassigned pending/ocr_complete items only #}
+      {% if item.status in ('pending', 'ocr_complete') and not item.matter_id %}
+      <div style="margin-top:6px; display:flex; gap:5px;">
+        {# AI intervention point: replace this select with AI suggestion chip
+           when get_scan_queue returns ai_suggested_matter_id #}
+        <select id="assign-matter-{{ item.id }}"
+                style="flex:1; font-size:11px; padding:3px 6px;
+                       border:1px solid var(--border); border-radius:4px;
+                       background:var(--surface); font-family:inherit;">
+          <option value="">Assign to matter…</option>
+          {% for m in matters %}
+          <option value="{{ m.id }}">
+            {%- if m.client_name %}{{ m.client_name }} · {% endif -%}
+            {{ m.matter_name }}
+          </option>
+          {% endfor %}
+        </select>
+        <button onclick="dmsAssignScan('{{ item.id }}')"
+                class="btn-primary"
+                style="font-size:11px; padding:3px 8px; white-space:nowrap;">
+          File
+        </button>
+        <button hx-delete="/scan/{{ item.id }}"
+                hx-target="#scan-item-{{ item.id }}"
+                hx-swap="outerHTML"
+                class="btn-secondary"
+                style="font-size:11px; padding:3px 7px; color:#EF4444; border-color:#FECACA;">
+          ×
+        </button>
+      </div>
+      {% endif %}
+
+      {% if item.ocr_text %}
+      <details style="margin-top:6px;">
+        <summary style="font-size:11px; color:var(--muted); cursor:pointer;">
+          OCR preview
+        </summary>
+        <p style="font-size:11px; color:var(--muted); margin:4px 0 0 0;
+                  line-height:1.5; max-height:60px; overflow:hidden;">
+          {{ item.ocr_text[:300] }}{% if item.ocr_text | length > 300 %}…{% endif %}
+        </p>
+      </details>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div style="padding:32px; text-align:center;">
+    <svg style="width:24px;height:24px;color:#D1D5DB;margin:0 auto 8px;display:block;"
+         fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+    </svg>
+    <div style="font-size:11px; color:var(--muted);">Scan queue is empty.</div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+async function dmsAssignScan(scanId) {
+  var matterId = document.getElementById('assign-matter-' + scanId).value;
+  if (!matterId) { alert('Please select a matter first.'); return; }
+  var fd = new FormData();
+  fd.append('matter_id', matterId);
+  try {
+    var resp = await fetch('/scan/' + scanId + '/assign', {method: 'POST', body: fd});
+    var html = await resp.text();
+    var item = document.getElementById('scan-item-' + scanId);
+    if (item) item.innerHTML += html;
+    setTimeout(function() { location.reload(); }, 1500);
+  } catch(err) { console.error('Assign failed:', err); }
+}
+</script>

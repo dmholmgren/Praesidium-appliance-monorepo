@@ -1,0 +1,60 @@
+{% if error %}
+<div style="padding:14px; color:#dc2626; font-size:12px;">Error loading KPIs: {{ error }}</div>
+
+{% elif not ts_linked %}
+<div style="padding: 10px 50px 10px 14px; margin-left: auto;">
+  <div style="padding: 8px 0; border-bottom: 1px solid var(--border-color,#f1f5f9);">
+    <div style="font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:3px;">WIP Unbilled</div>
+    <div style="font-size:13px; font-weight:700; color:#b45309;">$0.00 <span style="font-size:11px; font-weight:400; color:var(--muted);">— No Timeslips link</span></div>
+  </div>
+  <div style="padding: 8px 0; border-bottom: 1px solid var(--border-color,#f1f5f9);">
+    <div style="font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:3px;">AR Outstanding</div>
+    <div style="font-size:13px; font-weight:700; color:#7f1d1d;">$0.00 <span style="font-size:11px; font-weight:400; color:var(--muted);">— not matched</span></div>
+  </div>
+  <div style="padding: 8px 0; border-bottom: 1px solid var(--border-color,#f1f5f9);">
+    <div style="font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:3px;">Total Billed</div>
+    <div style="font-size:13px; font-weight:700; color:var(--text);">$0.00 <span style="font-size:11px; font-weight:400; color:var(--muted);">all time</span></div>
+  </div>
+  <div style="padding: 8px 0;">
+    <div style="font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:3px;">Collected</div>
+    <div style="font-size:13px; font-weight:700; color:#166534;">$0.00 <span style="font-size:11px; font-weight:400; color:var(--muted);">all payments</span></div>
+  </div>
+</div>
+
+{% else %}
+<div style="padding: 10px 50px 10px 14px; margin-left: auto;">
+
+  <div style="padding: 8px 0; border-bottom: 1px solid var(--border-color,#f1f5f9);">
+    <div style="font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:3px;">WIP Unbilled</div>
+    <div style="display:flex; align-items:baseline; gap:8px;">
+      <span style="font-size:15px; font-weight:700; color:#b45309;">${{ "{:,.2f}".format(wip_value) }}</span>
+      <span style="font-size:11px; color:var(--muted);">{{ "{:.1f}".format(wip_hours) }}h unbilled</span>
+    </div>
+  </div>
+
+  <div style="padding: 8px 0; border-bottom: 1px solid var(--border-color,#f1f5f9);">
+    <div style="font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:3px;">AR Outstanding</div>
+    <div style="display:flex; align-items:baseline; gap:8px;">
+      <span style="font-size:15px; font-weight:700; color:#7f1d1d;">${{ "{:,.2f}".format(ar_balance) }}</span>
+      <span style="font-size:11px; color:var(--muted);">{{ open_invoice_count }} open invoice{{ 's' if open_invoice_count != 1 else '' }}</span>
+    </div>
+  </div>
+
+  <div style="padding: 8px 0; border-bottom: 1px solid var(--border-color,#f1f5f9);">
+    <div style="font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:3px;">Total Billed</div>
+    <div style="display:flex; align-items:baseline; gap:8px;">
+      <span style="font-size:15px; font-weight:700; color:var(--text);">${{ "{:,.2f}".format(total_billed) }}</span>
+      <span style="font-size:11px; color:var(--muted);">all time</span>
+    </div>
+  </div>
+
+  <div style="padding: 8px 0;">
+    <div style="font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; margin-bottom:3px;">Collected</div>
+    <div style="display:flex; align-items:baseline; gap:8px;">
+      <span style="font-size:15px; font-weight:700; color:#166534;">${{ "{:,.2f}".format(total_collected) }}</span>
+      <span style="font-size:11px; color:var(--muted);">all payments</span>
+    </div>
+  </div>
+
+</div>
+{% endif %}

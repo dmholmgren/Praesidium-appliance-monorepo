@@ -1,0 +1,25 @@
+{# templates/drafting/partials/exemplar_list.html #}
+{# HTMX partial — returned by GET /drafting/exemplars #}
+{% if exemplars %}
+<div style="max-height:280px; overflow-y:auto;">
+  {% for ex in exemplars %}
+  <div style="padding:8px 10px; border-bottom:1px solid var(--border,#E5E7EB);
+              font-size:12px;">
+    <div style="font-weight:600; color:var(--navy,#0D1F3C);">{{ ex.name }}</div>
+    <div style="color:var(--text-muted,#6B7280); font-size:11px;">
+      {{ ex.document_type | replace('_',' ') | title }}
+      · {{ ex.practice_area | title }}
+      {% if ex.scope == 'matter' %}
+        · <em style="color:var(--accent,#C9A84C);">matter-specific</em>
+      {% else %}
+        · firm-wide
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div style="text-align:center; padding:20px; color:var(--text-muted,#6B7280); font-size:12px;">
+  No exemplars found. Add prior work product as exemplars to improve AI drafting quality.
+</div>
+{% endif %}

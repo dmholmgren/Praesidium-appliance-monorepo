@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+{% block title_suffix %} — Matter & Client Seeding{% endblock %}
+{% block page_title %}Matter & Client Seeding{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+
+  <!-- Source selector -->
+  {% if sources %}
+  <div class="flex items-center gap-3">
+    <label class="text-xs font-semibold text-gray-400 uppercase tracking-wider">Import Source:</label>
+    <div class="flex gap-2">
+      {% for s in sources %}
+      <a href="/admin/seed?tenant_id={{ tenant_id }}&source_id={{ s.id }}&tab={{ tab }}"
+         class="px-3 py-1.5 text-sm rounded border
+           {% if s.id == active_source %}bg-blue-600 border-blue-600 text-white
+           {% else %}bg-gray-800 border-gray-700 text-gray-300 hover:border-gray-500{% endif %}">
+        {{ s.display_name }}
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+  {% else %}
+  <div class="px-4 py-3 bg-yellow-900/30 border border-yellow-800 rounded text-sm text-yellow-300">
+    No active billing import sources found for this tenant.
+    <a href="/admin/billing" class="underline ml-1">Configure a source first.</a>
+  </div>
+  {% endif %}
+
+  {% if active_source %}
+
+  <!-- Stats row -->
+  <div class="grid grid-cols-4 gap-3">
+    <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
+      <p class="text-2xl font-bold text-gray-100">{{ matters_pending | length }}</p>
+      <p class="text-xs text-gray-500 mt-0.5">Matters Pending</p>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
+      <p class="text-2xl font-bold text-green-400">{{ promoted_matters_count }}</p>
+      <p class="text-xs text-gray-500 mt-0.5">Matters Promoted</p>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
+      <p class="text-2xl font-bold text-gray-100">{{ clients_pending | length }}</p>
+      <p class="text-xs text-gray-500 mt-0.5">Clients Pending</p>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-lg px-4 py-3">
+      <p class="text-2xl font-bold text-green-400">{{ promoted_clients_count }}</p>
+      <p class="text-xs text-gray-500 mt-0.5">Clients Promoted</p>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="flex gap-0 border-b border-gray-800">
+    <a href="/admin/seed?tenant_id={{ tenant_id }}&source_id={{ active_source }}&tab=matters"
+       class="px-5 py-2.5 text-sm font-medium border-b-2 -mb-px
+              {% if tab == 'matters' %}border-blue-500 text-blue-400
+              {% else %}border-transparent text-gray-400 hover:text-gray-200{% endif %}">
+      Matters ({{ matters_pending | length }})
+    </a>
+    <a href="/admin/seed?tenant_id={{ tenant_id }}&source_id={{ active_source }}&tab=clients"
+       class="px-5 py-2.5 text-sm font-medium border-b-2 -mb-px
+              {% if tab == 'clients' %}border-blue-500 text-blue-400
+              {% else %}border-transparent text-gray-400 hover:text-gray-200{% endif %}">
+      Clients ({{ clients_pending | length }})
+    </a>
+  </div>
+
+  <!-- MATTERS tab -->
+  {% if tab == 'matters' %}
+
+  {% if matters_pending %}
+  <div class="flex justify-end">
+    <form method="post" action="/admin/seed/matters/promote-all"
+          onsubmit="return confirm('Promote all {{ matters_pending | length }} matters? Conflicts will be skipped.')">
+      <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+      <input type="hidden" name="source_id" value="{{ active_source }}">
+      <input type="hidden" name="skip_conflicts" value="1">
+      <button type="submit"
+              class="px-4 py-2 bg-green-700 hover:bg-green-600 text-white text-sm rounded font-medium">
+        Promote All (Skip Conflicts)
+      </button>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-800 text-gray-400 text-xs uppercase tracking-wider">
+          <th class="text-left px-4 py-3">TS Matter ID</th>
+          <th class="text-left px-4 py-3">Display Name</th>
+          <th class="text-left px-4 py-3">Client</th>
+          <th class="text-left px-4 py-3">Status</th>
+          <th class="text-left px-4 py-3">Conflict</th>
+          <th class="text-left px-4 py-3">Action</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for m in matters_pending %}
+        <tr class="hover:bg-gray-800/40 {% if m.conflict %}bg-red-950/10{% endif %}">
+          <td class="px-4 py-2 font-mono text-xs text-gray-400">{{ m.ts_matter_id }}</td>
+          <td class="px-4 py-2">
+            <span class="text-gray-200 text-sm">{{ m.display_name or m.ts_nickname or '—' }}</span>
+            {% if m.ts_description %}
+            <p class="text-xs text-gray-600 mt-0.5 truncate max-w-xs">{{ m.ts_description }}</p>
+            {% endif %}
+          </td>
+          <td class="px-4 py-2 text-xs text-gray-400">{{ m.ts_client_name or '—' }}</td>
+          <td class="px-4 py-2">
+            <span class="badge
+              {% if m.ts_status == 'Open' %}status-ok
+              {% elif m.ts_status == 'Closed' %}bg-gray-700 text-gray-400
+              {% else %}status-warn{% endif %}">
+              {{ m.ts_status or '—' }}
+            </span>
+          </td>
+          <td class="px-4 py-2 text-xs">
+            {% if m.conflict %}
+            <span class="text-red-400" title="{{ m.conflict }}">⚠ Conflict</span>
+            {% else %}
+            <span class="text-green-500">✓ Clear</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-2">
+            <form method="post" action="/admin/seed/matters/{{ m.id }}/promote"
+                  class="flex items-center gap-2">
+              <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+              <input type="hidden" name="source_id" value="{{ active_source }}">
+              <input type="hidden" name="display_name"
+                     value="{{ m.display_name or m.ts_nickname or m.ts_matter_id }}">
+              <input type="hidden" name="praesidium_status"
+                     value="{{ 'active' if m.ts_status == 'Open' else 'closed' if m.ts_status == 'Closed' else 'inactive' }}">
+              {% if m.conflict %}
+              <input type="hidden" name="force" value="1">
+              <button type="submit"
+                      onclick="return confirm('Promote despite conflict?')"
+                      class="text-xs px-2 py-1 bg-red-800 hover:bg-red-700 text-white rounded">
+                Force
+              </button>
+              {% else %}
+              <button type="submit"
+                      class="text-xs px-2 py-1 bg-green-700 hover:bg-green-600 text-white rounded">
+                Promote
+              </button>
+              {% endif %}
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="px-4 py-8 text-center text-gray-500 text-sm">
+            {% if promoted_matters_count > 0 %}
+            All matters have been promoted. ✓
+            {% else %}
+            No pending matters. Run a Timeslips sync first.
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- CLIENTS tab -->
+  {% elif tab == 'clients' %}
+
+  {% if clients_pending %}
+  <div class="flex justify-end">
+    <form method="post" action="/admin/seed/clients/promote-all"
+          onsubmit="return confirm('Promote all {{ clients_pending | length }} clients? Conflicts will be skipped.')">
+      <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+      <input type="hidden" name="source_id" value="{{ active_source }}">
+      <input type="hidden" name="skip_conflicts" value="1">
+      <button type="submit"
+              class="px-4 py-2 bg-green-700 hover:bg-green-600 text-white text-sm rounded font-medium">
+        Promote All (Skip Conflicts)
+      </button>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="border-b border-gray-800 text-gray-400 text-xs uppercase tracking-wider">
+          <th class="text-left px-4 py-3">TS Client ID</th>
+          <th class="text-left px-4 py-3">Name</th>
+          <th class="text-left px-4 py-3">Email</th>
+          <th class="text-left px-4 py-3">Status</th>
+          <th class="text-left px-4 py-3">Conflict</th>
+          <th class="text-left px-4 py-3">Action</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for c in clients_pending %}
+        <tr class="hover:bg-gray-800/40 {% if c.conflict %}bg-red-950/10{% endif %}">
+          <td class="px-4 py-2 font-mono text-xs text-gray-400">{{ c.ts_client_id }}</td>
+          <td class="px-4 py-2 text-gray-200">{{ c.ts_name or '—' }}</td>
+          <td class="px-4 py-2 text-xs text-gray-400">{{ c.ts_email or '—' }}</td>
+          <td class="px-4 py-2">
+            <span class="badge
+              {% if c.ts_status == 'Open' %}status-ok
+              {% elif c.ts_status == 'Closed' %}bg-gray-700 text-gray-400
+              {% else %}status-warn{% endif %}">
+              {{ c.ts_status or '—' }}
+            </span>
+          </td>
+          <td class="px-4 py-2 text-xs">
+            {% if c.conflict %}
+            <span class="text-red-400" title="{{ c.conflict }}">⚠ Conflict</span>
+            {% else %}
+            <span class="text-green-500">✓ Clear</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-2">
+            <form method="post" action="/admin/seed/clients/{{ c.id }}/promote">
+              <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+              <input type="hidden" name="source_id" value="{{ active_source }}">
+              {% if c.conflict %}
+              <input type="hidden" name="force" value="1">
+              <button type="submit"
+                      onclick="return confirm('Promote despite conflict?')"
+                      class="text-xs px-2 py-1 bg-red-800 hover:bg-red-700 text-white rounded">
+                Force
+              </button>
+              {% else %}
+              <button type="submit"
+                      class="text-xs px-2 py-1 bg-green-700 hover:bg-green-600 text-white rounded">
+                Promote
+              </button>
+              {% endif %}
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" class="px-4 py-8 text-center text-gray-500 text-sm">
+            {% if promoted_clients_count > 0 %}
+            All clients have been promoted. ✓
+            {% else %}
+            No pending clients. Run a Timeslips sync first.
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% endif %}
+  {% endif %}
+
+</div>
+{% endblock %}

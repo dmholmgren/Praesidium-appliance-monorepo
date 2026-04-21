@@ -1,0 +1,134 @@
+{# Collection list — eDiscovery Collections #}
+{% extends "base.html" %}
+{% block title %}eDiscovery Collections — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block content %}
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+  <div>
+    <h1 style="font-family:'Lora',serif; font-size:20px; font-weight:600; color:var(--text);">eDiscovery Collections</h1>
+    <p style="font-size:12px; color:var(--muted); margin-top:2px;">
+      {% if matter %}
+        {{ matter.name or matter.matter_name or 'Matter' }}
+      {% else %}
+        All collections across matters
+      {% endif %}
+    </p>
+  </div>
+  <a href="/ediscovery/collections/new" class="btn-primary">
+    <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+    New Collection
+  </a>
+</div>
+
+{% if collections %}
+<div class="card" style="padding:0; overflow:hidden;">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Collection</th>
+        {% if not matter %}<th>Matter</th>{% endif %}
+        <th>Source</th>
+        <th>Received</th>
+        <th>Status</th>
+        <th>Progress</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in collections %}
+      <tr>
+        <td>
+          <div style="font-weight:500; color:var(--text); font-size:13px;">{{ c.collection_name or c.name or '—' }}</div>
+          <div style="font-size:11px; color:var(--muted); font-family:monospace;">{{ c.id }}</div>
+        </td>
+
+        {% if not matter %}
+        <td>
+          {% if c.matter_name %}
+            <a href="/dashboard/matter/{{ c.matter_id }}"
+               style="font-size:13px; color:var(--primary); text-decoration:none; font-weight:500;">
+              {{ c.matter_name }}
+            </a>
+          {% else %}
+            <span style="font-size:13px; color:var(--muted);">—</span>
+          {% endif %}
+        </td>
+        {% endif %}
+
+        <td>
+          <div style="font-size:13px; color:var(--text);">{{ c.source_party or '—' }}</div>
+          <div style="margin-top:2px;">
+            {# Handle both ORM enum (.value) and plain string from raw SQL #}
+            {% set sv = c.source_type.value if c.source_type and c.source_type is not string else (c.source_type or '') %}
+            {% if sv == 'client_collection_dms' %}
+              <span class="badge badge-green">Client (DMS)</span>
+            {% elif sv == 'client_collection_dedicated' %}
+              <span class="badge badge-green">Client (Bulk)</span>
+            {% elif sv == 'opposing_production' %}
+              <span class="badge badge-red">Opposing</span>
+            {% elif sv == 'third_party_subpoena' %}
+              <span class="badge" style="background:#EDE9FE;color:#5B21B6;">Third Party</span>
+            {% elif sv %}
+              <span class="badge badge-gray">{{ sv | replace('_', ' ') | title }}</span>
+            {% endif %}
+          </div>
+        </td>
+
+        <td style="color:var(--text); font-size:13px;">
+          {{ c.received_date or '—' }}
+          {% if c.received_method %}
+          <div style="font-size:11px; color:var(--muted);">via {{ c.received_method }}</div>
+          {% endif %}
+        </td>
+
+        <td>
+          {# Handle both ORM enum (.value) and plain string from raw SQL #}
+          {% set sv = c.status.value if c.status and c.status is not string else (c.status or '') %}
+          {% if sv == 'collecting' %}
+            <span class="badge badge-yellow">Collecting</span>
+          {% elif sv == 'processing' %}
+            <span class="badge badge-blue">Processing</span>
+          {% elif sv == 'review_ready' %}
+            <span class="badge badge-green">Review Ready</span>
+          {% elif sv == 'review_complete' %}
+            <span class="badge" style="background:#E0E7FF;color:#3730A3;">Review Complete</span>
+          {% elif sv == 'produced' %}
+            <span class="badge badge-gray">Produced</span>
+          {% elif sv %}
+            <span class="badge badge-gray">{{ sv | replace('_', ' ') | title }}</span>
+          {% endif %}
+        </td>
+
+        <td style="min-width:120px;">
+          <div style="font-size:12px; color:var(--text);">{{ c.reviewed_docs or 0 }} / {{ c.total_docs or 0 }}</div>
+          {% if c.total_docs and c.total_docs > 0 %}
+          <div style="height:4px; background:#E5E7EB; border-radius:4px; margin-top:4px; overflow:hidden;">
+            <div style="height:100%; background:var(--primary); border-radius:4px; width:{{ ((c.reviewed_docs or 0) / c.total_docs * 100)|int }}%;"></div>
+          </div>
+          {% endif %}
+        </td>
+
+        <td>
+          <a href="/ediscovery/collections/{{ c.id }}" style="font-size:12px; font-weight:500; color:var(--primary); text-decoration:none;">Open →</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% else %}
+<div class="empty-state card">
+  <svg width="40" height="40" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="margin:0 auto 12px; display:block; color:#D1D5DB;">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+  </svg>
+  <p style="font-weight:500; color:var(--text); margin-bottom:4px;">No collections yet</p>
+  <p style="font-size:12px;">Get started by creating a new eDiscovery collection.</p>
+  <div style="margin-top:16px;">
+    <a href="/ediscovery/collections/new" class="btn-primary">New Collection</a>
+  </div>
+</div>
+{% endif %}
+
+<div id="collection-detail" style="margin-top:20px;"></div>
+{% endblock %}

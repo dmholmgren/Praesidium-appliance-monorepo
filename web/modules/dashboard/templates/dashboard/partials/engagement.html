@@ -1,0 +1,63 @@
+{# COMP 10: Engagement Letter Tracking partial #}
+<div class="bg-white rounded-lg border border-gray-200 p-6">
+  <h2 class="text-lg font-semibold text-gray-900 mb-4">Engagement Letters</h2>
+  {% if letters %}
+  <div class="space-y-3">
+    {% for l in letters %}
+    <div class="flex items-center justify-between p-3 rounded-lg border border-gray-100
+      {% if l.status == 'signed' %}border-green-200 bg-green-50
+      {% elif l.status == 'expired' %}border-red-200 bg-red-50
+      {% elif l.status == 'sent' %}border-blue-200 bg-blue-50
+      {% endif %}">
+      <div>
+        <p class="text-sm font-medium text-gray-900">
+          Engagement Letter
+          {% if l.signer_name %} — {{ l.signer_name }}{% endif %}
+        </p>
+        <div class="flex gap-3 text-xs text-gray-500 mt-1">
+          <span>Created {{ l.created_at }}</span>
+          {% if l.sent_at %}<span>Sent {{ l.sent_at }}</span>{% endif %}
+          {% if l.signed_at %}<span>Signed {{ l.signed_at }}</span>{% endif %}
+          {% if l.expires_at %}<span>Expires {{ l.expires_at }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="px-2 py-0.5 rounded text-xs font-medium
+          {% if l.status == 'draft' %}bg-gray-100 text-gray-600
+          {% elif l.status == 'sent' %}bg-blue-100 text-blue-700
+          {% elif l.status == 'signed' %}bg-green-100 text-green-700
+          {% elif l.status == 'expired' %}bg-red-100 text-red-700
+          {% elif l.status == 'declined' %}bg-red-100 text-red-700
+          {% endif %}">
+          {{ l.status|title }}
+        </span>
+        {% if l.status == 'draft' %}
+        <button hx-put="{{ brand.portal_url }}/dashboard/matter/{{ matter_id }}/engagement/{{ l.id }}/send"
+                hx-target="closest div.p-3" hx-swap="outerHTML"
+                class="text-xs px-2 py-1 rounded text-white"
+                style="background-color: {{ brand.primary_color }}">
+          Mark Sent
+        </button>
+        {% elif l.status == 'sent' %}
+        <button hx-put="{{ brand.portal_url }}/dashboard/matter/{{ matter_id }}/engagement/{{ l.id }}/signed"
+                hx-target="closest div.p-3" hx-swap="outerHTML"
+                class="text-xs px-2 py-1 rounded bg-green-600 text-white">
+          Mark Signed
+        </button>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="text-center py-6">
+    <p class="text-gray-400 text-sm mb-3">No engagement letter for this matter</p>
+    <button hx-post="{{ brand.portal_url }}/dashboard/matter/{{ matter_id }}/engagement-letter"
+            hx-vals='{}' hx-target="closest div.bg-white" hx-swap="outerHTML"
+            class="text-sm px-4 py-1.5 rounded-md text-white"
+            style="background-color: {{ brand.primary_color }}">
+      Create Engagement Letter
+    </button>
+  </div>
+  {% endif %}
+</div>

@@ -1,0 +1,22 @@
+<!-- partials/events_rows.html — HTMX fragment: recent events rows (auto-refresh target) -->
+{% for e in events %}
+<tr class="border-b border-gray-800/50 hover:bg-gray-800/30">
+  <td class="px-4 py-2 font-mono text-xs text-gray-500">{{ e.created_at }}</td>
+  <td class="px-4 py-2">
+    {% set ec = e.event_type %}
+    {% if 'commit' in ec or 'save' in ec %}
+    <span class="badge status-ok">{{ ec }}</span>
+    {% elif 'rollback' in ec or 'fail' in ec %}
+    <span class="badge status-err">{{ ec }}</span>
+    {% elif 'pending' in ec or 'set' in ec %}
+    <span class="badge status-warn">{{ ec }}</span>
+    {% else %}
+    <span class="badge status-unk">{{ ec }}</span>
+    {% endif %}
+  </td>
+  <td class="px-4 py-2 font-mono text-xs text-gray-400">{{ e.vm_name or '—' }}</td>
+  <td class="px-4 py-2 text-xs text-gray-500">{{ e.triggered_by or '—' }}</td>
+</tr>
+{% else %}
+<tr><td colspan="4" class="px-4 py-4 text-center text-gray-500 text-xs">No events yet</td></tr>
+{% endfor %}

@@ -1,0 +1,82 @@
+{# widgets/dms_recent_documents.html
+   Data panel: dms_recent_documents
+   Context variables:
+     docs        — list of document dicts (id, title, doc_type, size_str,
+                   updated_str, matter_name, client_name, icon, storage_path)
+     matter_id   — str|None (when scoped to a matter)
+     total       — int
+     widget      — widget registry row dict
+     scope       — scope dict
+#}
+<div style="display:flex; flex-direction:column; height:100%;">
+
+  {# Header #}
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              padding:8px 12px; border-bottom:1px solid var(--border-color,#f1f5f9);
+              flex-shrink:0;">
+    <span style="font-size:10px; font-weight:700; color:var(--muted,#64748b);
+                 text-transform:uppercase; letter-spacing:0.06em;">
+      Recent Documents
+    </span>
+    {% if matter_id %}
+      <a href="/dms/matter/{{ matter_id }}"
+         style="font-size:10px; color:var(--primary,#1B2A4A); text-decoration:none;">
+        View all →
+      </a>
+    {% else %}
+      <a href="/dms/"
+         style="font-size:10px; color:var(--primary,#1B2A4A); text-decoration:none;">
+        Open DMS →
+      </a>
+    {% endif %}
+  </div>
+
+  {# Document list #}
+  <div style="flex:1; overflow-y:auto;">
+    {% if docs %}
+      {% for doc in docs %}
+        <div style="display:flex; align-items:center; gap:8px;
+                    padding:7px 12px; border-bottom:1px solid #f8fafc;
+                    cursor:pointer;"
+             onmouseover="this.style.background='#f8fafc'"
+             onmouseout="this.style.background=''"
+             {% if doc.id %}
+             onclick="window.location='/dms/document/{{ doc.id }}'"
+             {% endif %}>
+          <span style="font-size:15px; flex-shrink:0;">{{ doc.icon }}</span>
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:11px; font-weight:500; color:var(--text,#1a202c);
+                        white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"
+                 title="{{ doc.title }}">
+              {{ doc.title }}
+            </div>
+            <div style="font-size:10px; color:var(--muted,#64748b); margin-top:1px;
+                        white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+              {% if doc.matter_name %}
+                {{ doc.matter_name }}{% if doc.client_name %} · {{ doc.client_name }}{% endif %}
+              {% else %}
+                &mdash;
+              {% endif %}
+            </div>
+          </div>
+          <div style="flex-shrink:0; text-align:right;">
+            {% if doc.doc_type %}
+              <div style="font-size:9px; background:#f1f5f9; color:var(--muted,#64748b);
+                          padding:1px 5px; border-radius:3px; margin-bottom:2px;
+                          display:inline-block;">
+                {{ doc.doc_type }}
+              </div>
+            {% endif %}
+            <div style="font-size:10px; color:var(--muted,#94a3b8);">{{ doc.updated_str }}</div>
+          </div>
+        </div>
+      {% endfor %}
+    {% else %}
+      <div style="padding:20px 12px; text-align:center; font-size:11px;
+                  color:var(--muted,#94a3b8);">
+        No documents yet.
+      </div>
+    {% endif %}
+  </div>
+
+</div>

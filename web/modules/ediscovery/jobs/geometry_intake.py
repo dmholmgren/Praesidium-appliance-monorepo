@@ -138,19 +138,10 @@ def _persist_geometry(cur, tenant, doc_id, rendition, result, corpus="ediscovery
             "processing_status='geometry_done' WHERE id=CAST(%s AS uuid)",
             (result.canonical_text, str(doc_id)))
 
-    cur.execute("DELETE FROM doc_layout_tokens WHERE corpus=%s "
-                "AND doc_id=%s::uuid AND rendition=%s", (corpus, str(doc_id), rendition))
-    rows = [
-        (tenant, corpus, str(doc_id), rendition, t.page_number,
-         t.page_width, t.page_height, t.x, t.y, t.w, t.h,
-         t.char_start, t.char_end, t.unit, t.text, t.source, t.confidence,
-         getattr(t, "font_size", None), getattr(t, "is_bold", False),
-         getattr(t, "is_italic", False), getattr(t, "font_name", ""))
-        for t in result.tokens
-    ]
-    if rows:
-        psycopg2.extras.execute_values(cur, _TOKEN_INSERT, rows, template=_TOKEN_TEMPLATE)
-    return len(rows), ok, bad
+    # single source of truth: tokens (incl. block/line) + doc_geometry header
+    from modules.ediscovery.services import geometry_io
+    geometry_io.persist_geometry(cur.connection, tenant, corpus, doc_id, rendition, result)
+    return len(result.tokens), ok, bad
 
 
 def _mark_pending(cur, doc_id, status):

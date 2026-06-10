@@ -143,6 +143,18 @@ def chunk_section(content: str, target=TARGET, overlap=OVERLAP, minchars=MINCHAR
 
 
 def _resolve_canonical(cur, corpus, tenant_id, doc_id):
+    # Use the SAME basis the segmenter wrote sections against: the persisted
+    # geometry canonical (doc_geometry.canonical_text via load_geometry) when it
+    # exists, else the corpus text column. Keeps chunk offsets §0-aligned with the
+    # sections (no section_canonical_drift). No-op for eDiscovery where
+    # extracted_text already equals the geometry canonical.
+    try:
+        from modules.ediscovery.services.geometry_io import load_geometry
+        g = load_geometry(corpus, doc_id)
+        if g is not None and g[0]:
+            return g[0]
+    except Exception:
+        pass
     spec = CORPUS[corpus]
     cur.execute(
         f"SELECT {spec['canon_col']} FROM {spec['table']} "
@@ -294,7 +306,7 @@ def write_dms(cur, tenant_id, doc_id, canonical, chunks, force):
     rows = [(
         str(uuid.uuid4()), tenant_id, doc_id, run_id, c["chunk_index"],
         c["char_start"], c["char_end"], c["content"], c["content"],
-        c["token_count"], c["section_label"], json.dumps(c["meta"]),
+        c["token_count"], (c["section_label"] or "")[:100], json.dumps(c["meta"]),
         c["meta"].get("page_start"),
         c["section_id"], c["primitive_type"], c["primitive_id"],
     ) for c in chunks]

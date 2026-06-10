@@ -260,7 +260,7 @@ def _spine_unit(conn, runs, row, force=False):
     """route -> geometry (render inline) -> segment -> chunk -> seed embed."""
     from modules.ediscovery.jobs.geometry_intake import (
         _route, _persist_geometry, _render_to_pdf, _mark_pending,
-        NATIVE_RENDITION, RENDER_RENDITION)
+        NATIVE_RENDITION, RENDER_RENDITION, SHEET_EXTS)
     from modules.ediscovery.services.geometry_extraction import extract_pdf_with_geometry
 
     row_id, tenant, doc_id, coll_id, attempt, prev_hash = row
@@ -284,10 +284,45 @@ def _spine_unit(conn, runs, row, force=False):
                     error_detail={"skipped": "unchanged"}, input_hash=file_hash)
             return "done"
 
-        lane = _route(native_path)
+        ext = Path(native_path).suffix.lower()
+        lane = "cells" if ext in SHEET_EXTS else _route(native_path)
         abs_path = Path(storage_path) / native_path
         if lane != "ocr" and not abs_path.exists():
             raise FileNotFoundError(str(abs_path))
+
+        if lane == "cells":
+            from modules.ediscovery.services.cell_extraction import (
+                extract_cells_with_geometry, verify_cell_offsets)
+            from modules.ediscovery.services import geometry_io
+            res = extract_cells_with_geometry(str(abs_path))
+            if res is None or not (res.canonical_text or "").strip():
+                _mark_pending(cur, doc_id, "geometry_empty")
+                conn.commit()
+                _finish(conn, row_id, "done",
+                        duration_ms=int((time.time() - t0) * 1000),
+                        error_detail={"empty": True, "lane": "cells"},
+                        input_hash=file_hash)
+                return "empty"
+            ok, bad = verify_cell_offsets(res)
+            if bad:
+                raise ValueError(
+                    "cell offset self-check failed: %d bad cells" % bad)
+            geometry_io.persist_cells(conn, tenant, "ediscovery", doc_id, res)
+            cur.execute(
+                "UPDATE ediscovery_documents SET extracted_text=%s, text_source='extract', "
+                "processing_status='geometry_done' WHERE id=CAST(%s AS uuid)",
+                (res.canonical_text, str(doc_id)))
+            run_id = _seg_run_id(conn, runs, tenant)
+            state, detail = _segment_and_chunk(cur, tenant, doc_id, run_id)
+            detail = dict(detail or {})
+            detail.update({"lane": "cells", "sheets": res.sheet_count,
+                           "cells": res.cell_count})
+            if state == "ok":
+                _seed_next(cur, tenant, doc_id, coll_id, STAGE_EMBED)
+            conn.commit()
+            _finish(conn, row_id, "done", duration_ms=int((time.time() - t0) * 1000),
+                    error_detail=detail, input_hash=file_hash)
+            return "done"
 
         if lane == "ocr":
             _mark_pending(cur, doc_id, "ocr_pending")

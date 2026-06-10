@@ -50,6 +50,11 @@ IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".gif", ".bmp"}
 RENDER_EXTS = {".doc", ".docx", ".rtf", ".odt", ".html", ".htm",
                ".ppt", ".pptx", ".xls", ".xlsx", ".csv", ".ods", ".eml", ".msg"}
 
+# spreadsheet extensions: ledger_dag routes these to the cells lane
+# (native cell extraction, sect. 2). v1 _route below is unchanged on
+# purpose -- v1 still renders spreadsheets until the API switchover.
+SHEET_EXTS = {".xlsx", ".xlsm", ".csv", ".tsv"}
+
 NATIVE_RENDITION = "native_pdf"
 RENDER_RENDITION = "rendered_pdf"
 OCR_RENDITION = "ocr_pdf"

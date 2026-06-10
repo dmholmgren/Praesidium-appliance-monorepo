@@ -111,8 +111,9 @@ def run_ediscovery_pipeline(tenant_id, collection_id, user_id=None):
         C = ["--collection", cid]
         T = ["--tenant", tenant]
         stages = [
-            ("preserve", [PY, "modules/ediscovery/jobs/preserve_collection.py"] + T + C),
-            ("enrich",   [PY, "modules/ediscovery/jobs/enrich_collection.py"] + T + C),
+            ("preserve",  [PY, "modules/ediscovery/jobs/preserve_collection.py"] + T + C),
+            ("custodian", [PY, "-m", "modules.ediscovery.jobs.custodian_registry"] + T + C),
+            ("enrich",    [PY, "modules/ediscovery/jobs/enrich_collection.py"] + T + C),
             ("geometry", [PY, "-m", "modules.ediscovery.jobs.geometry_intake"] + C),
             ("render",   [PY, "-m", "modules.ediscovery.jobs.geometry_intake", "--stage", "render"] + C),
             ("ocr",      [PY, "-m", "modules.ediscovery.jobs.geometry_intake", "--stage", "ocr"] + C),

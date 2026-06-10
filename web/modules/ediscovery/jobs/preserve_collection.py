@@ -308,7 +308,7 @@ _INSERT_SQL = """
 INSERT INTO ediscovery_documents
     (tenant_id, collection_id, item_type, is_attachment, doc_type, native_type,
      original_path, native_path, native_file_hash, file_hash,
-     dedup_group_id, is_duplicate, deduped_custodians, custodian,
+     dedup_group_id, is_duplicate, deduped_custodians, custodian, custodian_source,
      email_from, email_to, email_cc, email_bcc, email_subject,
      email_message_id, email_in_reply_to, email_references, email_date,
      email_thread_id, conversation_index, thread_id, is_thread_parent,
@@ -316,7 +316,7 @@ INSERT INTO ediscovery_documents
 VALUES
     (%s, CAST(%s AS uuid), %s, %s, %s, %s,
      %s, %s, %s, %s,
-     CAST(%s AS uuid), %s, %s, %s,
+     CAST(%s AS uuid), %s, %s, %s, %s,
      %s, %s, %s, %s, %s,
      %s, %s, %s, %s,
      %s, %s, %s, %s,
@@ -325,7 +325,7 @@ RETURNING id
 """
 
 
-def _insert_unit(cur, tenant, collection_id, custodian, unit: ExplodedUnit,
+def _insert_unit(cur, tenant, collection_id, custodian, custodian_source, unit: ExplodedUnit,
                  file_hash: str, native_path: str, native_type: str,
                  dedup_gid: str, is_dup: bool, deduped_custodians: Optional[str]):
     is_body = (unit.role == "email_body")
@@ -341,7 +341,7 @@ def _insert_unit(cur, tenant, collection_id, custodian, unit: ExplodedUnit,
         ("attachment" if unit.is_attachment else "loose_file"),
         unit.is_attachment, doc_type, native_type,
         (unit.filename or None), native_path, file_hash, file_hash,
-        dedup_gid, is_dup, deduped_custodians, custodian,
+        dedup_gid, is_dup, deduped_custodians, custodian, custodian_source,
         (h.get("from") or None) if is_body else None,
         (h.get("to") or None) if is_body else None,
         (h.get("cc") or None) if is_body else None,
@@ -439,7 +439,7 @@ def preserve_collection(tenant_id: str, collection_id: str,
         if not originals.is_dir():
             # some collections store received files at the collection root
             originals = coll_root
-        custodian = coll.get("source_party") or None
+        coll_default = coll.get("source_party") or None
 
         logger.info("preserve_collection: %s (%s) root=%s rebuild=%s force=%s dry=%s",
                     coll["collection_name"], collection_id, coll_root, rebuild, force, dry_run)
@@ -484,11 +484,11 @@ def preserve_collection(tenant_id: str, collection_id: str,
             try:
                 if is_email_source(str(src)):
                     summary["emails"] += _process_email_source(
-                        conn, cur, tenant, collection_id, custodian, coll_root,
+                        conn, cur, tenant, collection_id, coll_default, coll_root,
                         src, seen_dedup, summary, worker_id, dry_run)
                 else:
                     _process_loose(
-                        conn, cur, tenant, collection_id, custodian, coll_root,
+                        conn, cur, tenant, collection_id, coll_default, coll_root,
                         src, seen_dedup, summary, worker_id, dry_run)
             except Exception as e:
                 summary["source_errors"] += 1
@@ -515,7 +515,7 @@ def _iter_files(root: Path):
             yield Path(dirpath) / fn
 
 
-def _persist_tree(conn, cur, tenant, collection_id, custodian, coll_root,
+def _persist_tree(conn, cur, tenant, collection_id, custodian, custodian_source, coll_root,
                   units: list, seen_dedup: dict, summary: dict, worker_id: str,
                   dry_run: bool, source_path: str):
     """Insert one exploded tree (email family or single loose unit), wire family,
@@ -549,7 +549,7 @@ def _persist_tree(conn, cur, tenant, collection_id, custodian, coll_root,
         if dry_run:
             doc_id = uuid.uuid4()  # synthetic for the dry-run plan
         else:
-            doc_id = _insert_unit(cur, tenant, collection_id, custodian, u,
+            doc_id = _insert_unit(cur, tenant, collection_id, custodian, custodian_source, u,
                                   fh, native_path, ntype, dgid, is_dup,
                                   deduped_custodians)
             _stage(cur, tenant, doc_id, collection_id, "received", "done",
@@ -627,13 +627,14 @@ def _body_dedup_key(u: ExplodedUnit) -> str:
     return hashlib.sha256("\x1f".join(parts).encode("utf-8", "replace")).hexdigest()
 
 
-def _process_email_source(conn, cur, tenant, collection_id, custodian, coll_root,
+def _process_email_source(conn, cur, tenant, collection_id, coll_default, coll_root,
                           src: Path, seen_dedup, summary, worker_id, dry_run) -> int:
     n = 0
     for pe in parse_email_source(str(src)):
         units = explode(pe)
+        cust, csource = resolve_custodian(coll_default, coll_root, src, pe)
         _persist_tree(conn, cur, tenant, collection_id,
-                      (custodian or _custodian_from_pe(pe)), coll_root,
+                      cust, csource, coll_root,
                       units, seen_dedup, summary, worker_id, dry_run, str(src))
         n += 1
     return n
@@ -641,6 +642,61 @@ def _process_email_source(conn, cur, tenant, collection_id, custodian, coll_root
 
 def _custodian_from_pe(pe) -> Optional[str]:
     return (pe.headers.get("from") or None)
+
+
+# ---------------------------------------------------------------------------
+# custodian resolution (per-document, with pinned provenance)
+#   priority: pst_owner > folder > collection-default > email_from > unresolved
+#   collection != custodian: the most specific structural signal wins and the
+#   source is recorded so dedup / cross-custodian reporting is auditable.
+#   Ambiguity is flagged 'unresolved' (conservative inclusion), never silently
+#   defaulted to a wrong custodian.
+# ---------------------------------------------------------------------------
+
+_PST_EXTS = {".pst", ".ost"}
+
+
+def _humanize_custodian(s: Optional[str]) -> Optional[str]:
+    import re
+    if not s:
+        return None
+    s = re.sub(r"[._\-]+", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s or None
+
+
+def _custodian_from_folder(coll_root: Path, src: Path) -> Optional[str]:
+    """First path segment under originals/as_received (or originals/) when the
+    file sits in a subfolder -- loose productions are commonly foldered by
+    custodian. A file directly in as_received yields no folder custodian."""
+    for base in (coll_root / "originals" / "as_received", coll_root / "originals"):
+        try:
+            rel = Path(src).relative_to(base)
+        except ValueError:
+            continue
+        if len(rel.parts) >= 2:
+            return _humanize_custodian(rel.parts[0])
+        return None
+    return None
+
+
+def resolve_custodian(coll_default, coll_root: Path, src: Path, pe=None):
+    """Return (custodian, custodian_source). Most-specific structural signal wins."""
+    ext = Path(src).suffix.lower()
+    if ext in _PST_EXTS:
+        c = _humanize_custodian(Path(src).stem)
+        if c:
+            return c, "pst_owner"
+    c = _custodian_from_folder(coll_root, src)
+    if c:
+        return c, "folder"
+    if coll_default:
+        return coll_default, "collection"
+    if pe is not None:
+        c = _custodian_from_pe(pe)
+        if c:
+            return c, "email_from"
+    return None, "unresolved"
 
 
 def _rel_original_path(coll_root: Path, src: Path) -> str:
@@ -656,7 +712,7 @@ def _rel_original_path(coll_root: Path, src: Path) -> str:
     return src.name
 
 
-def _process_loose(conn, cur, tenant, collection_id, custodian, coll_root,
+def _process_loose(conn, cur, tenant, collection_id, coll_default, coll_root,
                    src: Path, seen_dedup, summary, worker_id, dry_run):
     data = src.read_bytes()
     if len(data) < MIN_LOOSE_BYTES:
@@ -666,7 +722,8 @@ def _process_loose(conn, cur, tenant, collection_id, custodian, coll_root,
         is_attachment=False, attachment_index=None, filename=_rel_original_path(coll_root, src),
         content_type=None, data=data,
     )
-    _persist_tree(conn, cur, tenant, collection_id, custodian, coll_root,
+    cust, csource = resolve_custodian(coll_default, coll_root, src, None)
+    _persist_tree(conn, cur, tenant, collection_id, cust, csource, coll_root,
                   [unit], seen_dedup, summary, worker_id, dry_run, str(src))
     summary["loose"] += 1
 

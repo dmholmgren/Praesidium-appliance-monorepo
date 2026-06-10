@@ -354,11 +354,15 @@ def _enqueue_ingest(tenant_id: str, collection_id: str, user_id):
     redis_url = os.environ.get("REDIS_URL", "redis://10.10.60.12:6379/0")
     q = Queue("ediscovery", connection=redis_lib.Redis.from_url(redis_url))
     q.enqueue(
-        "modules.ediscovery.jobs.pipeline_orchestrator.run_ediscovery_pipeline",
+        "modules.ediscovery.jobs.ledger_dag.run_collection_full",
         tenant_id,
         collection_id,
         user_id,
+        spine_workers=6,
+        ocr_workers=2,
+        embed_workers=1,
         job_timeout="24h",
+        result_ttl=3600,
     )
     logger.info(f"Enqueued ingest for collection {collection_id}")
 

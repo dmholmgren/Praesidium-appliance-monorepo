@@ -602,17 +602,50 @@ def run_collection(tenant_id, collection_id, user_id=None,
 
         drain(STAGE_SPINE, idle_secs=120)  # coordinator pulls its weight
 
-        # monitor ledger to completion
+        # monitor ledger to completion; rescue lanes whose drains idled
+        # out while an upstream lane was still producing into them
+        # (orphaned pending units -- observed on b4a23cda 2026-06-10)
         deadline = time.time() + 86400
+        last_rescue = {}
+        last_report = 0.0
+        last_snapshot = None
         while time.time() < deadline:
             reap()
             cur.execute(
-                "SELECT count(*) FROM ediscovery_stage_status "
+                "SELECT stage, state, count(*) FROM ediscovery_stage_status "
                 "WHERE collection_id=%s::uuid AND stage = ANY(%s) "
-                "  AND state IN ('pending','running')", (cid, list(LANES)))
-            left = cur.fetchone()[0]
-            if left == 0:
+                "  AND state IN ('pending','running') "
+                "GROUP BY stage, state", (cid, list(LANES)))
+            counts = {}
+            for _stage, _state, _n in cur.fetchall():
+                counts.setdefault(_stage, {"pending": 0, "running": 0})
+                counts[_stage][_state] = _n
+            if not counts:
                 break
+
+            now = time.time()
+            snapshot = sorted((k, v["pending"], v["running"])
+                              for k, v in counts.items())
+            if now - last_report >= 60 and snapshot != last_snapshot:
+                prog("DAG progress: " + "; ".join(
+                    "%s pending=%d running=%d" % (k, p, r)
+                    for k, p, r in snapshot))
+                last_report, last_snapshot = now, snapshot
+
+            for _lane, v in counts.items():
+                if v["pending"] > 0 and v["running"] == 0 \
+                        and now - last_rescue.get(_lane, 0) >= 60:
+                    last_rescue[_lane] = now
+                    try:
+                        _q = qo if _lane == STAGE_OCR else qp
+                        _q.enqueue(fn, _lane, job_timeout=86400,
+                                   result_ttl=3600)
+                        prog("lane %s: %d pending with no active drain -- "
+                             "re-enqueued drain" % (_lane, v["pending"]),
+                             "warning")
+                    except Exception as e:
+                        prog("lane %s rescue enqueue failed: %s"
+                             % (_lane, e), "error")
             time.sleep(10)
 
         cur.execute(
@@ -690,3 +723,24 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def run_collection_full(tenant_id, collection_id, user_id=None,
+                        spine_workers=6, ocr_workers=2, embed_workers=1) -> dict:
+    """GUI/API entrypoint: legacy intake first (source copy, archive/PST
+    expansion, hashing, dedupe, ediscovery_documents rows), then the v2
+    ledger DAG over the resulting substrate.
+
+    Interim composition until intake is ported to a standalone stage in
+    the ingestion rework. Known limitation: if intake decomposes a folder
+    source into child collections, the children self-enqueue on the legacy
+    path and do not get the DAG.
+    """
+    from modules.ediscovery.jobs.ingest_collection import (
+        ingest_ediscovery_collection)
+    intake = ingest_ediscovery_collection(tenant_id, collection_id, user_id)
+    dag = run_collection(tenant_id, collection_id, user_id,
+                         spine_workers=spine_workers,
+                         ocr_workers=ocr_workers,
+                         embed_workers=embed_workers)
+    return {"intake": intake, "dag": dag}

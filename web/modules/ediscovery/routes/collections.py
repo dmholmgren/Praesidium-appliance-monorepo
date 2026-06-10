@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api/v1/ediscovery", tags=["ediscovery"])
 REDIS_URL = os.environ.get("REDIS_URL", "redis://10.10.60.12:6379/0")
 
 
-def get_rq_queue(name: str = "ediscovery_proc") -> Queue:
+def get_rq_queue(name: str = "ediscovery") -> Queue:
     return Queue(name, connection=Redis.from_url(REDIS_URL))
 
 
@@ -146,13 +146,17 @@ async def create_collection(
         except Exception:
             pass
 
-        q = get_rq_queue("ediscovery_proc")
+        q = get_rq_queue("ediscovery")
         q.enqueue(
-            "modules.ediscovery.jobs.ingest_collection.ingest_ediscovery_collection",
+            "modules.ediscovery.jobs.ledger_dag.run_collection_full",
             tenant_id,
             str(collection.id),
             getattr(user, "id", None),
+            spine_workers=6,
+            ocr_workers=2,
+            embed_workers=1,
             job_timeout="24h",
+            result_ttl=3600,
         )
 
         return CollectionResponse(
@@ -182,7 +186,15 @@ async def list_collections(
     try:
         query = session.query(EdiscoveryCollection).filter(
             EdiscoveryCollection.tenant_id == tenant_id,
+            EdiscoveryCollection.parent_collection_id == None,  # top-level only
         )
+        # Hide internal decomposition children
+        if hasattr(EdiscoveryCollection, 'is_internal'):
+            from sqlalchemy import or_
+            query = query.filter(
+                or_(EdiscoveryCollection.is_internal == False,
+                    EdiscoveryCollection.is_internal == None)
+            )
         if matter_id:
             query = query.filter(EdiscoveryCollection.matter_id == matter_id)
 
@@ -196,6 +208,7 @@ async def list_collections(
                 "request": request,
                 "collections": collections,
                 "brand": getattr(request.state, "branding", None),
+                
             },
         )
     finally:

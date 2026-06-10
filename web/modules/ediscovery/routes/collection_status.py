@@ -240,3 +240,48 @@ async def collection_log_partial(
         "ediscovery/partials/collection_log_partial.html",
         {"audit_log": audit_log}
     )
+
+
+@router.post("/api/v1/ediscovery/review/collection-status/{collection_id}/retry")
+async def retry_collection(request: Request, collection_id: str, user=Depends(get_current_user)):
+    """Re-enqueue a failed/stalled collection for ingestion."""
+    import os
+    tid = (getattr(request.state, "tenant_id", "") or "").strip()
+    user_id = None
+    try:
+        user_id = user.get("id") if isinstance(user, dict) else getattr(user, "id", None)
+    except Exception:
+        pass
+
+    async with AsyncSessionLocal() as session:
+        row = (await session.execute(text(
+            "SELECT id, collection_name, status FROM ediscovery_collections WHERE id = CAST(:cid AS uuid) AND TRIM(tenant_id) = :tid"
+        ), {"cid": collection_id, "tid": tid})).fetchone()
+        if not row:
+            return JSONResponse({"error": "Collection not found"}, status_code=404)
+
+        # Reset status
+        await session.execute(text(
+            "UPDATE ediscovery_collections SET status = 'collecting' WHERE id = CAST(:cid AS uuid)"
+        ), {"cid": collection_id})
+        await session.commit()
+
+    # Re-enqueue
+    try:
+        from redis import Redis
+        from rq import Queue
+        REDIS_URL = os.environ.get("REDIS_URL", "redis://10.10.60.12:6379/0")
+        redis_conn = Redis.from_url(REDIS_URL)
+        q = Queue("ediscovery", connection=redis_conn)
+        job = q.enqueue(
+            "modules.ediscovery.jobs.ledger_dag.run_collection_full",
+            tid, collection_id, user_id,
+            spine_workers=6,
+            ocr_workers=2,
+            embed_workers=1,
+            job_timeout="24h",
+            result_ttl=3600,
+        )
+        return JSONResponse({"ok": True, "job_id": job.id, "status": "collecting"})
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)

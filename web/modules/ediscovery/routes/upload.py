@@ -17,6 +17,7 @@ GET /api/v1/ediscovery/resolve-path
 """
 import os
 import logging
+import zipfile as _zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
@@ -179,6 +180,29 @@ async def ingest_path(
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+
+
+def _check_zip_password(file_path):
+    """Check if a ZIP file is password-protected. Returns True if encrypted."""
+    try:
+        if not file_path.lower().endswith('.zip'):
+            return False
+        with _zipfile.ZipFile(file_path, 'r') as zf:
+            for info in zf.infolist():
+                if info.flag_bits & 0x1:  # encrypted flag
+                    return True
+            # Also try extracting first file to detect encryption
+            try:
+                first_file = next((i for i in zf.infolist() if not i.is_dir()), None)
+                if first_file:
+                    zf.read(first_file.filename)
+            except RuntimeError as e:
+                if 'password' in str(e).lower() or 'encrypted' in str(e).lower():
+                    return True
+    except Exception:
+        pass
+    return False
+
 # ── File upload ingest ────────────────────────────────────────────────────────
 
 @router.post("/upload")
@@ -231,6 +255,21 @@ async def upload_files(
             return JSONResponse({"error": f"Failed to save {upload.filename}: {e}"}, status_code=500)
     if not saved_files:
         return JSONResponse({"error": "No files were saved"}, status_code=400)
+
+    # Check for password-protected ZIPs
+    password_protected = []
+    for fname in saved_files:
+        fpath = os.path.join(incoming_dir, fname)
+        if fname.lower().endswith('.zip') and _check_zip_password(fpath):
+            password_protected.append(fname)
+
+    if password_protected:
+        return JSONResponse({
+            "error": "password_protected",
+            "message": f"ZIP file(s) are password-protected: {', '.join(password_protected)}. Please provide the password or upload an unencrypted archive.",
+            "files": password_protected,
+            "storage_path": incoming_dir,
+        }, status_code=422)
 
     # dms_source_path is the as_received directory on the actual mount
     dms_source_path = os.path.join(EDISCOVERY_ROOT, tenant_id, matter_id, f"{safe_name}_{timestamp}", "originals", "as_received")
@@ -313,9 +352,9 @@ def _enqueue_ingest(tenant_id: str, collection_id: str, user_id):
     from rq import Queue
 
     redis_url = os.environ.get("REDIS_URL", "redis://10.10.60.12:6379/0")
-    q = Queue("ediscovery_proc", connection=redis_lib.Redis.from_url(redis_url))
+    q = Queue("ediscovery", connection=redis_lib.Redis.from_url(redis_url))
     q.enqueue(
-        "modules.ediscovery.jobs.ingest_collection.ingest_ediscovery_collection",
+        "modules.ediscovery.jobs.pipeline_orchestrator.run_ediscovery_pipeline",
         tenant_id,
         collection_id,
         user_id,

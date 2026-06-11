@@ -431,6 +431,11 @@ async def api_sync_report(request: Request, filter: str = "all", offset: int = 0
             LEFT JOIN clients c ON m.client_id = c.id
             WHERE TRIM(fm.tenant_id) = :tid ORDER BY fm.folder_path
         """), {"tid": tid})).mappings().all()
+        try:
+            excl_rows = (await session.execute(text("SELECT matter_id::text AS mid, COALESCE(SUM(file_count),0) AS cnt FROM onboarding_clusters WHERE TRIM(tenant_id) = :tid AND status <> 'dismissed' GROUP BY matter_id"), {"tid": tid})).mappings().all()
+            excl_counts = {r["mid"]: int(r["cnt"]) for r in excl_rows if r["mid"]}
+        except Exception:
+            excl_counts = {}
         total_row = (await session.execute(text("SELECT COUNT(*) FROM file_inventory WHERE TRIM(tenant_id) = :tid AND entry_type = 'folder' AND depth = 1 AND full_path LIKE :p"), {"tid": tid, "p": LEGACY_ROOT + "%"})).fetchone()
         total_folders = total_row[0] if total_row else 0
         recon_row = None
@@ -451,6 +456,7 @@ async def api_sync_report(request: Request, filter: str = "all", offset: int = 0
     for m in matches:
         d = dict(m)
         lc = d.get("disk_file_count") or 0
+        lc = max(0, lc - excl_counts.get(d.get("matter_id") or "", 0))
         pc = d.get("synced_file_count") or 0
         mn, cn = d.get("matter_name"), d.get("client_name")
         if mn and cn:

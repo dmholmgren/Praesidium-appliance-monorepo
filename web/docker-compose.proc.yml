@@ -14,6 +14,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+    networks:
+      - praesidium-internal
 
   elasticsearch:
     image: elasticsearch:8.13.0
@@ -59,12 +61,23 @@ services:
       - PYTHONPATH=/app
     volumes:
       - ./:/app
+      - /opt/praesidium-mcp/nginx/sites:/opt/praesidium-mcp/nginx/sites:rw
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /mnt/praesidium:/mnt/praesidium:rw
+      - /mnt/ediscovery:/mnt/ediscovery:rw
+      - /mnt/legacy:/mnt/legacy:ro
+      - /mnt/legacy/Clients:/mnt/clients:ro
+      - /mnt/legacy/Docsend:/mnt/docsend:ro
+      - /mnt/legacy-local:/mnt/legacy-local:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
     command: ["rq", "worker", "--url", "redis://redis:6379/0", "default", "billing", "dms", "court", "ediscovery", "intelligence"]
     depends_on:
       redis:
         condition: service_healthy
+    networks:
+      - praesidium-internal
     deploy:
-      replicas: 4
+      replicas: 8
 
   scheduler:
     build:
@@ -86,3 +99,8 @@ services:
 volumes:
   redis-data:
   es-data:
+
+networks:
+  praesidium-internal:
+    name: praesidium-internal
+    external: true

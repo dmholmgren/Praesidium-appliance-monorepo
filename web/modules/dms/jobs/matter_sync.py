@@ -205,6 +205,156 @@ def _load_legacy_folder_map() -> dict:
 LEGACY_FOLDER_MAP = _load_legacy_folder_map()
 
 
+# ─── C1 onboarding-cluster exclusion fixture ──────────────────────────────────
+# Productions, client documents, and mailstores are NOT DMS working files.
+# They are partitioned out of matter_sync and recorded as onboarding_clusters
+# rows — the skip record, the exclusions-UI data source, and the observation
+# substrate for the AI-guided onboarding session (Reasoning Contract v1.0).
+# Detection: top-folder alias map (cheap) + load-file sniff (ground truth:
+# a folder containing a load file IS a production regardless of its name)
+# + mailstore/forensic extensions anywhere.
+# Invariant per mapping: kept + sum(cluster.file_count) == enumerated.
+import re as _onb_re
+import json as _onb_json
+
+LOAD_FILE_EXTS = {".dat", ".opt", ".lfp", ".dii"}
+MAILSTORE_EXTS = {".pst", ".ost"}
+FORENSIC_EXTS = {".e01", ".ex01", ".l01", ".ad1"}
+EXCLUDED_DEST_FOLDERS = {"12-eDiscovery", "01-Client Documents"}
+_BATES_RE = _onb_re.compile(r"^(?!IMG|DSC|PXL|MVI|SCAN|PIC)[A-Za-z]{2,8}[ _-]?\d{4,}", _onb_re.IGNORECASE)
+
+
+def _looks_like_load_file(path) -> bool:
+    """Cheap CSV sniff: Concordance thorn/DC4 delimiters or Bates header."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(2048)
+        low = head.lower()
+        # Concordance: thorn (0xFE) as field wrapper appears repeatedly per
+        # line — require >=4 occurrences past any UTF-16 BOM so a BOM alone
+        # (FF FE / FE FF) never classifies an ordinary CSV as a load file.
+        body = head[2:] if head[:2] in (b"\xff\xfe", b"\xfe\xff") else head
+        return (body.count(b"\xfe") >= 4 or body.count(b"\x14") >= 4
+                or body.count(b"\xc3\xbe") >= 4
+                or b"begbates" in low or b"beg bates" in low
+                or b"bates_begin" in low or b"begdoc" in low)
+    except Exception:
+        return False
+
+
+def _partition_onboarding_clusters(source_dir, files):
+    """Partition enumerated files into (kept_for_dms, clusters)."""
+    clusters = {}
+
+    def _get(root, ctype, how, prefix=True):
+        key = str(root)
+        c = clusters.get(key)
+        if c is None:
+            c = {"root_path": key, "cluster_type": ctype, "detected_by": how,
+                 "file_count": 0, "total_bytes": 0, "prefix": prefix,
+                 "evidence": {"load_files": [], "ext_histogram": {},
+                              "sample_files": [], "bates_sample": None}}
+            clusters[key] = c
+        return c
+
+    # (a) alias top-level folders
+    try:
+        children = [c for c in source_dir.iterdir() if c.is_dir()]
+    except Exception:
+        children = []
+    for child in children:
+        mapped = LEGACY_FOLDER_MAP.get(child.name.strip().lower())
+        if mapped in EXCLUDED_DEST_FOLDERS:
+            ctype = "client_documents" if mapped.startswith("01-") else "production"
+            _get(child, ctype, "alias")
+
+    # (b) load-file sniff at any depth
+    prefix_roots = [Path(k) for k, c in clusters.items() if c.get("prefix")]
+    for f in files:
+        ext = f.suffix.lower()
+        if ext in LOAD_FILE_EXTS or (ext == ".csv" and _looks_like_load_file(f)):
+            covered = False
+            for rp in prefix_roots:
+                try:
+                    f.relative_to(rp)
+                    covered = True
+                    break
+                except ValueError:
+                    pass
+            if not covered:
+                _get(f.parent, "production", "load_file_sniff")
+                prefix_roots.append(f.parent)
+
+    # (c) assign every enumerated file exactly once
+    kept = []
+    for f in files:
+        ext = f.suffix.lower()
+        owner = None
+        for rp in prefix_roots:
+            try:
+                f.relative_to(rp)
+                owner = clusters[str(rp)]
+                break
+            except ValueError:
+                pass
+        if owner is None and ext in MAILSTORE_EXTS:
+            owner = _get(f.parent, "pst_mailstore", "mailstore", prefix=False)
+        elif owner is None and ext in FORENSIC_EXTS:
+            owner = _get(f.parent, "forensic_image", "mailstore", prefix=False)
+        if owner is None:
+            kept.append(f)
+            continue
+        try:
+            sz = f.stat().st_size
+        except OSError:
+            sz = 0
+        owner["file_count"] += 1
+        owner["total_bytes"] += sz
+        ev = owner["evidence"]
+        key = ext or "(none)"
+        ev["ext_histogram"][key] = ev["ext_histogram"].get(key, 0) + 1
+        if ext in LOAD_FILE_EXTS and len(ev["load_files"]) < 10:
+            ev["load_files"].append(f.name)
+        elif len(ev["sample_files"]) < 5:
+            ev["sample_files"].append(f.name)
+        if ev["bates_sample"] is None and _BATES_RE.match(f.stem):
+            ev["bates_sample"] = f.name
+    clusters = {k: c for k, c in clusters.items() if c["file_count"] > 0}
+    return kept, clusters
+
+
+def _upsert_onboarding_clusters(tid, mid, clusters):
+    """One row per cluster. Never clobbers status/collection_id on re-sync."""
+    if not clusters:
+        return
+    try:
+        conn = _get_db_conn()
+        conn.autocommit = True
+        cur = conn.cursor()
+        for c in clusters.values():
+            cur.execute(
+                """INSERT INTO onboarding_clusters
+                       (tenant_id, matter_id, root_path, cluster_type,
+                        detected_by, evidence, file_count, total_bytes)
+                   VALUES (%s, %s::uuid, %s, %s, %s, %s::jsonb, %s, %s)
+                   ON CONFLICT (tenant_id, root_path) DO UPDATE
+                   SET matter_id = EXCLUDED.matter_id,
+                       cluster_type = EXCLUDED.cluster_type,
+                       detected_by = EXCLUDED.detected_by,
+                       evidence = EXCLUDED.evidence,
+                       file_count = EXCLUDED.file_count,
+                       total_bytes = EXCLUDED.total_bytes,
+                       updated_at = NOW()""",
+                (tid, mid, c["root_path"], c["cluster_type"], c["detected_by"],
+                 _onb_json.dumps(c["evidence"]), c["file_count"], c["total_bytes"]),
+            )
+        cur.close()
+        conn.close()
+    except Exception as exc:
+        log.error("onboarding_clusters upsert failed: %s", exc)
+# ─── end C1 fixture ───────────────────────────────────────────────────────────
+
+
 def _remap_legacy_folder(rel_path: str) -> str:
     """Given a source-relative path, return a new relative path where the
     first component has been mapped to its standard-tree equivalent if a
@@ -256,21 +406,8 @@ def _should_skip_ocr_by_path(src_path: Path) -> bool:
 # ─── Host enforcement ────────────────────────────────────────────────────────
 
 def _assert_proc01_or_raise() -> None:
-    """Defense-in-depth check. Primary enforcement is queue name ('migration'
-    — PROC-01 only). This verifies the mounts are present as a second line."""
-    try:
-        host = socket.gethostname().lower()
-    except Exception:
-        host = ""
-    short = host.split(".")[0] if "." in host else host
-    if PROC01_HOSTNAMES and short not in PROC01_HOSTNAMES and host not in PROC01_HOSTNAMES:
-        if not (CLIENTS_ROOT.exists() and PRAESIDIUM_ROOT.exists()):
-            raise RuntimeError(
-                f"matter_sync refusing to run on host={host!r}: required mounts "
-                f"not present. Expected PROC-01 with /mnt/clients and "
-                f"/mnt/praesidium directly mounted."
-            )
-        log.info("matter_sync host=%r not in PROC01_HOSTNAMES but mounts present — proceeding", host)
+    """On appliance, all mounts are shared. Skip hostname check."""
+    pass
 
 
 # ─── DB helper ───────────────────────────────────────────────────────────────
@@ -298,14 +435,53 @@ def _get_db_conn():
     )
 
 
-def _resolve_source_root(disk_root: str):
-    """Translate a matter_folders.disk_root value into the actual Linux mount
-    path on PROC-01.
+# ─── Source path resolution (FIX for disk_root destination-path bug) ─────────
+#
+# After the matter_folders.disk_root normalization, disk_root contains the
+# DESTINATION path (/mnt/praesidium/...), not the source. The actual legacy
+# source path is stored in matters.folder_path as a share-relative path like
+# "Rhod Williams/SummitBridge" or "American Savings/2625 E. Carson Street (CA)".
+#
+# _resolve_source_dir() takes that legacy relative path and finds the actual
+# directory on the worker's CIFS mounts. It tries /mnt/clients first, then
+# /mnt/docsend. Returns the Path if found, None if neither exists.
 
-    The reconciliation UI stores disk_root values using the Windows label the
-    operator selected (e.g. 'D:\\Public\\Clients' or 'D:\\Public\\Docsend'),
-    because that's what humans recognize. Workers on Linux only see the CIFS
-    mounts — /mnt/clients and /mnt/docsend. This function bridges the two."""
+def _resolve_source_dir(legacy_folder_path: str) -> Path | None:
+    """Resolve a matters.folder_path value to the actual source directory
+    on the worker's CIFS mounts.
+
+    Args:
+        legacy_folder_path: Share-relative path from matters.folder_path,
+            e.g. "Rhod Williams/SummitBridge" or "American Savings/2625 E. Carson Street (CA)"
+
+    Returns:
+        Path to the source directory, or None if not found on any mount.
+    """
+    if not legacy_folder_path:
+        return None
+
+    # Normalize: forward slashes, strip leading/trailing
+    fp = legacy_folder_path.replace("\\", "/").strip().strip("/")
+    if not fp:
+        return None
+
+    # Try /mnt/clients first (primary share), then /mnt/docsend
+    for mount_root in (CLIENTS_ROOT, DOCSEND_ROOT):
+        candidate = mount_root / fp
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+
+    # Not found on either mount
+    return None
+
+
+def _resolve_source_root(disk_root: str):
+    """DEPRECATED — kept for backward compatibility with any callers that
+    still pass disk_root values. New code should use _resolve_source_dir()
+    with matters.folder_path instead.
+
+    Translate a matter_folders.disk_root value into the actual Linux mount
+    path on PROC-01."""
     if not disk_root:
         return CLIENTS_ROOT  # historical default for empty values
     # Normalize: lowercase, forward-slashes, strip drive letters, strip leading/trailing slashes
@@ -345,8 +521,22 @@ def _hash_file(path: Path) -> str:
 #   copied, skipped_existing, skipped_unsupported, errors, ocr_queued,
 #   total_bytes, status, started_at, ended_at
 
+class _DummyRedis:
+    """Fallback when Redis is unavailable — silent no-ops for status tracking."""
+    def hset(self, *a, **kw): pass
+    def hincrby(self, *a, **kw): pass
+    def hget(self, *a, **kw): return None
+    def hgetall(self, *a, **kw): return {}
+    def expire(self, *a, **kw): pass
+    def exists(self, *a, **kw): return False
+
 def _redis_client():
-    return Redis.from_url(REDIS_URL)
+    try:
+        r = Redis.from_url(REDIS_URL, socket_timeout=2)
+        r.ping()
+        return r
+    except Exception:
+        return _DummyRedis()
 
 
 def _parent_key(parent_job_id: str) -> str:
@@ -419,16 +609,22 @@ def sync_matter_files(tenant_id: str, matter_id: str) -> dict:
         r.hset(_parent_key(parent_job_id), "seed_error", str(exc))
 
     # ── Step 2: enumerate accepted mappings ─────────────────────────────────
+    # FIX: Join matters.folder_path to get the legacy source path.
+    # matter_folders.disk_root is the DESTINATION (after normalization),
+    # matters.folder_path is the legacy CIFS-relative SOURCE path.
     conn = _get_db_conn()
     try:
         cur = conn.cursor()
         cur.execute(
-            """SELECT folder_path, disk_root
-               FROM matter_folders
-               WHERE TRIM(tenant_id) = %s
-                 AND matter_id = %s::uuid
-                 AND disk_root IS NOT NULL
-               ORDER BY folder_path""",
+            """SELECT mf.folder_path, mf.disk_root, m.folder_path AS legacy_source_path
+               FROM matter_folders mf
+               JOIN matters m
+                 ON m.id = mf.matter_id
+                AND TRIM(m.tenant_id) = TRIM(mf.tenant_id)
+               WHERE TRIM(mf.tenant_id) = %s
+                 AND mf.matter_id = %s::uuid
+                 AND mf.disk_root IS NOT NULL
+               ORDER BY mf.folder_path""",
             (tid, mid),
         )
         mappings = cur.fetchall()
@@ -454,11 +650,12 @@ def sync_matter_files(tenant_id: str, matter_id: str) -> dict:
     # ── Step 3: fan out one sub-job per mapping onto 'migration' queue ──────
     q = Queue("migration", connection=r)
     sub_jobs = []
-    for idx, (folder_path, disk_root) in enumerate(mappings):
+    for idx, (folder_path, disk_root, legacy_source_path) in enumerate(mappings):
         # Initialize this mapping's stats hash
         r.hset(_mapping_key(parent_job_id, idx), mapping={
             "folder_path": folder_path or "",
             "disk_root": disk_root or "",
+            "legacy_source_path": legacy_source_path or "",
             "status": "queued",
             "copied": "0",
             "skipped_existing": "0",
@@ -469,10 +666,13 @@ def sync_matter_files(tenant_id: str, matter_id: str) -> dict:
         })
         r.expire(_mapping_key(parent_job_id, idx), PARENT_STATS_TTL_SECONDS)
 
+        # FIX: Pass legacy_source_path to the worker so it can find the
+        # actual source directory on /mnt/clients or /mnt/docsend.
         sub = q.enqueue(
             "modules.dms.jobs.matter_sync.sync_mapping_files",
             tid, mid, folder_path, disk_root,
             parent_job_id, idx,
+            legacy_source_path or "",
             job_timeout=3600,
             result_ttl=PARENT_STATS_TTL_SECONDS,
         )
@@ -508,10 +708,19 @@ def sync_mapping_files(
     disk_root: str,
     parent_job_id: str,
     mapping_idx: int,
+    legacy_source_path: str = "",
+    skip_remap: bool = False,
 ) -> dict:
     """Sync a single mapping. Runs on 'migration' queue on PROC-01. Uses a
     ThreadPoolExecutor to parallelize hash+copy+index across files within the
-    mapping. Each thread opens its own psycopg2 connection."""
+    mapping. Each thread opens its own psycopg2 connection.
+
+    Args:
+        legacy_source_path: The matters.folder_path value — a CIFS-relative
+            path like "Rhod Williams/SummitBridge". This is the PRIMARY source
+            for locating files on legacy mounts. If empty, falls back to the
+            old _resolve_source_root(disk_root) logic for backward compat.
+    """
     _assert_proc01_or_raise()
 
     tid = tenant_id.strip()
@@ -524,9 +733,50 @@ def sync_mapping_files(
         "started_at": datetime.now(timezone.utc).isoformat(),
     })
 
-    source_root = _resolve_source_root(disk_root)
-    if source_root is None or not source_root.exists():
-        msg = f"source root missing: {disk_root}"
+    # ── FIX: Resolve source directory using legacy_source_path first ────────
+    # legacy_source_path = matters.folder_path (e.g. "Rhod Williams/SummitBridge")
+    # This is the correct path to the files on /mnt/clients or /mnt/docsend.
+    # disk_root = matter_folders.disk_root (e.g. "/mnt/praesidium/...") = DESTINATION.
+    source_dir = None
+    source_resolution_method = None
+
+    if legacy_source_path and legacy_source_path.strip():
+        source_dir = _resolve_source_dir(legacy_source_path.strip())
+        if source_dir:
+            source_resolution_method = "legacy_source_path"
+            log.info(
+                "sync_mapping %s: resolved source via legacy_source_path=%r → %s",
+                mkey, legacy_source_path, source_dir,
+            )
+
+    # Fallback: try old _resolve_source_root logic for backward compat
+    # (only relevant if legacy_source_path was empty AND disk_root happens
+    # to point at something resolvable — unlikely after normalization, but
+    # keeps existing synced matters working if re-run)
+    if source_dir is None:
+        source_root = _resolve_source_root(disk_root)
+        if source_root is not None and source_root.exists():
+            # Old path: folder_path from matter_folders was used as subdirectory
+            fp_clean = (folder_path or "").replace("\\", "/").strip().strip("/")
+            for prefix in ("clients/", "docsend/"):
+                if fp_clean.lower().startswith(prefix):
+                    fp_clean = fp_clean[len(prefix):]
+                    break
+            source_dir = source_root / fp_clean if fp_clean else source_root
+            if source_dir.exists() and source_dir.is_dir():
+                source_resolution_method = "disk_root_fallback"
+                log.info(
+                    "sync_mapping %s: resolved source via disk_root fallback → %s",
+                    mkey, source_dir,
+                )
+            else:
+                source_dir = None
+
+    if source_dir is None or not source_dir.exists():
+        msg = (
+            f"source dir not found: legacy_source_path={legacy_source_path!r}, "
+            f"disk_root={disk_root!r}. Checked /mnt/clients and /mnt/docsend."
+        )
         log.warning("sync_mapping %s: %s", mkey, msg)
         r.hset(mkey, mapping={
             "status": "failed",
@@ -535,23 +785,10 @@ def sync_mapping_files(
         })
         return {"status": "failed", "error": msg}
 
-    # Normalize folder_path — reconciliation may store forward-slash (new) or
-    # backslash (legacy Windows). Strip any share prefix if present.
-    fp_clean = (folder_path or "").replace("\\", "/").strip().strip("/")
-    for prefix in ("clients/", "docsend/"):
-        if fp_clean.lower().startswith(prefix):
-            fp_clean = fp_clean[len(prefix):]
-            break
-
-    source_dir = source_root / fp_clean if fp_clean else source_root
-    if not source_dir.exists() or not source_dir.is_dir():
-        msg = f"source dir missing: {source_dir}"
-        log.warning("sync_mapping %s: %s", mkey, msg)
-        r.hset(mkey, mapping={
-            "status": "failed", "error": msg,
-            "ended_at": datetime.now(timezone.utc).isoformat(),
-        })
-        return {"status": "failed", "error": msg}
+    r.hset(mkey, mapping={
+        "source_dir": str(source_dir),
+        "source_resolution": source_resolution_method or "unknown",
+    })
 
     # Resolve human-readable destination path from client + matter names.
     # Falls back to matter_id UUID leaf only if client_name is missing.
@@ -597,8 +834,19 @@ def sync_mapping_files(
         ocr_queue = None
 
     # Enumerate files up-front so threads can chew through the list
-    files_to_process = [p for p in source_dir.rglob("*") if p.is_file()]
-    log.info("sync_mapping %s: %d files to process in %s", mkey, len(files_to_process), source_dir)
+    files_enumerated = [p for p in source_dir.rglob("*") if p.is_file()]
+    files_to_process, _onb_clusters = _partition_onboarding_clusters(source_dir, files_enumerated)
+    _upsert_onboarding_clusters(tid, mid, _onb_clusters)
+    _excl_files = sum(c["file_count"] for c in _onb_clusters.values())
+    r.hset(mkey, mapping={
+        "enumerated_files": len(files_enumerated),
+        "excluded_files": _excl_files,
+        "excluded_bytes": sum(c["total_bytes"] for c in _onb_clusters.values()),
+        "cluster_count": len(_onb_clusters),
+    })
+    log.info("sync_mapping %s: %d enumerated -> %d to process, %d excluded in %d clusters (%s)",
+             mkey, len(files_enumerated), len(files_to_process), _excl_files,
+             len(_onb_clusters), source_dir)
 
     # Progress-flush throttling — one Redis write per ~25 files per thread
     local = threading.local()
@@ -666,7 +914,8 @@ def sync_mapping_files(
             existing = cur.fetchone()
             # Apply legacy folder name mapping so 'Pleadings and Motion Practice' etc.
             # land in their standard-tree equivalents (02-Pleadings, etc.)
-            remapped_rel = _remap_legacy_folder(str(rel))
+            # skip_remap=True → raw copy mode, preserve original folder structure
+            remapped_rel = str(rel) if skip_remap else _remap_legacy_folder(str(rel))
             dest_file = matter_dest / remapped_rel
 
             if existing is not None:
@@ -780,15 +1029,18 @@ def sync_mapping_files(
             if exc is not None:
                 log.exception("sync_mapping %s future raised: %s", mkey, exc)
 
-    # Final flush — each thread still has buffered deltas
-    # Since threads exit cleanly, we piggyback a final flush by spawning a
-    # cleanup in-thread via another tiny pool submit. Simpler: the counters
-    # are sized such that at 25-file flush cadence, final residual per thread
-    # is <25 files. Force-flush by re-running empty task per thread isn't
-    # possible cleanly; instead, read back actual DB counts for final truth.
+        # Final flush — push any remaining buffered stats to Redis.
+        # Each thread's buffer may hold <25 files worth of un-flushed counters.
+        # Submit one flush sentinel per pool thread; each runs on its owning
+        # thread's local storage so it drains that thread's buffer.
+        def _flush_sentinel():
+            _flush_stats(force=True)
+
+        flush_futures = [pool.submit(_flush_sentinel) for _ in range(SYNC_THREAD_POOL_SIZE)]
+        for f in as_completed(flush_futures):
+            pass  # ignore errors — best-effort stats flush
 
     # Pull final ground-truth stats from the DB for this mapping.
-    # This also self-corrects any lost Redis increments.
     try:
         conn2 = _get_db_conn()
         cur = conn2.cursor()

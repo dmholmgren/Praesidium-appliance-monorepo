@@ -1,0 +1,122 @@
+# Praesidium WEB — Appliance Edition
+#
+# Sits in /opt/praesidium-web/ alongside the cloned praesidium-web repo.
+# This file is named .appliance.yml so it doesn't conflict with the repo's
+# own docker-compose.yml (which targets the legacy WEB-01 layout).
+#
+# Bring up:
+#   docker compose -f docker-compose.appliance.yml up -d
+#
+# This compose:
+#   - builds the praesidium-platform:latest image from the repo's Dockerfile
+#     so workers in /opt/praesidium-proc/ can reuse the SAME image
+#   - bind-mounts /opt/praesidium-web -> /app (preserves r.sh hot-reload)
+#   - attaches to praesidium-edge (so rprx can proxy_pass) AND
+#     praesidium-internal (so it can reach Postgres + redis + ES)
+#   - runs alembic upgrade head as a one-shot bootstrap before web starts;
+#     bootstrap exits cleanly when DB is at head
+#
+# The bootstrap pattern keeps web startup deterministic — no migrations
+# baked into startup.py. Re-run migrations without bouncing live web by:
+#   docker compose -f docker-compose.appliance.yml run --rm bootstrap
+
+services:
+
+  # One-shot: alembic upgrade head against the appliance Postgres.
+  # Runs to completion and exits. Idempotent: alembic no-ops if at head.
+  bootstrap:
+    image: praesidium-platform:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: praesidium-bootstrap
+    env_file: .env
+    command: >
+      bash -lc "
+        echo '[bootstrap] alembic upgrade head against appliance DB' &&
+        alembic upgrade head &&
+        echo '[bootstrap] complete'
+      "
+    volumes:
+      - /opt/praesidium-web:/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    dns:
+      - 10.10.0.1
+      - 10.10.0.254
+    networks:
+      - praesidium-internal
+    restart: "no"
+
+  # Main web service. uvicorn on :8000 internal, reached by rprx via
+  # praesidium-edge.
+  web:
+    image: praesidium-platform:latest
+    # Build block is on web too so 'docker compose up' from this file
+    # alone produces the image. Both services reference the same tag.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: praesidium-web
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PYTHONPATH=/app
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - DOCKER_TLS_VERIFY=
+    # service_completed_successfully gates web on bootstrap finishing
+    # cleanly. If bootstrap fails (migration error), web does NOT start.
+    # Fail loud, not silently.
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    volumes:
+      - /opt/praesidium-web:/app
+      # Same mounts the workers see (see praesidium-proc compose).
+      # Web needs them for synchronous read paths (DMS preview,
+      # eDiscovery thumbnails) that don't go through workers.
+      - /mnt/legacy-qnap:/mnt/legacy-qnap:ro
+      - /mnt/praesidium:/mnt/praesidium:rw
+      - /mnt/ediscovery:/mnt/ediscovery:rw
+      - /mnt/legacy/Clients:/mnt/clients:ro
+      - /mnt/legacy/Docsend:/mnt/docsend:ro
+      - /mnt/legacy:/mnt/legacy:ro
+      - /mnt/legacy-local:/mnt/legacy-local:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "10.10.0.10:8000:8000"
+    dns:
+      - 10.10.0.1
+      - 10.10.0.254
+    networks:
+      praesidium-edge:
+        ipv4_address: 172.28.1.3
+      praesidium-internal:
+        ipv4_address: 172.28.0.5
+    command: ["python", "startup.py"]
+
+  # WmlComparer redline sidecar (primary compare engine). comparison_engine.py
+  # and compare_worker.py POST here and fall back to LibreOffice on HTTP 422 or
+  # if this service is unreachable. Internal-only; reached as
+  # http://praesidium-redline:8080. Host 127.0.0.1:8091 is for local curl tests.
+  redline:
+    build:
+      context: /datapool/opt/praesidium-redline
+      dockerfile: Dockerfile
+    image: praesidium-redline:v1
+    container_name: praesidium-redline
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8091:8080"
+    networks:
+      - praesidium-internal
+
+networks:
+  praesidium-edge:
+    name: praesidium-edge
+    external: true
+  praesidium-internal:
+    name: praesidium-internal
+    external: true

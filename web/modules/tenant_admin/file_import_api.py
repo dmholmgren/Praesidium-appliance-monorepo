@@ -1098,3 +1098,142 @@ async def api_legacy_files(request: Request, path: str = "", user=Depends(get_cu
         return JSONResponse({"files": [], "folder_name": ""})
     files = _legacy_list_files(target)
     return JSONResponse({"files": files, "folder_name": os.path.basename(target) if path else "Legacy Root", "path": path})
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# ONBOARDING CLUSTERS (C2) — exclusions surfaced per matter, one-click
+# collection creation for production/client-document clusters.
+# ═════════════════════════════════════════════════════════════════════════════
+
+_CLUSTER_SOURCE_TYPE = {
+    "production": "opposing_production",
+    "client_documents": "client_documents",
+    "pst_mailstore": "client_collection_dedicated",
+    "forensic_image": "internal_collection",
+}
+
+
+@router.get("/clusters")
+async def api_clusters_list(request: Request, status: str = "", user=Depends(get_current_user)):
+    tid = _tid(request)
+    where = "TRIM(oc.tenant_id) = :tid"
+    params = {"tid": tid}
+    if status:
+        where += " AND oc.status = :st"
+        params["st"] = status
+    async with AsyncSessionLocal() as session:
+        rows = (await session.execute(text(f"""
+            SELECT oc.id::text, oc.matter_id::text, oc.root_path, oc.cluster_type,
+                   oc.detected_by, oc.evidence, oc.file_count, oc.total_bytes,
+                   oc.status, oc.collection_id::text, oc.updated_at,
+                   m.matter_name, c.client_name
+            FROM onboarding_clusters oc
+            LEFT JOIN matters m ON m.id = oc.matter_id
+            LEFT JOIN clients c ON c.id = m.client_id
+            WHERE {where}
+            ORDER BY oc.file_count DESC
+        """), params)).mappings().all()
+        summary = (await session.execute(text("""
+            SELECT COUNT(*) FILTER (WHERE status = 'pending') AS pending,
+                   COUNT(*) FILTER (WHERE status = 'ingested') AS ingested,
+                   COUNT(*) FILTER (WHERE status = 'dismissed') AS dismissed,
+                   COALESCE(SUM(file_count) FILTER (WHERE status = 'pending'), 0) AS pending_files,
+                   COALESCE(SUM(total_bytes) FILTER (WHERE status = 'pending'), 0) AS pending_bytes
+            FROM onboarding_clusters WHERE TRIM(tenant_id) = :tid
+        """), {"tid": tid})).mappings().fetchone()
+    return JSONResponse(_ser({"rows": [dict(r) for r in rows],
+                              "summary": dict(summary) if summary else {}}))
+
+
+@router.post("/clusters/{cluster_id}/status")
+async def api_cluster_set_status(request: Request, cluster_id: str, user=Depends(get_current_user)):
+    tid = _tid(request)
+    body = await request.json()
+    new_status = (body.get("status") or "").strip()
+    if new_status not in ("pending", "dismissed"):
+        return JSONResponse({"error": "status must be pending|dismissed"}, status_code=400)
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(text("""
+            UPDATE onboarding_clusters SET status = :st, updated_at = NOW()
+            WHERE id = CAST(:cid AS uuid) AND TRIM(tenant_id) = :tid
+              AND status <> 'ingested'
+        """), {"st": new_status, "cid": cluster_id, "tid": tid})
+        await session.commit()
+    if res.rowcount == 0:
+        return JSONResponse({"error": "not found or already ingested"}, status_code=404)
+    return JSONResponse({"status": new_status})
+
+
+@router.post("/clusters/{cluster_id}/create-collection")
+async def api_cluster_create_collection(request: Request, cluster_id: str, user=Depends(get_current_user)):
+    """One-click: cluster row -> eDiscovery collection -> run_collection_full."""
+    tid = _tid(request)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    async with AsyncSessionLocal() as session:
+        cl = (await session.execute(text("""
+            SELECT oc.id::text, oc.matter_id::text, oc.root_path, oc.cluster_type,
+                   oc.status, m.matter_name
+            FROM onboarding_clusters oc
+            LEFT JOIN matters m ON m.id = oc.matter_id
+            WHERE oc.id = CAST(:cid AS uuid) AND TRIM(oc.tenant_id) = :tid
+        """), {"cid": cluster_id, "tid": tid})).mappings().fetchone()
+    if not cl:
+        return JSONResponse({"error": "cluster not found"}, status_code=404)
+    if cl["status"] == "ingested":
+        return JSONResponse({"error": "already ingested"}, status_code=409)
+    if not cl["matter_id"]:
+        return JSONResponse({"error": "cluster has no matter"}, status_code=400)
+    if not os.path.exists(cl["root_path"]):
+        return JSONResponse({"error": f"source path not found: {cl['root_path']}"}, status_code=400)
+
+    leaf = os.path.basename(cl["root_path"].rstrip("/")) or "Onboarding"
+    collection_name = (body.get("collection_name") or "").strip() or f"{leaf} (onboarding)"
+    source_type = body.get("source_type") or _CLUSTER_SOURCE_TYPE.get(cl["cluster_type"], "opposing_production")
+
+    import uuid as _u
+    collection_id = str(_u.uuid4())
+    ediscovery_root = os.environ.get("EDISCOVERY_STORAGE_ROOT", "/mnt/ediscovery")
+    storage_path = os.path.join(ediscovery_root, tid, cl["matter_id"], collection_name.replace(" ", "_"))
+    user_id = None
+    try:
+        user_id = user.get("id") if isinstance(user, dict) else getattr(user, "id", None)
+    except Exception:
+        pass
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(text("""
+            INSERT INTO ediscovery_collections
+                (id, tenant_id, matter_id, collection_name, storage_path,
+                 source_type, source_party, dms_source_path, status, received_by)
+            VALUES
+                (CAST(:cid AS uuid), :tid, CAST(:mid AS uuid), :name, :spath,
+                 :stype, NULL, :dms_path, 'collecting', :uid)
+        """), {"cid": collection_id, "tid": tid, "mid": cl["matter_id"],
+               "name": collection_name, "spath": storage_path,
+               "stype": source_type, "dms_path": cl["root_path"], "uid": user_id})
+        await session.execute(text("""
+            UPDATE onboarding_clusters
+            SET status = 'ingested', collection_id = CAST(:colid AS uuid), updated_at = NOW()
+            WHERE id = CAST(:clid AS uuid) AND TRIM(tenant_id) = :tid
+        """), {"colid": collection_id, "clid": cluster_id, "tid": tid})
+        await session.commit()
+
+    try:
+        from redis import Redis
+        from rq import Queue
+        REDIS_URL = os.environ.get("REDIS_URL", "redis://10.10.60.12:6379/0")
+        q = Queue("ediscovery", connection=Redis.from_url(REDIS_URL))
+        q.enqueue(
+            "modules.ediscovery.jobs.ledger_dag.run_collection_full",
+            tid, collection_id, user_id,
+            spine_workers=6, ocr_workers=2, embed_workers=1,
+            job_timeout="24h", result_ttl=3600,
+        )
+    except Exception as e:
+        logger.error("cluster create-collection enqueue failed: %s", e)
+        return JSONResponse({"id": collection_id, "status": "created_no_job", "error": str(e)})
+    return JSONResponse({"id": collection_id, "status": "collecting",
+                         "collection_name": collection_name, "source_type": source_type})

@@ -1833,6 +1833,8 @@ Rules:
         module="intelligence",
         purpose="extraction_escalation",
         matter_id=matter_id,
+        document_id=str(document_id) if document_id else None,
+        document_source="dms_documents",
     )
     try:
         _res = _run_async(

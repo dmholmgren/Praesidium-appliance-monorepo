@@ -224,6 +224,12 @@ class AICallContext:
     purpose: str
     user_id: Optional[int] = None
     matter_id: Optional[str] = None
+    # Document-level provenance — set by call sites operating on a single
+    # document (extraction escalation, classification, doc analysis).
+    # Enables Morgan v. V2X-style disclosures: which documents were
+    # transmitted to which provider. document_source = source table name.
+    document_id: Optional[str] = None
+    document_source: Optional[str] = None
     user_role: Optional[str] = None
     # Override-related — set by the route when a user explicitly authorizes
     # overage. The adapter does not trust these flags without a role check.
@@ -238,6 +244,8 @@ class AICallContext:
             purpose=self.purpose,
             user_id=self.user_id,
             matter_id=self.matter_id,
+            document_id=self.document_id,
+            document_source=self.document_source,
             user_role=self.user_role,
             override_requested=self.override_requested,
             override_reason=self.override_reason,
@@ -683,13 +691,16 @@ async def _insert_ai_api_call(
                    input_tokens, output_tokens, total_tokens,
                    cost_usd, latency_ms, status, error_message,
                    request_metadata,
-                   matter_id, allocation_status, unallocated_reason)
+                   matter_id, document_id, document_source,
+                   allocation_status, unallocated_reason)
                 VALUES
                   (:tenant_id, :user_id, :provider, :model, :module, :purpose,
                    :input_tokens, :output_tokens, :total_tokens,
                    :cost_usd, :latency_ms, :status, :error_message,
                    CAST(:request_metadata AS jsonb),
-                   CAST(:matter_id AS uuid), :alloc_status, :unalloc_reason)
+                   CAST(:matter_id AS uuid),
+                   CAST(:document_id AS uuid), :document_source,
+                   :alloc_status, :unalloc_reason)
                 RETURNING id
             """),
             {
@@ -708,6 +719,8 @@ async def _insert_ai_api_call(
                 "error_message": error_message,
                 "request_metadata": json.dumps(request_metadata),
                 "matter_id": ctx.matter_id,
+                "document_id": ctx.document_id,
+                "document_source": ctx.document_source,
                 "alloc_status": alloc_status,
                 "unalloc_reason": unalloc_reason,
             },
@@ -1208,13 +1221,15 @@ async def enqueue(
                   (tenant_id, user_id, provider, model, module, purpose,
                    input_tokens, output_tokens, total_tokens,
                    cost_usd, latency_ms, status, request_metadata,
-                   matter_id, allocation_status, unallocated_reason)
+                   matter_id, document_id, document_source,
+                   allocation_status, unallocated_reason)
                 VALUES
                   (:tenant_id, :user_id, 'anthropic',
                    'pending', :module, :purpose,
                    0, 0, 0, 0, 0, 'queued',
                    CAST(:meta AS jsonb),
                    CAST(:matter_id AS uuid),
+                   CAST(:document_id AS uuid), :document_source,
                    :alloc_status, :unalloc_reason)
             """),
             {
@@ -1227,6 +1242,8 @@ async def enqueue(
                     "matter_id": ctx.matter_id,
                 }),
                 "matter_id": ctx.matter_id,
+                "document_id": ctx.document_id,
+                "document_source": ctx.document_source,
                 "alloc_status": "allocated" if ctx.matter_id else "unallocated",
                 "unalloc_reason": None if ctx.matter_id else "no_matter_context",
             },

@@ -1,0 +1,31 @@
+{# _edisco_nav.html — inline horizontal nav for eDiscovery pages.
+   Include with: {% include "_edisco_nav.html" %}
+   Pass edisco_tab in context to highlight active tab.
+   Values: overview | collections | review | search #}
+<style>
+  .edtab-nav {
+    display: flex; gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px; padding: 0 4px;
+    overflow-x: auto; overflow-y: hidden;
+  }
+  .edtab-link {
+    padding: 12px 18px; font-size: 13px; font-weight: 400;
+    color: var(--muted); text-decoration: none;
+    border-bottom: 2px solid transparent;
+    transition: color 120ms, border-color 120ms;
+    white-space: nowrap; margin-bottom: -1px;
+  }
+  .edtab-link:hover { color: var(--text); }
+  .edtab-link.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 500;
+  }
+</style>
+<nav class="edtab-nav">
+  <a href="/ediscovery"             class="edtab-link {% if edisco_tab == 'overview' %}active{% endif %}">Overview</a>
+  <a href="/ediscovery/imports" class="edtab-link {% if edisco_tab == 'collections' %}active{% endif %}">Collections</a>
+  <a href="/ediscovery/review"      class="edtab-link {% if edisco_tab == 'review' %}active{% endif %}">Review</a>
+  <a href="/ediscovery/search"      class="edtab-link {% if edisco_tab == 'search' %}active{% endif %}">Search</a>
+</nav>

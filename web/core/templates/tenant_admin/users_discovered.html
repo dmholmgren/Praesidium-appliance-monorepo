@@ -1,0 +1,115 @@
+{% extends "base.html" %}
+{% block title %}Discovered Users — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Review Discovered Users{% endblock %}
+{% block content %}
+<div style="padding:0;">
+
+  {% set ta_page_breadcrumb = '<a href="/tenant-admin/#users">Users</a><span class="sep">/</span>Discovered Users' %}
+  {% include "tenant_admin/_topnav.html" %}
+
+  {# ── Banners ── #}
+  {% if saved %}
+  <div style="background:#D1FAE5; border:1px solid #6EE7B7; border-radius:6px; padding:10px 14px; font-size:13px; color:#065F46; margin-bottom:16px;">
+    ✓ {{ saved | replace('+', ' ') }}
+  </div>
+  {% endif %}
+  {% if skipped %}
+  <div style="background:#FEF3C7; border:1px solid #FCD34D; border-radius:6px; padding:10px 14px; font-size:13px; color:#92400E; margin-bottom:16px;">
+    ⚠ {{ skipped | replace('+', ' ') }}
+  </div>
+  {% endif %}
+
+  {# ── Header ── #}
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+    <div>
+      <h2 style="font-size:16px; font-weight:600; color:var(--text); margin:0 0 4px 0;">Review Discovered Users</h2>
+      <p style="font-size:12px; color:var(--muted); margin:0;">
+        Users found by directory sync, awaiting role assignment and activation.
+        Select users to import, assign a role to each, then click <em>Import Selected</em>.
+      </p>
+    </div>
+    <div>
+      <a href="/tenant-admin/users" style="font-size:12px; color:var(--muted); text-decoration:none;">← Back to Users</a>
+    </div>
+  </div>
+
+  {% if discovered %}
+  <form method="post" action="/tenant-admin/users/discovered/import">
+    <div class="card" style="padding:0; overflow:hidden;">
+      <table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead>
+          <tr style="background:var(--surface); border-bottom:1px solid var(--border);">
+            <th style="padding:10px 14px; width:40px;">
+              <input type="checkbox" id="select-all"
+                onchange="document.querySelectorAll('input[name=activate]').forEach(c => c.checked = this.checked);">
+            </th>
+            <th style="text-align:left; padding:10px 14px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Email</th>
+            <th style="text-align:left; padding:10px 14px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Display Name</th>
+            <th style="text-align:left; padding:10px 14px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Source</th>
+            <th style="text-align:left; padding:10px 14px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Discovered</th>
+            <th style="text-align:left; padding:10px 14px; font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em;">Assign Role</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in discovered %}
+          <tr style="border-bottom:1px solid var(--border);">
+            <td style="padding:10px 14px;">
+              <input type="checkbox" name="activate" value="{{ d.id }}">
+            </td>
+            <td style="padding:10px 14px; color:var(--text);">{{ d.email or '—' }}</td>
+            <td style="padding:10px 14px; font-size:12px;">
+              {{ d.full_name or d.uac_display_name or d.username or '—' }}
+              {% if d.uac_meta and (d.uac_meta.title or d.uac_meta.department) %}
+              <div style="font-size:11px; color:var(--muted); margin-top:2px;">
+                {% if d.uac_meta.title %}{{ d.uac_meta.title }}{% endif %}
+                {% if d.uac_meta.title and d.uac_meta.department %} · {% endif %}
+                {% if d.uac_meta.department %}{{ d.uac_meta.department }}{% endif %}
+              </div>
+              {% endif %}
+            </td>
+            <td style="padding:10px 14px;">
+              <span style="font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:0.03em;">
+                {{ d.auth_provider }}
+              </span>
+            </td>
+            <td style="padding:10px 14px; font-size:12px; color:var(--muted);">
+              {{ d.created_at.strftime('%b %d, %Y') if d.created_at else '—' }}
+            </td>
+            <td style="padding:10px 14px;">
+              <select name="role_{{ d.id }}"
+                style="font-size:12px; padding:5px 8px; border:1px solid var(--border); border-radius:5px; background:var(--surface);">
+                <option value="staff" {% if d.role == 'staff' %}selected{% endif %}>Staff</option>
+                <option value="paralegal" {% if d.role == 'paralegal' %}selected{% endif %}>Paralegal</option>
+                <option value="attorney" {% if d.role == 'attorney' %}selected{% endif %}>Attorney</option>
+                <option value="partner" {% if d.role == 'partner' %}selected{% endif %}>Partner</option>
+                <option value="admin" {% if d.role == 'admin' %}selected{% endif %}>Admin</option>
+                <option value="read_only" {% if d.role == 'read_only' %}selected{% endif %}>Read Only</option>
+              </select>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <div style="display:flex; gap:8px; margin-top:16px; justify-content:flex-end;">
+      <a href="/tenant-admin/users" class="btn-secondary" style="font-size:13px; text-decoration:none; padding:8px 14px;">Cancel</a>
+      <button type="submit" class="btn-primary" style="font-size:13px;">
+        Import Selected
+      </button>
+    </div>
+  </form>
+
+  {% else %}
+  <div style="border:1px dashed var(--border); border-radius:8px; padding:40px; text-align:center; background:var(--surface);">
+    <div style="font-size:14px; font-weight:500; color:var(--text); margin-bottom:8px;">
+      No users awaiting review
+    </div>
+    <p style="font-size:12px; color:var(--muted); margin:0 0 16px 0;">
+      All directory-discovered users have been imported, or no sync has run yet.
+    </p>
+    <a href="/tenant-admin/users" class="btn-primary" style="text-decoration:none;">← Back to Users</a>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

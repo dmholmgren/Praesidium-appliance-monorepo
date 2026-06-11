@@ -1,0 +1,17 @@
+{% extends "shell.html" %}
+{% block title %}Prebill Review — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/billing">Billing</a>
+<span class="breadcrumb-sep">&rsaquo;</span>
+<a href="/billing/run-bills">Bill Runs</a>
+<span class="breadcrumb-sep">&rsaquo;</span>
+<span class="breadcrumb-current">Prebill Review</span>
+{% endblock %}
+{% block content %}
+<div id="billing-prebill-review-root" style="padding: 16px 20px;"></div>
+<script>
+  window.__BILL_RUN_ID = {{ bill_run_id }};
+  window.__BRM_ID = {{ brm_id }};
+</script>
+<script type="module" src="/static/js/billing-prebill-review.js"></script>
+{% endblock %}

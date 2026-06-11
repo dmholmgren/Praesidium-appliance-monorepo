@@ -1,0 +1,6 @@
+{% extends "shell.html" %}
+{% block title %}Document Review — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block content %}
+<div id="ediscovery-review-collections-root"></div>
+<script type="module" src="/static/js/ediscovery-review-collections.js?v=2"></script>
+{% endblock %}

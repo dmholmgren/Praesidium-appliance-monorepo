@@ -1,0 +1,27 @@
+{% extends "shell.html" %}
+{% block title %}{{ matter_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block breadcrumb %}
+<a href="/dms/" style="color:var(--muted);text-decoration:none;">Docs</a>
+<span class="breadcrumb-sep">›</span>
+<a href="/dms/client/{{ matter.client_id }}" style="color:var(--muted);text-decoration:none;">{{ matter.client_name or '' }}</a>
+<span class="breadcrumb-sep">›</span>
+<span class="breadcrumb-current">{{ matter_name }}{% if matter.matter_number %} <span style="font-weight:400;color:var(--muted);font-size:12px;margin-left:4px;">#{{ matter.matter_number }}</span>{% endif %}</span>
+{% endblock %}
+
+{% block header_actions %}
+<a href="/matters/{{ matter_id }}" class="btn-secondary" style="font-size:11px;padding:5px 12px;">Dashboard</a>
+<a href="/ediscovery/matters/{{ matter_id }}/" class="btn-secondary" style="font-size:11px;padding:5px 12px;">eDiscovery</a>
+<a href="/billing/clients/{{ matter.client_id }}/matters/{{ matter_id }}" class="btn-secondary" style="font-size:11px;padding:5px 12px;">Billing</a>
+{% endblock %}
+
+{% block content %}
+<div id="matter-react-root" style="height: calc(100vh - var(--header-h, 56px) - 1px); overflow: hidden;">
+  <div style="padding:48px; text-align:center; color:var(--muted); font-size:13px;">
+    Loading workspace…
+  </div>
+</div>
+<script>window.__MATTER_ID__ = '{{ matter_id }}';</script>
+<script type="module" src="/static/js/matter-workspace.js"></script>
+<script src="/static/js/onlyoffice-editor.js"></script>
+{% endblock %}

@@ -1,0 +1,108 @@
+{% extends "billing/layout.html" %}
+{% block title %}{{ brand.platform_name if brand else 'Praesidium' }} — New Contact{% endblock %}
+{% block page_title %}New Contact{% endblock %}
+
+{% block billing_content %}
+
+<div style="max-width:720px;">
+
+  {% if error %}
+  <div style="background:#FEE2E2; border:1px solid #FCA5A5; color:#991B1B;
+              padding:10px 14px; border-radius:6px; margin-bottom:16px; font-size:13px;">
+    {{ error }}
+  </div>
+  {% endif %}
+
+  <div style="font-size:12px; margin-bottom:16px;">
+    <a href="/contacts" style="color:var(--muted); text-decoration:none;">← Back to contacts</a>
+  </div>
+
+  <div class="card">
+    <h3 style="font-family:'Lora',serif; font-size:16px; font-weight:500;
+               color:var(--text); margin:0 0 16px 0;">New Contact</h3>
+
+    <form method="post" action="/contacts/new"
+          style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+
+      <div style="grid-column:span 2;">
+        <label style="display:block; font-size:11px; color:var(--muted);
+                      text-transform:uppercase; letter-spacing:.05em; margin-bottom:4px;">
+          Full Name *
+        </label>
+        <input type="text" name="full_name" required autofocus
+               value="{{ form.full_name|default('') }}"
+               style="width:100%; padding:8px 10px; font-size:13px;
+                      border:1px solid var(--border); border-radius:6px;
+                      font-family:'DM Sans',sans-serif;">
+      </div>
+
+      <div>
+        <label style="display:block; font-size:11px; color:var(--muted);
+                      text-transform:uppercase; letter-spacing:.05em; margin-bottom:4px;">Email</label>
+        <input type="email" name="email" value="{{ form.email|default('') }}"
+               style="width:100%; padding:8px 10px; font-size:13px;
+                      border:1px solid var(--border); border-radius:6px;
+                      font-family:'DM Sans',sans-serif;">
+      </div>
+
+      <div>
+        <label style="display:block; font-size:11px; color:var(--muted);
+                      text-transform:uppercase; letter-spacing:.05em; margin-bottom:4px;">Phone</label>
+        <input type="text" name="phone" placeholder="214-555-0123"
+               value="{{ form.phone|default('') }}"
+               style="width:100%; padding:8px 10px; font-size:13px;
+                      border:1px solid var(--border); border-radius:6px;
+                      font-family:ui-monospace,monospace;">
+      </div>
+
+      <div>
+        <label style="display:block; font-size:11px; color:var(--muted);
+                      text-transform:uppercase; letter-spacing:.05em; margin-bottom:4px;">Company</label>
+        <input type="text" name="company" value="{{ form.company|default('') }}"
+               style="width:100%; padding:8px 10px; font-size:13px;
+                      border:1px solid var(--border); border-radius:6px;
+                      font-family:'DM Sans',sans-serif;">
+      </div>
+
+      <div>
+        <label style="display:block; font-size:11px; color:var(--muted);
+                      text-transform:uppercase; letter-spacing:.05em; margin-bottom:4px;">Firm</label>
+        <input type="text" name="firm_name" value="{{ form.firm_name|default('') }}"
+               style="width:100%; padding:8px 10px; font-size:13px;
+                      border:1px solid var(--border); border-radius:6px;
+                      font-family:'DM Sans',sans-serif;">
+      </div>
+
+      <div style="grid-column:span 2;">
+        <label style="display:block; font-size:11px; color:var(--muted);
+                      text-transform:uppercase; letter-spacing:.05em; margin-bottom:4px;">Type</label>
+        <select name="contact_type"
+                style="width:100%; padding:8px 10px; font-size:13px;
+                       border:1px solid var(--border); border-radius:6px;
+                       font-family:'DM Sans',sans-serif;">
+          {% for ct in contact_types %}
+          <option value="{{ ct }}" {% if form.contact_type == ct %}selected{% endif %}>{{ ct }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div style="grid-column:span 2;">
+        <label style="display:block; font-size:11px; color:var(--muted);
+                      text-transform:uppercase; letter-spacing:.05em; margin-bottom:4px;">Notes</label>
+        <textarea name="notes" rows="3"
+                  style="width:100%; padding:8px 10px; font-size:13px;
+                         border:1px solid var(--border); border-radius:6px;
+                         font-family:'DM Sans',sans-serif; resize:vertical;"
+        >{{ form.notes|default('') }}</textarea>
+      </div>
+
+      <div style="grid-column:span 2; display:flex; align-items:center; justify-content:flex-end; gap:8px;">
+        <a href="/contacts" class="btn-secondary">Cancel</a>
+        <button type="submit" class="btn-primary">Create Contact</button>
+      </div>
+    </form>
+  </div>
+
+</div>
+
+{% endblock %}

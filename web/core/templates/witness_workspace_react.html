@@ -1,0 +1,22 @@
+{% extends "shell.html" %}
+{% block title %}{{ witness_name }} — {{ matter_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/matters" style="color:var(--muted);text-decoration:none;">Matters</a>
+<span class="breadcrumb-sep">/</span>
+<a href="/matters/{{ matter_id }}" style="color:var(--muted);text-decoration:none;">{{ matter_name }}{% if matter_number %} #{{ matter_number }}{% endif %}</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">{{ witness_name }}</span>
+{% endblock %}
+{% block content %}
+<div id="witness-workspace-root"
+     data-matter-id="{{ matter_id }}"
+     data-contact-id="{{ contact_id }}"
+     data-mc-id="{{ mc_id }}"
+     style="margin: -24px;"></div>
+<script>
+  window.__WITNESS_MATTER_ID__  = '{{ matter_id }}';
+  window.__WITNESS_CONTACT_ID__ = '{{ contact_id }}';
+  window.__WITNESS_MC_ID__      = '{{ mc_id }}';
+</script>
+<script type="module" src="/static/js/witness-workspace.js?v=2"></script>
+{% endblock %}

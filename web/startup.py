@@ -53,7 +53,9 @@ if all_ok:
         "--host", "0.0.0.0",
         "--port", "8000",
         "--workers", "1",
-        "--log-level", "debug",
+        "--log-level", "info",
+        "--http", "httptools",
+        "--timeout-keep-alive", "120",
     ])
 else:
     print("\n*** STARTUP FAILED — container staying alive for debugging ***", flush=True)

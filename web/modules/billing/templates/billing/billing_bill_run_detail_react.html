@@ -1,0 +1,16 @@
+{% extends "shell.html" %}
+{% block title %}Bill Run — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/billing">Billing</a>
+<span class="breadcrumb-sep">&rsaquo;</span>
+<a href="/billing/run-bills">Bill Runs</a>
+<span class="breadcrumb-sep">&rsaquo;</span>
+<span class="breadcrumb-current">Detail</span>
+{% endblock %}
+{% block content %}
+<div id="billing-bill-run-detail-root" style="padding: 16px 20px;"></div>
+<script>
+  window.__BILL_RUN_ID = {{ bill_run.id }};
+</script>
+<script type="module" src="/static/js/billing-bill-run-detail.js"></script>
+{% endblock %}

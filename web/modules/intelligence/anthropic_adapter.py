@@ -79,6 +79,30 @@ DEFAULT_PRIMARY_MODEL = "claude-sonnet-4-20250514"
 DEFAULT_FALLBACK_MODEL = "claude-haiku-4-5-20251001"
 
 
+# --- multi-provider (Ollama) extension ---
+# Local inference via Ollama. ai_model_routing rows select it by naming a model
+# as  ollama:<model>  (e.g. ollama:qwen2.5:7b-instruct). Endpoint overridable
+# via OLLAMA_URL; default mirrors the host.docker.internal pattern used for
+# the whisper sidecar.
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://172.28.0.1:11434")
+OLLAMA_PREFIX = "ollama:"
+
+
+def _provider_for_model(model: str) -> str:
+    """anthropic unless the model is prefixed ollama:."""
+    return "ollama" if (model or "").startswith(OLLAMA_PREFIX) else "anthropic"
+
+
+def _ollama_model_name(model: str) -> str:
+    """Strip the ollama: provider prefix, leaving the real model+tag.
+    Splits on the FIRST colon only, so ollama:qwen2.5:7b-instruct ->
+    qwen2.5:7b-instruct."""
+    if (model or "").startswith(OLLAMA_PREFIX):
+        return model[len(OLLAMA_PREFIX):]
+    return model
+# --- end multi-provider extension ---
+
+
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
@@ -384,6 +408,8 @@ async def _tenant_spend_today_usd(tenant_id: str) -> Decimal:
 def _project_cost_usd(
     model: str, estimated_input_tokens: int, max_output_tokens: int
 ) -> Decimal:
+    if (model or "").startswith(OLLAMA_PREFIX):
+        return Decimal("0.000000")
     """
     Worst-case projection used for pre-call budget check. Conservative —
     assumes max_output_tokens will be returned.
@@ -399,6 +425,8 @@ def _project_cost_usd(
 def _actual_cost_usd(
     model: str, input_tokens: int, output_tokens: int
 ) -> Decimal:
+    if (model or "").startswith(OLLAMA_PREFIX):
+        return Decimal("0.000000")
     input_rate, output_rate = MODEL_PRICING.get(
         model, MODEL_PRICING[DEFAULT_PRIMARY_MODEL]
     )
@@ -788,6 +816,50 @@ async def _anthropic_request(
     return resp.json(), latency_ms
 
 
+async def _ollama_request(
+    model: str,
+    max_tokens: int,
+    system_prompt,
+    user_prompt: str,
+    timeout_s: float = DEFAULT_HTTP_TIMEOUT_S,
+) -> tuple[dict, int]:
+    """Call local Ollama /api/chat. Returns (normalized_json, latency_ms) where
+    normalized_json mimics the Anthropic content+usage shape the caller reads,
+    so no downstream extraction code needs to change."""
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": user_prompt})
+
+    payload = {
+        "model": _ollama_model_name(model),
+        "messages": messages,
+        "stream": False,
+        "options": {"num_predict": max_tokens},
+    }
+
+    t0 = time.perf_counter()
+    async with httpx.AsyncClient(timeout=timeout_s) as client:
+        resp = await client.post(f"{OLLAMA_URL}/api/chat", json=payload)
+    latency_ms = int((time.perf_counter() - t0) * 1000)
+
+    if resp.status_code != 200:
+        raise AILayerError(
+            f"Ollama API error {resp.status_code}: {resp.text[:500]}"
+        )
+
+    data = resp.json()
+    text_out = (data.get("message") or {}).get("content", "")
+    normalized = {
+        "content": [{"type": "text", "text": text_out}],
+        "usage": {
+            "input_tokens": int(data.get("prompt_eval_count") or 0),
+            "output_tokens": int(data.get("eval_count") or 0),
+        },
+    }
+    return normalized, latency_ms
+
+
 def _extract_text(response_json: dict) -> str:
     """Extract concatenated text from Anthropic content blocks."""
     blocks = response_json.get("content") or []
@@ -901,6 +973,7 @@ async def call(
     raw_user_prompt: Optional[str] = None,
     raw_system_prompt: Optional[str] = None,
     max_tokens_override: Optional[int] = None,
+    http_timeout_override: Optional[float] = None,
 ) -> AICallResult:
     """
     Execute an inline AI call. Exactly one of `prompt` or `raw_user_prompt`
@@ -962,9 +1035,15 @@ async def call(
             },
         )
 
-    # Fetch the API key — AFTER routing is resolved so a missing-key error
-    # doesn't consume an ai_cost_exceptions row for an unrelated reason.
-    api_key = await _get_anthropic_key(ctx.tenant_id)
+    # Determine provider from the resolved model. Fetch the Anthropic key
+    # only when needed — local Ollama calls require no key, so a tenant with
+    # no BYOK key can still run local inference.
+    provider = _provider_for_model(decision.model_to_use)
+    api_key = None
+    if provider == "anthropic":
+        # AFTER routing is resolved so a missing-key error doesn't consume an
+        # ai_cost_exceptions row for an unrelated reason.
+        api_key = await _get_anthropic_key(ctx.tenant_id)
 
     # Execute
     status = "ok"
@@ -972,13 +1051,23 @@ async def call(
     response_json: dict = {}
     latency_ms = 0
     try:
-        response_json, latency_ms = await _anthropic_request(
-            api_key=api_key,
-            model=decision.model_to_use,
-            max_tokens=effective_max_tokens,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-        )
+        if provider == "ollama":
+            response_json, latency_ms = await _ollama_request(
+                model=decision.model_to_use,
+                max_tokens=effective_max_tokens,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                timeout_s=http_timeout_override or DEFAULT_HTTP_TIMEOUT_S,
+            )
+        else:
+            response_json, latency_ms = await _anthropic_request(
+                api_key=api_key,
+                model=decision.model_to_use,
+                max_tokens=effective_max_tokens,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                timeout_s=http_timeout_override or DEFAULT_HTTP_TIMEOUT_S,
+            )
     except AILayerError as exc:
         status = "error"
         error_message = str(exc)[:1000]
@@ -986,7 +1075,7 @@ async def call(
         call_id = await _insert_ai_api_call(
             ctx=ctx,
             routing=routing,
-            provider="anthropic",
+            provider=provider,
             model=decision.model_to_use,
             input_tokens=0, output_tokens=0, total_tokens=0,
             cost_usd=Decimal("0"),
@@ -1015,7 +1104,7 @@ async def call(
     call_id = await _insert_ai_api_call(
         ctx=ctx,
         routing=routing,
-        provider="anthropic",
+        provider=provider,
         model=decision.model_to_use,
         input_tokens=input_tokens,
         output_tokens=output_tokens,

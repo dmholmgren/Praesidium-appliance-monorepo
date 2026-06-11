@@ -1,19 +1,56 @@
 {% extends "base.html" %}
-{% block title %}{{ brand.firm_name }} - Billing{% endblock %}
+{% block title %}{{ brand.platform_name if brand else 'Praesidium' }} — Billing{% endblock %}
 {% block content %}
-<div class="min-h-screen bg-gray-50">
-  <nav class="bg-white shadow-sm border-b">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-      <div class="flex justify-between h-16">
-        <div class="flex space-x-8">
-          <a href="/billing/clients" class="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-700 hover:text-gray-900">Clients</a>
-          <a href="/billing/timesheet" class="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-700 hover:text-gray-900">Timesheet</a>
-          <a href="/billing/trust" class="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-700 hover:text-gray-900">Trust</a>
-          <a href="/billing/reports" class="inline-flex items-center px-1 pt-1 text-sm font-medium text-gray-700 hover:text-gray-900">Reports</a>
-        </div>
-      </div>
-    </div>
-  </nav>
-  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">{% block billing_content %}{% endblock %}</main>
-</div>
+{# ──────────────────────────────────────────────────────────────────────────
+   Billing horizontal nav (tab strip).
+   Pages extend this via {% extends "billing/layout.html" %} and define
+   their inner content in {% block billing_content %}.
+   Pass `bill_tab` in the template context to highlight the active tab.
+   Values: overview | clients | timesheet | run_bills | invoices | trust |
+           reports | contacts
+──────────────────────────────────────────────────────────────────────────── #}
+<style>
+  .biltab-nav {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 24px;
+    padding: 0 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .biltab-link {
+    padding: 12px 18px;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--muted);
+    text-decoration: none;
+    border-bottom: 2px solid transparent;
+    transition: color 120ms, border-color 120ms;
+    white-space: nowrap;
+    margin-bottom: -1px;
+  }
+  .biltab-link:hover {
+    color: var(--text);
+  }
+  .biltab-link.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 500;
+  }
+</style>
+
+<nav class="biltab-nav">
+  <a href="/billing"            class="biltab-link {% if bill_tab == 'overview' %}active{% endif %}">Overview</a>
+  <a href="/billing/clients"    class="biltab-link {% if bill_tab == 'clients' %}active{% endif %}">Clients</a>
+  <a href="/contacts"           class="biltab-link {% if bill_tab == 'contacts' %}active{% endif %}">Contacts</a>
+  <a href="/billing/timesheet"  class="biltab-link {% if bill_tab == 'timesheet' %}active{% endif %}">Timesheet</a>
+  <a href="/billing/run-bills"  class="biltab-link {% if bill_tab == 'run_bills' %}active{% endif %}">Bill Runs</a>
+  <a href="/billing/invoices"   class="biltab-link {% if bill_tab == 'invoices' %}active{% endif %}">Past Bills</a>
+  <a href="/billing/trust"      class="biltab-link {% if bill_tab == 'trust' %}active{% endif %}">Trust</a>
+  <a href="/billing/reports"    class="biltab-link {% if bill_tab == 'reports' %}active{% endif %}">Reports</a>
+</nav>
+
+{% block billing_content %}{% endblock %}
+
 {% endblock %}

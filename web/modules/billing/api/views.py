@@ -7,16 +7,19 @@ from sqlalchemy import text
 
 from core.db.base import AsyncSessionLocal
 from modules.billing.brand_helper import get_brand
+from core.services.nav_context import get_nav_context
 
 views = APIRouter(tags=["billing-views"])
 
 
 def _jsonable(obj):
     import uuid, datetime
+    from decimal import Decimal
     if isinstance(obj, list): return [_jsonable(i) for i in obj]
     if isinstance(obj, dict): return {k: _jsonable(v) for k, v in obj.items()}
     if isinstance(obj, uuid.UUID): return str(obj)
     if isinstance(obj, (datetime.datetime, datetime.date)): return obj.isoformat()
+    if isinstance(obj, Decimal): return float(obj)
     return obj
 
 templates = Jinja2Templates(directory=[
@@ -43,10 +46,11 @@ def _get_sync_db(tenant_id: str):
 @views.get("/billing", response_class=HTMLResponse)
 async def billing_home(request: Request):
     user = getattr(request.state, "current_user", None)
+    nav_ctx = await get_nav_context(request)
     return templates.TemplateResponse(
         request,
-        "billing/billing_home.html",
-        _ctx(request, user=user, current_user=user, page="billing_home"),
+        "billing/billing_home_react.html",
+        {**_ctx(request, user=user, current_user=user, page="billing_home", bill_tab="overview"), **nav_ctx},
     )
 
 
@@ -65,7 +69,7 @@ async def billing_overview(request: Request):
     return templates.TemplateResponse(
         request,
         "billing/billing_overview.html",
-        _ctx(request, user=user, current_user=user, page="billing_home"),
+        _ctx(request, user=user, current_user=user, page="billing_home", bill_tab="overview"),
     )
 
 
@@ -87,7 +91,7 @@ async def clients_page(request: Request):
     return templates.TemplateResponse(
         request,
         "billing/clients.html",
-        _ctx(request, clients=clients, user=user, current_user=user, page="clients"),
+        _ctx(request, clients=clients, user=user, current_user=user, page="clients", bill_tab="clients"),
     )
 
 
@@ -121,7 +125,7 @@ async def timesheet_page(request: Request):
         _ctx(request, sessions=sessions, tenant_id=tenant_id,
              default_from=default_from.isoformat(),
              default_to=default_to.isoformat(),
-             user=user, current_user=user, page="timesheet"),
+             user=user, current_user=user, page="timesheet", bill_tab="timesheet"),
     )
 
 
@@ -279,7 +283,7 @@ async def timesheet_review(request: Request, session_id: str, filter: str = "pen
         _ctx(request, session=dict(session), drafts=drafts,
              tenant_id=tenant_id, filter=filter,
              matters=matters, pending_count=pending_count,
-             user=user, current_user=user, page="timesheet"),
+             user=user, current_user=user, page="timesheet", bill_tab="timesheet"),
     )
 
 
@@ -488,11 +492,11 @@ async def trust_page(request: Request):
         )
         ledgers = [_jsonable(dict(r._mapping)) for r in result.fetchall()]
         total_trust_balance = sum(float(l.get("balance") or 0) for l in ledgers)
+    nav_ctx = await get_nav_context(request)
     return templates.TemplateResponse(
         request,
-        "billing/trust.html",
-        _ctx(request, ledgers=ledgers, total_trust_balance=total_trust_balance,
-             user=user, current_user=user, page="trust"),
+        "billing/billing_trust_react.html",
+        {**_ctx(request, user=user, current_user=user, page="trust", bill_tab="trust"), **nav_ctx},
     )
 
 
@@ -513,16 +517,20 @@ async def reports_page(request: Request):
             {"tid": tenant_id},
         )
         attorneys = [dict(r._mapping) for r in attorneys_result.fetchall()]
+    nav_ctx = await get_nav_context(request)
     return templates.TemplateResponse(
         request,
-        "billing/reports.html",
-        _ctx(request, clients=clients, attorneys=attorneys,
-             user=user, current_user=user, page="reports"),
+        "billing/billing_reports_react.html",
+        {**_ctx(request, user=user, current_user=user, page="reports", bill_tab="reports"), **nav_ctx},
     )
 
 
 @views.get("/billing/clients/{client_id}", response_class=HTMLResponse)
 async def client_detail(request: Request, client_id: str):
+    # Guard: reject non-UUID paths like 'new' that match this route
+    import re as _re
+    if not _re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', client_id, _re.I):
+        return HTMLResponse("Not found", status_code=404)
     tenant_id = getattr(request.state, "tenant_id", "").strip()
     user = getattr(request.state, "current_user", None)
     async with AsyncSessionLocal() as session:
@@ -546,11 +554,12 @@ async def client_detail(request: Request, client_id: str):
             {"tid": tenant_id, "cid": client_id},
         )
         matters = [_jsonable(dict(r)) for r in matters_result.mappings().fetchall()]
+    nav_ctx = await get_nav_context(request)
     return templates.TemplateResponse(
         request,
-        "billing/client_detail.html",
-        _ctx(request, client=_jsonable(dict(client)), matters=matters,
-             user=user, current_user=user, page="clients"),
+        "billing/billing_client_detail_react.html",
+        {**_ctx(request, client=_jsonable(dict(client)),
+                user=user, current_user=user, page="clients"), **nav_ctx},
     )
 
 
@@ -601,19 +610,13 @@ async def matter_detail(request: Request, client_id: str, matter_id: str):
 
         matter = _jsonable(dict(row))
 
+    nav_ctx = await get_nav_context(request)
     return templates.TemplateResponse(
         request,
-        "billing/matter_detail.html",
-        _ctx(
-            request,
-            matter=matter,
-            client_id=client_id,
-            matter_id=matter_id,
-            client_name=matter["client_name"],
-            user=user,
-            current_user=user,
-            page="clients",
-        ),
+        "billing/billing_matter_detail_react.html",
+        {**_ctx(request, matter=matter, client_id=client_id, matter_id=matter_id,
+                client_name=matter["client_name"],
+                user=user, current_user=user, page="clients"), **nav_ctx},
     )
 
 
@@ -646,3 +649,330 @@ async def clients_search_partial(request: Request, search: str = ""):
     )
     return HTMLResponse(rows_html or
         '<div style="padding:20px; text-align:center; color:#94a3b8;">No clients found.</div>')
+# ── patch_views.py ─────────────────────────────────────────────────────────
+# Append to the END of modules/billing/api/views.py
+# Adds:  GET/POST /billing/matters/new
+#        GET/POST /billing/clients/new
+# ───────────────────────────────────────────────────────────────────────────
+
+
+# ---------------------------------------------------------------------------
+# New Matter — full-page form  (GET renders, POST creates & returns JSON)
+# GET  /billing/matters/new
+# POST /billing/matters/new
+# ---------------------------------------------------------------------------
+
+@views.get("/billing/matters/new", response_class=HTMLResponse)
+async def new_matter_form(
+    request: Request,
+    client_name: str = "",
+    client_id: str = "",
+    matter_type: str = "",
+    matter_name: str = "",
+    court: str = "",
+    case_number: str = "",
+    matter_number: str = "",
+):
+    """Render the New Matter creation form. Query params pre-populate fields."""
+    tenant_id = getattr(request.state, "tenant_id", "").strip()
+    user = getattr(request.state, "current_user", None)
+
+    # Fetch timekeepers for the attorney dropdown
+    timekeepers = []
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            text("""
+                SELECT ts_tk_id, ts_name, ts_initials
+                FROM ts_timekeepers
+                WHERE trim(tenant_id) = trim(:tid)
+                ORDER BY ts_name
+            """),
+            {"tid": tenant_id},
+        )
+        timekeepers = [dict(r._mapping) for r in result.fetchall()]
+
+        # Generate next matter number hint
+        from datetime import date as _date
+        year = _date.today().year
+        prefix = f"{year}-"
+        num_result = await session.execute(
+            text("""
+                SELECT matter_number FROM matters
+                WHERE trim(tenant_id) = trim(:tid)
+                  AND matter_number LIKE :prefix
+                ORDER BY matter_number DESC LIMIT 1
+            """),
+            {"tid": tenant_id, "prefix": f"{prefix}%"},
+        )
+        last_row = num_result.fetchone()
+        if last_row and last_row[0]:
+            try:
+                seq = int(last_row[0].split("-")[1]) + 1
+            except (IndexError, ValueError):
+                seq = 1
+        else:
+            seq = 1
+        next_matter_number = f"{prefix}{seq:04d}"
+
+    prefill = {
+        "client_name": client_name,
+        "client_id": client_id,
+        "matter_type": matter_type,
+        "matter_name": matter_name,
+        "court": court,
+        "case_number": case_number,
+        "matter_number": matter_number,
+    }
+
+    return templates.TemplateResponse(
+        request,
+        "billing/matter_new.html",
+        _ctx(
+            request,
+            prefill=prefill,
+            timekeepers=timekeepers,
+            next_matter_number=next_matter_number,
+            today=_date.today().isoformat(),
+            user=user,
+            current_user=user,
+            page="billing",
+            bill_tab="overview",
+        ),
+    )
+
+
+@views.post("/billing/matters/new")
+async def create_matter_post(request: Request):
+    """
+    Create a new matter via JSON POST.
+    Returns {matter_id, client_id} on success or {error} on failure.
+    """
+    from fastapi.responses import JSONResponse
+    import uuid as _uuid
+    from datetime import date as _date
+
+    tenant_id = getattr(request.state, "tenant_id", "").strip()
+    user = getattr(request.state, "current_user", None)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body."}, status_code=400)
+
+    client_id   = (body.get("client_id") or "").strip()
+    matter_name = (body.get("matter_name") or "").strip()
+
+    if not client_id:
+        return JSONResponse({"error": "Client is required."}, status_code=400)
+    if not matter_name:
+        return JSONResponse({"error": "Matter name is required."}, status_code=400)
+
+    # Auto-generate matter number if not provided
+    matter_number = (body.get("matter_number") or "").strip()
+    if not matter_number:
+        year = _date.today().year
+        prefix = f"{year}-"
+        async with AsyncSessionLocal() as session:
+            num_result = await session.execute(
+                text("""
+                    SELECT matter_number FROM matters
+                    WHERE trim(tenant_id) = trim(:tid)
+                      AND matter_number LIKE :prefix
+                    ORDER BY matter_number DESC LIMIT 1
+                """),
+                {"tid": tenant_id, "prefix": f"{prefix}%"},
+            )
+            last_row = num_result.fetchone()
+            if last_row and last_row[0]:
+                try:
+                    seq = int(last_row[0].split("-")[1]) + 1
+                except (IndexError, ValueError):
+                    seq = 1
+            else:
+                seq = 1
+            matter_number = f"{prefix}{seq:04d}"
+
+    matter_id = str(_uuid.uuid4())
+
+    async with AsyncSessionLocal() as session:
+        # Verify client exists
+        client_check = await session.execute(
+            text("SELECT id FROM clients WHERE id = CAST(:cid AS uuid) AND trim(tenant_id) = trim(:tid)"),
+            {"cid": client_id, "tid": tenant_id},
+        )
+        if not client_check.fetchone():
+            return JSONResponse({"error": "Client not found."}, status_code=404)
+
+        await session.execute(
+            text("""
+                INSERT INTO matters
+                    (id, tenant_id, client_id, matter_name, matter_number,
+                     practice_area, billing_type, hourly_rate,
+                     court, cause_number, judge, jurisdiction,
+                     open_date, sol_date, notes, status)
+                VALUES
+                    (CAST(:id AS uuid), :tid, CAST(:cid AS uuid), :mname, :mnum,
+                     :pa, :bt, :rate,
+                     :court, :cause, :judge, :juris,
+                     :odate, :sdate, :notes, 'active')
+            """),
+            {
+                "id":    matter_id,
+                "tid":   tenant_id,
+                "cid":   client_id,
+                "mname": matter_name,
+                "mnum":  matter_number,
+                "pa":    body.get("practice_area") or None,
+                "bt":    body.get("billing_type") or "hourly",
+                "rate":  float(body["hourly_rate"]) if body.get("hourly_rate") else None,
+                "court": body.get("court") or None,
+                "cause": body.get("cause_number") or None,
+                "judge": body.get("judge") or None,
+                "juris": body.get("jurisdiction") or None,
+                "odate": _date.fromisoformat(body["open_date"]) if body.get("open_date") else _date.today(),
+                "sdate": _date.fromisoformat(body["sol_date"]) if body.get("sol_date") else None,
+                "notes": body.get("notes") or None,
+            },
+        )
+        await session.commit()
+
+        # Look up client_name for folder path
+        cn_row = await session.execute(
+            text("SELECT client_name FROM clients WHERE id = CAST(:cid AS uuid)"),
+            {"cid": client_id},
+        )
+        cn = cn_row.fetchone()
+        client_name_for_folder = cn[0] if cn else "Unknown"
+
+    # ── Seed matter folder structure via folder_seeder ───────────────────
+    import logging as _log
+    try:
+        from modules.dms.jobs.folder_seeder import seed_matter_folders
+        seed_result = seed_matter_folders(
+            tenant_id=tenant_id,
+            matter_id=matter_id,
+            matter_type=body.get("practice_area") or body.get("matter_type"),
+            client_name=client_name_for_folder,
+            matter_name=matter_name,
+            matter_number=matter_number,
+        )
+        folder_rel = f"{client_name_for_folder}/{matter_name}"
+        if seed_result.get("path"):
+            # Update folder_path on the matter
+            async with AsyncSessionLocal() as s2:
+                await s2.execute(
+                    text("UPDATE matters SET folder_path = :fp WHERE id = CAST(:mid AS uuid)"),
+                    {"fp": folder_rel, "mid": matter_id},
+                )
+                # Register praesidium root in matter_folders
+                await s2.execute(
+                    text("""
+                        INSERT INTO matter_folders
+                            (id, tenant_id, matter_id, folder_path, disk_root, file_count, added_at)
+                        VALUES
+                            (gen_random_uuid(), :tid, CAST(:mid AS uuid), :fp, :dr, 0, NOW())
+                        ON CONFLICT (matter_id, folder_path) DO NOTHING
+                    """),
+                    {"tid": tenant_id, "mid": matter_id,
+                     "fp": folder_rel, "dr": seed_result["path"]},
+                )
+                await s2.commit()
+        _log.getLogger(__name__).info(
+            "Seeded matter folder via folder_seeder: %s (created=%d, existing=%d, type=%s)",
+            seed_result.get("path"), seed_result.get("created", 0),
+            seed_result.get("existing", 0), seed_result.get("matter_type_resolved"),
+        )
+    except Exception as exc:
+        _log.getLogger(__name__).warning("Failed to seed matter folder: %s", exc)
+
+    return JSONResponse({
+        "matter_id": matter_id,
+        "client_id": client_id,
+        "matter_number": matter_number,
+        "folder_path": folder_rel,
+        "status": "created",
+    })
+
+
+# ---------------------------------------------------------------------------
+# New Client — full-page form (GET renders, POST creates & returns JSON)
+# GET  /billing/clients/new
+# POST /billing/clients/new
+# ---------------------------------------------------------------------------
+
+@views.get("/billing/clients/new", response_class=HTMLResponse)
+async def new_client_form(
+    request: Request,
+    client_name: str = "",
+    client_type: str = "",
+):
+    """Render the New Client creation form."""
+    user = getattr(request.state, "current_user", None)
+    prefill = {
+        "client_name": client_name,
+        "client_type": client_type,
+    }
+    return templates.TemplateResponse(
+        request,
+        "billing/client_new.html",
+        _ctx(request, prefill=prefill, user=user, current_user=user,
+             page="clients", bill_tab="clients"),
+    )
+
+
+@views.post("/billing/clients/new")
+async def create_client_post(request: Request):
+    """Create a new client via JSON POST. Returns {client_id}."""
+    from fastapi.responses import JSONResponse
+    import uuid as _uuid
+
+    tenant_id = getattr(request.state, "tenant_id", "").strip()
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Invalid request body."}, status_code=400)
+
+    client_name = (body.get("client_name") or "").strip()
+    if not client_name:
+        return JSONResponse({"error": "Client name is required."}, status_code=400)
+
+    client_id = str(_uuid.uuid4())
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            text("""
+                INSERT INTO clients
+                    (id, tenant_id, client_name, client_type,
+                     client_number, primary_contact,
+                     email, phone, address1, address2,
+                     city, state, zip_code, notes)
+                VALUES
+                    (CAST(:id AS uuid), :tid, :name, :ctype,
+                     :cnum, :contact,
+                     :email, :phone, :addr1, :addr2,
+                     :city, :state, :zip, :notes)
+            """),
+            {
+                "id":      client_id,
+                "tid":     tenant_id,
+                "name":    client_name,
+                "ctype":   body.get("client_type") or "individual",
+                "cnum":    body.get("client_number") or None,
+                "contact": body.get("primary_contact") or None,
+                "email":   body.get("email") or None,
+                "phone":   body.get("phone") or None,
+                "addr1":   body.get("address1") or None,
+                "addr2":   body.get("address2") or None,
+                "city":    body.get("city") or None,
+                "state":   body.get("state") or None,
+                "zip":     body.get("zip_code") or None,
+                "notes":   body.get("notes") or None,
+            },
+        )
+        await session.commit()
+
+    return JSONResponse({
+        "client_id": client_id,
+        "status": "created",
+    })

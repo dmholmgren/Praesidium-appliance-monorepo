@@ -7,6 +7,7 @@ from sqlalchemy import (
     JSON, ForeignKey, Index, func,
 )
 from sqlalchemy.dialects.mysql import BIGINT
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship
 from core.db.base import Base
 
@@ -25,6 +26,7 @@ class SourceType(str, enum.Enum):
     opposing_production = "opposing_production"
     internal_collection = "internal_collection"
     third_party_subpoena = "third_party_subpoena"
+    client_documents = "client_documents"
 
 
 class EdiscoveryCollection(Base):
@@ -45,10 +47,10 @@ class EdiscoveryCollection(Base):
     """
     __tablename__ = "ediscovery_collections"
 
-    id = Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
     tenant_id = Column(String(36), nullable=False)
     matter_id = Column(
-        BIGINT(unsigned=True),
+        PG_UUID(as_uuid=True),
         ForeignKey("matters.id"),
         nullable=False,
     )
@@ -58,9 +60,9 @@ class EdiscoveryCollection(Base):
     # --- Source tracking (chain of custody) ---
     source_party = Column(String(500))
     source_type = Column(
-        Enum(SourceType),
+        String(100),
         nullable=False,
-        default=SourceType.client_collection_dms,
+        default="client_collection_dms",
     )
     received_date = Column(Date)
     received_method = Column(String(255))  # "USB drive", "Relativity transfer", etc.
@@ -75,9 +77,9 @@ class EdiscoveryCollection(Base):
     processed_docs = Column(BIGINT(unsigned=True), default=0)
     reviewed_docs = Column(BIGINT(unsigned=True), default=0)
     status = Column(
-        Enum(CollectionStatus),
+        String(50),
         nullable=False,
-        default=CollectionStatus.collecting,
+        default="collecting",
     )
 
     # --- Issue map (TAR seed from pleading analysis) ---

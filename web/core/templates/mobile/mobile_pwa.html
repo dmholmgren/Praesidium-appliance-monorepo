@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#F5F5F7">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Praesidium">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="description" content="Praesidium Legal Intelligence — Mobile">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="/static/img/praesidium-icon-192.png">
+    <title>Praesidium</title>
+    <style>
+        html, body {
+            margin: 0; padding: 0; overflow: hidden; height: 100%;
+            background: #F5F5F7;
+            overscroll-behavior: none;
+            overscroll-behavior-y: contain;
+            -webkit-overflow-scrolling: touch;
+        }
+        #mobile-root {
+            height: 100%; overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        @supports (padding-top: env(safe-area-inset-top)) {
+            #mobile-root { padding-top: env(safe-area-inset-top); }
+        }
+        button, [role="button"], nav, header {
+            -webkit-user-select: none; user-select: none;
+        }
+        /* CRITICAL: allow text selection in inputs for iOS standalone */
+        input, textarea, select, [contenteditable] {
+            -webkit-user-select: text !important;
+            user-select: text !important;
+            touch-action: auto !important;
+        }
+        a, button { touch-action: manipulation; }
+        input, textarea, select { font-size: 16px !important; }
+        .pm-splash {
+            position: fixed; inset: 0; z-index: 9999;
+            background: #F5F5F7;
+            display: flex; align-items: center; justify-content: center;
+            flex-direction: column; gap: 12px;
+            transition: opacity 0.3s;
+        }
+        .pm-splash.hide { opacity: 0; pointer-events: none; }
+        .pm-splash-icon {
+            width: 56px; height: 56px; border-radius: 14px;
+            background: rgba(0, 113, 227, 0.08);
+            display: flex; align-items: center; justify-content: center;
+        }
+        .pm-splash-text { color: #1D1D1F; font-size: 22px; font-weight: 700; font-family: -apple-system, sans-serif; letter-spacing: -0.02em; }
+        .pm-splash-sub { color: #86868B; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; font-family: -apple-system, sans-serif; }
+    </style>
+</head>
+<body>
+    <div class="pm-splash" id="pm-splash">
+        <div class="pm-splash-icon">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#0071E3" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <div class="pm-splash-text">Praesidium</div>
+        <div class="pm-splash-sub">Legal Intelligence</div>
+    </div>
+    <div id="mobile-root"></div>
+    <script>
+        window.__PRAESIDIUM_CONFIG__ = {
+            apiBase: '/api/v1',
+            aiChatUrl: '/api/v1/mobile/ai-chat',
+            tenantId: '{{ tenant_id or "" }}',
+        };
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                const s = document.getElementById('pm-splash');
+                if (s) { s.classList.add('hide'); setTimeout(() => s.remove(), 400); }
+            }, 600);
+        });
+    </script>
+    <script type="module" src="/static/js/praesidium-mobile.js"></script>
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('/sw.js', { scope: '/' })
+                    .then(reg => console.log('[PWA] SW:', reg.scope))
+                    .catch(err => console.warn('[PWA] SW fail:', err));
+            });
+        }
+    </script>
+</body>
+</html>

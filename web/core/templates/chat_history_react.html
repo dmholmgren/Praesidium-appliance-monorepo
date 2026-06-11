@@ -1,0 +1,10 @@
+{% extends "shell.html" %}
+{% block title %}AI Chat — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}AI Chat{% endblock %}
+{% block breadcrumb %}
+<a href="/chat-history">AI Chat</a>
+{% endblock %}
+{% block content %}
+<div id="chat-history-root"></div>
+<script type="module" src="/static/js/chat-history.js?v=2"></script>
+{% endblock %}

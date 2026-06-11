@@ -1,5 +1,6 @@
 from sqlalchemy import text as sa_text
 from modules.dms.brand_helper import get_brand
+from core.services.nav_context import get_nav_context
 """
 DMS Web UI — Matter Workspace
 Three-panel layout: unified folder tree | document list | preview pane
@@ -66,6 +67,85 @@ def _root_label(path):
 
 def _folder_prefix(disk_root, folder_path):
     return disk_root + "\\" + folder_path.replace("/", "\\") + "\\"
+
+
+def _walk_disk_tree(root_path, max_depth=4):
+    """Walk a Praesidium matter dir, return nested folder structure.
+    Skips dotfiles. Returns [{name, path, children, file_count}]."""
+    result = []
+    if not os.path.isdir(root_path):
+        return result
+    try:
+        entries = sorted(os.scandir(root_path), key=lambda e: e.name)
+    except PermissionError:
+        return result
+    for entry in entries:
+        if entry.name.startswith('.'):
+            continue
+        if entry.is_dir(follow_symlinks=False):
+            children = _walk_disk_tree(entry.path, max_depth - 1) if max_depth > 1 else []
+            try:
+                file_count = sum(1 for f in os.scandir(entry.path)
+                                 if f.is_file() and not f.name.startswith('.'))
+            except (PermissionError, OSError):
+                file_count = 0
+            result.append({"name": entry.name, "path": entry.path,
+                           "children": children, "file_count": file_count})
+    return result
+
+
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# DMS Client Page — matters and docs for a single client
+# ---------------------------------------------------------------------------
+
+@router.get("/client/{client_id}", response_class=HTMLResponse)
+async def dms_client_page(request: Request, client_id: str):
+    from core.db.base import AsyncSessionLocal
+    tenant_id = request.state.tenant_id
+    brand = get_brand(request)
+
+    client_name = "Client"
+    async with AsyncSessionLocal() as session:
+        cr = await session.execute(sa_text("""
+            SELECT client_name FROM clients
+            WHERE id = CAST(:cid AS uuid) AND TRIM(tenant_id) = TRIM(:tid)
+        """), {"cid": client_id, "tid": tenant_id})
+        row = cr.fetchone()
+        if row:
+            client_name = row[0] or "Client"
+
+    nav_ctx = await get_nav_context(request)
+    return templates.TemplateResponse("dms_client_react.html", {
+        "request": request,
+        "brand": brand,
+        "current_user": getattr(request.state, "current_user", None),
+        "page": "docs",
+        "client_id": client_id,
+        "client_name": client_name,
+        **nav_ctx,
+    })
+
+
+# ---------------------------------------------------------------------------
+# DMS Search Page (React)
+# ---------------------------------------------------------------------------
+
+@router.get("/search", response_class=HTMLResponse)
+async def dms_search_page(request: Request):
+    brand = get_brand(request)
+    nav_ctx = await get_nav_context(request)
+    return templates.TemplateResponse("dms_search_react.html", {
+        "request": request,
+        "brand": brand,
+        "current_user": getattr(request.state, "current_user", None),
+        "page": "docs",
+        **nav_ctx,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -179,9 +259,13 @@ async def dms_home(request: Request):
             row["filename"] = path.replace("\\", "/").split("/")[-1]
             activity_feed.append(row)
 
-    return templates.TemplateResponse("dms_home.html", {
+    nav_ctx = await get_nav_context(request)
+    return templates.TemplateResponse("dms_home_react.html", {
         "request": request,
         "brand": brand,
+        "current_user": getattr(request.state, "current_user", None),
+        "page": "docs",
+        **nav_ctx,
         "recent_docs": recent_docs,
         "clients": clients,
         "storage_stats": storage_stats,
@@ -321,10 +405,15 @@ async def matter_documents(request: Request, matter_id: str):
         f["root_label"] = _root_label(f.get("disk_root", "") or "")
         f["prefix"] = _folder_prefix(f["disk_root"], f["folder_path"]) if f.get("disk_root") else None
 
-    return templates.TemplateResponse("matter_documents.html", {
+    nav_ctx = await get_nav_context(request)
+    return templates.TemplateResponse("matter_workspace_react.html", {
         "request": request, "brand": brand,
+        "current_user": getattr(request.state, "current_user", None),
         "matter": dict(matter), "linked_folders": linked_folders,
         "native_count": native_count, "matter_id": matter_id,
+        "matter_name": dict(matter).get("matter_name", ""),
+        "page": "docs",
+        **nav_ctx,
     })
 
 
@@ -428,12 +517,24 @@ async def native_documents(request: Request, matter_id: str):
     tenant_id = request.state.tenant_id
 
     async with AsyncSessionLocal() as session:
-        r = await session.execute(sa_text("""
-            SELECT id::text, title, doc_type, file_size, updated_at, storage_path
-            FROM documents
-            WHERE matter_id = CAST(:mid AS uuid) AND trim(tenant_id) = trim(:tid)
-            ORDER BY storage_path, title
-        """), {"mid": matter_id, "tid": tenant_id})
+        folder = request.query_params.get("folder", "")
+        # Extract leaf folder name (last segment of folder_path)
+        folder_leaf = folder.rsplit("/", 1)[-1] if folder else ""
+        if folder_leaf:
+            r = await session.execute(sa_text("""
+                SELECT id::text, title, doc_type, file_size, updated_at, storage_path
+                FROM documents
+                WHERE matter_id = CAST(:mid AS uuid) AND trim(tenant_id) = trim(:tid)
+                  AND storage_path LIKE '%/' || :leaf || '/%'
+                ORDER BY storage_path, title
+            """), {"mid": matter_id, "tid": tenant_id, "leaf": folder_leaf})
+        else:
+            r = await session.execute(sa_text("""
+                SELECT id::text, title, doc_type, file_size, updated_at, storage_path
+                FROM documents
+                WHERE matter_id = CAST(:mid AS uuid) AND trim(tenant_id) = trim(:tid)
+                ORDER BY storage_path, title
+            """), {"mid": matter_id, "tid": tenant_id})
         docs = [dict(x) for x in r.mappings().fetchall()]
 
     if not docs:
@@ -446,6 +547,9 @@ async def native_documents(request: Request, matter_id: str):
         mod_str = mod.strftime("%Y-%m-%d") if mod else "—"
         rows += f"""
         <tr onclick="selectDoc('{d['id']}','{(d.get('storage_path') or '').replace("'",'')}','native')"
+            draggable="true"
+            ondragstart="docDragStart(event,'{d['id']}','native')"
+            ondragend="docDragEnd(event)"
             style="cursor:pointer;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
           <td style="padding:5px 8px;font-size:12px;">{icon} {d.get('title','Untitled')}</td>
           <td style="padding:5px 8px;font-size:11px;color:var(--muted);">{(d.get('doc_type') or '').upper()}</td>
@@ -565,17 +669,17 @@ def _preview_html(name, size_str, modified, badge, badge_color,
     IMAGE_EXTS = {"jpg", "jpeg", "png", "gif", "webp", "bmp"}
     OFFICE_EXTS = {"docx", "doc", "pptx", "ppt", "xlsx", "xls", "odt", "rtf"}
     if ext in IMAGE_EXTS and preview_url:
-        body = f'<img src="{preview_url}" style="max-width:100%;max-height:420px;border-radius:4px;margin-top:8px;display:block;" alt="{name}">'
+        body = f'<img src="{preview_url}" style="max-width:100%;max-height:calc(100vh - 320px);min-height:300px;border-radius:4px;margin-top:8px;display:block;" alt="{name}">'
     elif ext in OFFICE_EXTS and preview_url:
         body = (
             '<div style="font-size:11px;color:var(--muted);padding:4px 0 6px 0;">Converting for preview…</div>'
-            f'<iframe src="{preview_url}" style="width:100%;height:480px;border:none;border-radius:4px;"></iframe>'
+            f'<iframe src="{preview_url}" style="width:100%;height:calc(100vh - 280px);min-height:400px;border:none;border-radius:4px;"></iframe>'
         )
     elif can_preview and preview_url:
-        body = f'<iframe src="{preview_url}" style="width:100%;height:420px;border:none;border-radius:4px;margin-top:8px;"></iframe>'
+        body = f'<iframe src="{preview_url}" style="width:100%;height:calc(100vh - 280px);min-height:400px;border:none;border-radius:4px;margin-top:8px;"></iframe>'
     elif content_text:
         esc = content_text[:2000].replace("<","&lt;").replace(">","&gt;")
-        body = f'<div style="margin-top:8px;padding:10px;background:#f8fafc;border-radius:4px;font-size:11px;font-family:monospace;white-space:pre-wrap;max-height:420px;overflow-y:auto;">{esc}</div>'
+        body = f'<div style="margin-top:8px;padding:10px;background:#f8fafc;border-radius:4px;font-size:11px;font-family:monospace;white-space:pre-wrap;max-height:calc(100vh - 320px);min-height:300px;overflow-y:auto;">{esc}</div>'
     else:
         ocr_note = ""
         if ocr_status == "ocr_pending":
@@ -611,6 +715,100 @@ def _preview_html(name, size_str, modified, badge, badge_color,
       <div style="font-size:10px;color:var(--muted);word-break:break-all;font-family:monospace;padding:4px 6px;background:#f8fafc;border-radius:3px;margin-bottom:8px;">{path}</div>
       {body}
     </div>"""
+
+
+# ---------------------------------------------------------------------------
+# Native document stream / download by document ID
+# ---------------------------------------------------------------------------
+
+@router.get("/document/{doc_id}/meta", response_class=JSONResponse)
+async def document_meta(request: Request, doc_id: str):
+    """Return document metadata including storage_path and matter_id."""
+    from core.db.base import AsyncSessionLocal
+    tenant_id = request.state.tenant_id
+    async with AsyncSessionLocal() as session:
+        r = await session.execute(sa_text("""
+            SELECT d.id::text, d.filename, d.storage_path, d.mime_type,
+                   d.file_size, d.matter_id::text,
+                   m.matter_name, c.client_name
+            FROM documents d
+            LEFT JOIN matters m ON d.matter_id = m.id
+            LEFT JOIN clients c ON m.client_id = c.id
+            WHERE d.id = CAST(:did AS uuid) AND TRIM(d.tenant_id) = TRIM(:tid)
+        """), {"did": doc_id, "tid": tenant_id})
+        doc = r.mappings().fetchone()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    doc = dict(doc)
+    # Compute matter-relative path
+    rel_path = ""
+    sp = doc.get("storage_path") or ""
+    client = doc.get("client_name") or ""
+    matter = doc.get("matter_name") or ""
+    if client and matter and sp:
+        marker = f"/matters/{client}/{matter}/"
+        idx = sp.find(marker)
+        if idx >= 0:
+            rel_path = sp[idx + len(marker):]
+    return JSONResponse({
+        "id": doc["id"], "filename": doc["filename"],
+        "storage_path": sp, "mime_type": doc["mime_type"],
+        "file_size": doc["file_size"], "matter_id": doc["matter_id"],
+        "matter_name": doc["matter_name"], "client_name": doc["client_name"],
+        "relative_path": rel_path,
+    })
+
+
+@router.get("/document/{doc_id}/stream")
+async def document_stream(request: Request, doc_id: str):
+    """Stream a native document inline by its UUID."""
+    from core.db.base import AsyncSessionLocal
+    tenant_id = request.state.tenant_id
+    async with AsyncSessionLocal() as session:
+        r = await session.execute(sa_text("""
+            SELECT storage_path, filename, mime_type
+            FROM documents
+            WHERE id = CAST(:did AS uuid) AND TRIM(tenant_id) = TRIM(:tid)
+        """), {"did": doc_id, "tid": tenant_id})
+        doc = r.mappings().fetchone()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    spath = doc["storage_path"]
+    if not spath or not os.path.isfile(spath):
+        raise HTTPException(status_code=404, detail="File not accessible")
+    import mimetypes as _mt
+    mime = doc["mime_type"] or _mt.guess_type(spath)[0] or "application/octet-stream"
+    fname = doc["filename"] or os.path.basename(spath)
+    with open(spath, "rb") as f:
+        data = f.read()
+    return Response(content=data, media_type=mime,
+                    headers={"Content-Disposition": f'inline; filename="{fname}"'})
+
+
+@router.get("/document/{doc_id}/download")
+async def document_download(request: Request, doc_id: str):
+    """Download a native document as attachment by its UUID."""
+    from core.db.base import AsyncSessionLocal
+    tenant_id = request.state.tenant_id
+    async with AsyncSessionLocal() as session:
+        r = await session.execute(sa_text("""
+            SELECT storage_path, filename, mime_type
+            FROM documents
+            WHERE id = CAST(:did AS uuid) AND TRIM(tenant_id) = TRIM(:tid)
+        """), {"did": doc_id, "tid": tenant_id})
+        doc = r.mappings().fetchone()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    spath = doc["storage_path"]
+    if not spath or not os.path.isfile(spath):
+        raise HTTPException(status_code=404, detail="File not accessible")
+    import mimetypes as _mt
+    mime = doc["mime_type"] or _mt.guess_type(spath)[0] or "application/octet-stream"
+    fname = doc["filename"] or os.path.basename(spath)
+    with open(spath, "rb") as f:
+        data = f.read()
+    return Response(content=data, media_type=mime,
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 # ---------------------------------------------------------------------------
@@ -888,6 +1086,499 @@ async def create_folder(request: Request, matter_id: str):
 
 
 
+
+
+# ---------------------------------------------------------------------------
+# Folder CRUD API — rename, delete, reorder, tree JSON
+# ---------------------------------------------------------------------------
+
+@router.get("/matter/{matter_id}/folder-tree", response_class=JSONResponse)
+async def folder_tree_json(request: Request, matter_id: str):
+    """Return folder tree as JSON - walks disk for Praesidium matters."""
+    from core.db.base import AsyncSessionLocal
+    tenant_id = request.state.tenant_id
+
+    async with AsyncSessionLocal() as session:
+        r = await session.execute(sa_text("""
+            SELECT id::text, folder_path, disk_root, file_count
+            FROM matter_folders
+            WHERE matter_id = CAST(:mid AS uuid) AND trim(tenant_id) = trim(:tid)
+            ORDER BY folder_path
+        """), {"mid": matter_id, "tid": tenant_id})
+        folders = [dict(row) for row in r.mappings().fetchall()]
+
+        nc = await session.execute(sa_text("""
+            SELECT COUNT(*) FROM documents
+            WHERE matter_id = CAST(:mid AS uuid) AND trim(tenant_id) = trim(:tid)
+        """), {"mid": matter_id, "tid": tenant_id})
+        native_count = nc.scalar() or 0
+
+    # Check if this matter has a Praesidium disk_root
+    praesidium_root = None
+    for f in folders:
+        dr = f.get("disk_root") or ""
+        if dr.startswith("/mnt/praesidium"):
+            praesidium_root = dr
+            break
+
+    # Fallback: construct path from client_name/matter_name
+    if not praesidium_root:
+        async with AsyncSessionLocal() as session:
+            mr = await session.execute(sa_text("""
+                SELECT m.matter_name, c.client_name
+                FROM matters m
+                LEFT JOIN clients c ON m.client_id = c.id
+                  AND trim(m.tenant_id) = trim(c.tenant_id)
+                WHERE m.id = CAST(:mid AS uuid)
+                  AND trim(m.tenant_id) = trim(:tid)
+            """), {"mid": matter_id, "tid": tenant_id})
+            mrow = mr.mappings().fetchone()
+        if mrow and mrow["client_name"] and mrow["matter_name"]:
+            candidate = os.path.join(
+                "/mnt/praesidium", tenant_id.strip(), "matters",
+                mrow["client_name"], mrow["matter_name"],
+            )
+            if os.path.isdir(candidate):
+                praesidium_root = candidate
+
+    if praesidium_root and os.path.isdir(praesidium_root):
+        disk_tree = _walk_disk_tree(praesidium_root, max_depth=4)
+        try:
+            root_file_count = sum(1 for f in os.scandir(praesidium_root)
+                                  if f.is_file() and not f.name.startswith('.'))
+        except (PermissionError, OSError):
+            root_file_count = 0
+        return JSONResponse({
+            "mode": "disk",
+            "root": praesidium_root,
+            "root_file_count": root_file_count,
+            "tree": disk_tree,
+            "native_count": native_count,
+        })
+
+    # Fallback: DB-based folder list
+    for f in folders:
+        f["root_label"] = _root_label(f.get("disk_root") or "")
+        f["display_name"] = (f["folder_path"] or "").split("/")[-1]
+        dr = f.get("disk_root") or ""
+        f["is_native"] = not bool(dr)
+        f["is_praesidium"] = (not dr) or dr.startswith("/mnt/praesidium")
+    return JSONResponse({"mode": "db", "folders": folders, "native_count": native_count})
+@router.get("/matter/{matter_id}/disk-folder", response_class=HTMLResponse)
+async def disk_folder_contents(request: Request, matter_id: str,
+                                path: str = "", page: int = 1):
+    """List files from a Praesidium disk folder - direct filesystem read."""
+    tenant_id = request.state.tenant_id
+
+    if not path:
+        return HTMLResponse('<div style="padding:12px; font-size:12px; color:var(--muted);">Select a folder.</div>')
+    if not path.startswith("/mnt/praesidium/"):
+        return HTMLResponse('<div style="padding:12px; font-size:12px; color:#dc2626;">Access denied.</div>')
+    if not os.path.isdir(path):
+        return HTMLResponse('<div style="padding:12px; font-size:12px; color:var(--muted);">Folder not found.</div>')
+
+    per_page = 100
+    offset = (page - 1) * per_page
+
+    try:
+        all_files = sorted(
+            [e for e in os.scandir(path) if e.is_file() and not e.name.startswith('.')],
+            key=lambda e: e.name.lower()
+        )
+    except (PermissionError, OSError) as exc:
+        return HTMLResponse(f'<div style="padding:12px; font-size:12px; color:#dc2626;">Cannot read: {exc}</div>')
+
+    total = len(all_files)
+    page_files = all_files[offset:offset + per_page]
+
+    if not page_files and total == 0:
+        return HTMLResponse('<div style="padding:16px; font-size:12px; color:var(--muted);">No files in this folder.</div>')
+
+    rows = ""
+    for entry in page_files:
+        try:
+            stat = entry.stat()
+            size_str = _fmt_size(stat.st_size)
+            mod_str = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d")
+        except OSError:
+            size_str = "---"
+            mod_str = "---"
+        icon = _ext_icon(entry.name)
+        safe_path = entry.path.replace("&", "&amp;").replace('"', "&quot;")
+        enc_path = entry.path.replace(" ", "%20")
+        js_path = entry.path.replace("\\", "\\\\").replace("'", "\\'")
+        rows += f"""
+        <tr draggable="true"
+            data-diskpath="{safe_path}"
+            ondragstart="diskFileDragStart(event)"
+            onclick="selectDiskDoc('{js_path}')"
+            style="cursor:pointer;"
+            onmouseover="this.style.background='#f8fafc'"
+            onmouseout="this.style.background=''">
+          <td style="padding:5px 8px; font-size:12px; max-width:320px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+            {icon} <span title="{safe_path}">{entry.name}</span>
+          </td>
+          <td style="padding:5px 8px; font-size:11px; color:var(--muted); white-space:nowrap;">{size_str}</td>
+          <td style="padding:5px 8px; font-size:11px; color:var(--muted); white-space:nowrap;">{mod_str}</td>
+          <td style="padding:5px 8px; text-align:right;">
+            <a href="/dms/disk/download?path={enc_path}" download onclick="event.stopPropagation()"
+               style="font-size:12px; color:var(--primary,#1B2A4A);">&#x2B07;</a>
+          </td>
+        </tr>"""
+
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    pager = ""
+    if total_pages > 1:
+        enc = path.replace(" ", "%20")
+        prev_btn = f'<button hx-get="/dms/matter/{matter_id}/disk-folder?path={enc}&page={page-1}" hx-target="#folder-contents" style="padding:3px 10px;font-size:11px;border:1px solid var(--border-color,#e2e8f0);border-radius:4px;cursor:pointer;">Prev</button>' if page > 1 else ""
+        next_btn = f'<button hx-get="/dms/matter/{matter_id}/disk-folder?path={enc}&page={page+1}" hx-target="#folder-contents" style="padding:3px 10px;font-size:11px;border:1px solid var(--border-color,#e2e8f0);border-radius:4px;cursor:pointer;">Next</button>' if page < total_pages else ""
+        pager = f'<div style="display:flex;justify-content:center;gap:8px;padding:8px;font-size:11px;color:var(--muted);">{prev_btn}<span>Page {page} of {total_pages} ({total} files)</span>{next_btn}</div>'
+
+    return HTMLResponse(f"""
+    <div style="font-size:11px;color:var(--muted);padding:5px 8px;border-bottom:1px solid #f1f5f9;">{total} files</div>
+    <table style="width:100%;border-collapse:collapse;">
+      <thead><tr style="background:#f8fafc;border-bottom:1px solid var(--border-color,#e2e8f0);">
+        <th style="padding:5px 8px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);">Name</th>
+        <th style="padding:5px 8px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);">Size</th>
+        <th style="padding:5px 8px;text-align:left;font-size:11px;font-weight:600;color:var(--muted);">Modified</th>
+        <th></th>
+      </tr></thead>
+      <tbody>{rows}</tbody>
+    </table>{pager}""")
+
+
+@router.get("/disk/stream")
+async def disk_stream(request: Request, path: str = ""):
+    """Stream a file from local Praesidium storage for inline preview."""
+    if not path:
+        raise HTTPException(status_code=400, detail="path required")
+    if not path.startswith("/mnt/praesidium/"):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File not found")
+    import mimetypes
+    mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    filename = os.path.basename(path)
+    with open(path, "rb") as f:
+        content = f.read()
+    return Response(content=content, media_type=mime,
+                    headers={"Content-Disposition": f'inline; filename="{filename}"'})
+
+
+@router.get("/disk/download")
+async def disk_download(request: Request, path: str = ""):
+    """Download a file from local Praesidium storage."""
+    if not path:
+        raise HTTPException(status_code=400, detail="path required")
+    if not path.startswith("/mnt/praesidium/"):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File not found")
+    import mimetypes
+    mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    filename = os.path.basename(path)
+    with open(path, "rb") as f:
+        content = f.read()
+    return Response(content=content, media_type=mime,
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+
+
+
+# DISABLED — version-checking handler in dms_upload_route.py replaces this
+# @router.post("/disk/upload")
+# async def disk_upload(request: Request,
+#                       file: UploadFile = File(...),
+#                       disk_path: str = Form(...),
+#                       matter_id: str = Form(...)):
+#     """Upload a file directly to a Praesidium disk folder.
+#     Writes to disk, inserts documents row, returns JSON."""
+#     from core.db.base import AsyncSessionLocal
+#     import hashlib
+#     tenant_id = request.state.tenant_id
+# 
+#     # Resolve relative disk_path against matter's Praesidium root
+#     if not disk_path.startswith('/mnt/praesidium/'):
+#         # React workspace sends relative folder name — resolve it
+#         async with AsyncSessionLocal() as _sess:
+#             _mr = await _sess.execute(sa_text("""
+#                 SELECT m.matter_name, c.client_name
+#                 FROM matters m LEFT JOIN clients c ON m.client_id = c.id
+#                     AND trim(m.tenant_id) = trim(c.tenant_id)
+#                 WHERE m.id = CAST(:mid AS uuid) AND trim(m.tenant_id) = trim(:tid)
+#             """), {'mid': matter_id, 'tid': (tenant_id or '').strip()})
+#             _mrow = _mr.mappings().fetchone()
+#         if not _mrow or not _mrow['client_name'] or not _mrow['matter_name']:
+#             raise HTTPException(status_code=404, detail='Matter not found')
+#         _root = os.path.join('/mnt/praesidium', (tenant_id or '').strip(), 'matters', _mrow['client_name'], _mrow['matter_name'])
+#         if disk_path and disk_path != '.':
+#             disk_path = os.path.join(_root, disk_path)
+#         else:
+#             disk_path = _root
+#         # Traversal check
+#         if not os.path.realpath(disk_path).startswith(os.path.realpath(_root)):
+#             raise HTTPException(status_code=403, detail='Access denied')
+#     if not os.path.isdir(disk_path):
+#         os.makedirs(disk_path, exist_ok=True)
+# 
+#     # Sanitize filename
+#     safe_name = os.path.basename(file.filename or "upload")
+#     if not safe_name or safe_name.startswith('.'):
+#         safe_name = "upload"
+# 
+#     dest = os.path.join(disk_path, safe_name)
+# 
+#     # If file exists, add counter suffix
+#     if os.path.exists(dest):
+#         base, ext = os.path.splitext(safe_name)
+#         counter = 1
+#         while os.path.exists(dest):
+#             dest = os.path.join(disk_path, f"{base} ({counter}){ext}")
+#             counter += 1
+#         safe_name = os.path.basename(dest)
+# 
+#     # Write to disk
+#     content = await file.read()
+#     with open(dest, "wb") as f:
+#         f.write(content)
+# 
+#     file_size = len(content)
+#     checksum = hashlib.sha256(content).hexdigest()
+# 
+#     # Guess mime type
+#     import mimetypes
+#     mime = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+# 
+#     # Derive extension for document_type
+#     ext = safe_name.rsplit(".", 1)[-1].lower() if "." in safe_name else ""
+# 
+#     # Insert documents row
+#     user_id = getattr(getattr(request.state, "current_user", None), "id", None)
+#     async with AsyncSessionLocal() as session:
+#         r = await session.execute(sa_text("""
+#             INSERT INTO documents (
+#                 id, tenant_id, matter_id, filename, original_filename,
+#                 title, mime_type, file_size, storage_path,
+#                 document_type, status, checksum,
+#                 created_by, created_at, updated_at
+#             ) VALUES (
+#                 gen_random_uuid(), :tid, CAST(:mid AS uuid), :fname, :fname,
+#                 :fname, :mime, :fsize, :spath,
+#                 :ext, 'active', :checksum,
+#                 :uid, NOW(), NOW()
+#             )
+#             RETURNING id::text
+#         """), {
+#             "tid": tenant_id,
+#             "mid": matter_id,
+#             "fname": safe_name,
+#             "mime": mime,
+#             "fsize": file_size,
+#             "spath": dest,
+#             "ext": ext,
+#             "checksum": checksum,
+#             "uid": int(user_id) if user_id else None,
+#         })
+#         doc_id = r.scalar()
+#         await session.commit()
+# 
+#     logger.info("disk_upload: %s -> %s (doc %s, %d bytes)", safe_name, dest, doc_id, file_size)
+# 
+#     return JSONResponse({
+#         "status": "ok",
+#         "doc_id": doc_id,
+#         "filename": safe_name,
+#         "path": dest,
+#         "size": file_size,
+#     })
+# 
+# 
+# 
+@router.post("/disk/move")
+async def disk_move(request: Request):
+    """Move a file between Praesidium disk folders. Updates documents.storage_path."""
+    from core.db.base import AsyncSessionLocal
+    import shutil as _shutil
+    tenant_id = request.state.tenant_id
+    body = await request.json()
+    src_path = body.get("src_path", "")
+    dest_folder = body.get("dest_folder", "")
+
+    if not src_path or not dest_folder:
+        raise HTTPException(status_code=400, detail="src_path and dest_folder required")
+    if not src_path.startswith("/mnt/praesidium/"):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if not dest_folder.startswith("/mnt/praesidium/"):
+        raise HTTPException(status_code=403, detail="Access denied")
+    if not os.path.isfile(src_path):
+        raise HTTPException(status_code=404, detail="Source file not found")
+    if not os.path.isdir(dest_folder):
+        os.makedirs(dest_folder, exist_ok=True)
+
+    filename = os.path.basename(src_path)
+    dest_path = os.path.join(dest_folder, filename)
+    if os.path.exists(dest_path) and dest_path != src_path:
+        base, ext = os.path.splitext(filename)
+        counter = 1
+        while os.path.exists(dest_path):
+            dest_path = os.path.join(dest_folder, f"{base} ({counter}){ext}")
+            counter += 1
+
+    _shutil.move(src_path, dest_path)
+    logger.info("disk_move: %s -> %s", src_path, dest_path)
+
+    async with AsyncSessionLocal() as session:
+        r = await session.execute(sa_text("""
+            UPDATE documents
+            SET storage_path = :new_path, updated_at = NOW()
+            WHERE storage_path = :old_path AND trim(tenant_id) = trim(:tid)
+            RETURNING id::text
+        """), {"new_path": dest_path, "old_path": src_path, "tid": tenant_id})
+        updated_id = r.scalar()
+        await session.commit()
+
+    return JSONResponse({
+        "status": "ok",
+        "src": src_path,
+        "dest": dest_path,
+        "filename": os.path.basename(dest_path),
+        "db_updated": bool(updated_id),
+    })
+
+
+@router.post("/matter/{matter_id}/folder/rename")
+async def rename_folder(request: Request, matter_id: str):
+    """Rename a matter folder — updates DB, moves on disk."""
+    from core.db.base import AsyncSessionLocal
+    import shutil
+    tenant_id = request.state.tenant_id
+    body = await request.json()
+    folder_id = (body.get("folder_id") or "").strip()
+    new_name = (body.get("new_name") or "").strip()
+
+    if not folder_id or not new_name:
+        raise HTTPException(status_code=400, detail="folder_id and new_name required")
+    if any(c in new_name for c in ("\\", "/", "..", "\x00")):
+        raise HTTPException(status_code=400, detail="Invalid folder name")
+
+    async with AsyncSessionLocal() as session:
+        r = await session.execute(sa_text("""
+            SELECT id::text, folder_path, disk_root
+            FROM matter_folders
+            WHERE id = CAST(:fid AS uuid) AND matter_id = CAST(:mid AS uuid)
+              AND trim(tenant_id) = trim(:tid)
+        """), {"fid": folder_id, "mid": matter_id, "tid": tenant_id})
+        folder = r.mappings().fetchone()
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+
+        old_path = folder["folder_path"]
+        old_disk = folder["disk_root"]
+
+        # Build new paths
+        parts = old_path.rsplit("/", 1)
+        if len(parts) == 2:
+            new_folder_path = parts[0] + "/" + new_name
+        else:
+            new_folder_path = new_name
+
+        # Move on disk if disk_root exists
+        if old_disk:
+            old_dir = old_disk
+            new_disk = old_disk.rsplit("/", 1)[0] + "/" + new_name if "/" in old_disk else new_name
+            try:
+                if os.path.isdir(old_dir):
+                    shutil.move(old_dir, new_disk)
+            except Exception as exc:
+                logger.warning("Folder rename disk move failed: %s", exc)
+                raise HTTPException(status_code=500, detail=f"Disk rename failed: {exc}")
+        else:
+            new_disk = None
+
+        # Update DB
+        await session.execute(sa_text("""
+            UPDATE matter_folders
+            SET folder_path = :fp, disk_root = :dr
+            WHERE id = CAST(:fid AS uuid)
+        """), {"fp": new_folder_path, "dr": new_disk, "fid": folder_id})
+
+        # Also update matters.folder_path if it references this folder
+        await session.execute(sa_text("""
+            UPDATE matters
+            SET folder_path = :fp
+            WHERE id = CAST(:mid AS uuid) AND folder_path = :old_fp
+        """), {"fp": new_folder_path, "mid": matter_id, "old_fp": old_path})
+
+        await session.commit()
+
+    return JSONResponse({"status": "renamed", "old_path": old_path, "new_path": new_folder_path})
+
+
+@router.post("/matter/{matter_id}/folder/delete")
+async def delete_folder(request: Request, matter_id: str):
+    """Delete a matter folder — only if empty on disk and no documents linked."""
+    from core.db.base import AsyncSessionLocal
+    import shutil
+    tenant_id = request.state.tenant_id
+    body = await request.json()
+    folder_id = (body.get("folder_id") or "").strip()
+    force = body.get("force", False)
+
+    if not folder_id:
+        raise HTTPException(status_code=400, detail="folder_id required")
+
+    async with AsyncSessionLocal() as session:
+        r = await session.execute(sa_text("""
+            SELECT id::text, folder_path, disk_root
+            FROM matter_folders
+            WHERE id = CAST(:fid AS uuid) AND matter_id = CAST(:mid AS uuid)
+              AND trim(tenant_id) = trim(:tid)
+        """), {"fid": folder_id, "mid": matter_id, "tid": tenant_id})
+        folder = r.mappings().fetchone()
+        if not folder:
+            raise HTTPException(status_code=404, detail="Folder not found")
+
+        disk_root = folder["disk_root"]
+
+        # Check if folder has files on disk
+        if disk_root and os.path.isdir(disk_root):
+            contents = os.listdir(disk_root)
+            if contents and not force:
+                return JSONResponse({
+                    "status": "not_empty",
+                    "message": f"Folder contains {len(contents)} item(s). Set force=true to delete.",
+                    "item_count": len(contents),
+                }, status_code=409)
+            # Safety: never recursively delete a matter root / shared dir
+            from modules.dms.services.path_safety import assert_deletable_subpath
+            assert_deletable_subpath(disk_root, tenant_id, op="folder delete")
+            # Remove from disk
+            try:
+                shutil.rmtree(disk_root)
+            except Exception as exc:
+                logger.warning("Folder delete disk error: %s", exc)
+                raise HTTPException(status_code=500, detail=f"Disk delete failed: {exc}")
+
+        # Remove from DB
+        await session.execute(sa_text("""
+            DELETE FROM matter_folders
+            WHERE id = CAST(:fid AS uuid)
+        """), {"fid": folder_id})
+        await session.commit()
+
+    return JSONResponse({"status": "deleted", "folder_path": folder["folder_path"]})
+
+
+@router.post("/matter/{matter_id}/folder/reorder")
+async def reorder_folders(request: Request, matter_id: str):
+    """Update folder display order. Accepts {folder_ids: [ordered UUIDs]}.
+    We store order as a zero-padded prefix on folder_path or a sort_order column.
+    Since matter_folders has no sort_order column, we use the folder_ids list
+    and return success — the client maintains order in JS state."""
+    # For now this is a no-op server-side; the client handles order via localStorage.
+    # A sort_order column can be added in a future migration.
+    return JSONResponse({"status": "ok", "message": "Client-side order maintained"})
+
+
 @router.post("/upload")
 async def upload_document(request: Request, matter_id: str = Form(...),
                            folder_path: str = Form(""), file: UploadFile = File(...)):
@@ -1157,3 +1848,180 @@ async def search_documents(request: Request, q: str = "", matter_id: Optional[st
 @router.post("/document/{document_id}/restore/{version_id}")
 async def restore_version(request: Request, document_id: str, version_id: str):
     raise HTTPException(status_code=404, detail="Version history not yet available")
+
+
+# ---------------------------------------------------------------------------
+# AI-Assisted Search — Claude with MCP access
+# ---------------------------------------------------------------------------
+
+@router.get("/ai-search", response_class=HTMLResponse)
+async def dms_ai_search(request: Request, q: str = "", matter_id: str = ""):
+    """AI search across DMS — returns HTML partial for HTMX swap."""
+    from core.services.ai_search_service import ai_search
+
+    if not q:
+        return HTMLResponse(
+            '<div style="padding:12px 16px; font-size:12px; color:var(--muted);">'
+            'Type a question in plain English to search with AI.</div>'
+        )
+
+    tenant_id = (request.state.tenant_id or "").strip()
+    matter_context = None
+
+    if matter_id:
+        from core.db.base import AsyncSessionLocal
+        async with AsyncSessionLocal() as session:
+            mr = await session.execute(sa_text("""
+                SELECT m.matter_name, m.matter_number, c.client_name
+                FROM matters m
+                LEFT JOIN clients c ON m.client_id = c.id
+                    AND trim(m.tenant_id) = trim(c.tenant_id)
+                WHERE m.id = CAST(:mid AS uuid) AND trim(m.tenant_id) = :tid
+            """), {"mid": matter_id, "tid": tenant_id})
+            row = mr.mappings().fetchone()
+            if row:
+                matter_context = dict(row)
+
+    result = await ai_search(
+        query=q,
+        tenant_id=tenant_id,
+        matter_id=matter_id or None,
+        matter_context=matter_context,
+    )
+
+    if result.error:
+        return HTMLResponse(
+            f'<div style="padding:12px 16px; font-size:12px; color:#991B1B; '
+            f'background:#FEF2F2; border:1px solid #FCA5A5; border-radius:6px;">'
+            f'AI Search Error: {result.error}</div>'
+        )
+
+    parts = []
+
+    # Summary
+    if result.summary:
+        parts.append(
+            f'<div style="padding:10px 14px; background:#f8fafc; border-radius:6px; '
+            f'font-size:13px; color:var(--text); line-height:1.6; margin-bottom:8px;">'
+            f'<span style="font-size:14px;">&#129302;</span> {result.summary}</div>'
+        )
+
+    # Reasoning
+    if result.reasoning:
+        parts.append(
+            f'<div style="font-size:11px; color:var(--muted); margin-bottom:8px;">'
+            f'<strong>Strategy:</strong> {result.reasoning}</div>'
+        )
+
+    # Documents
+    if result.documents:
+        parts.append(
+            f'<div style="font-size:11px; color:var(--muted); margin-bottom:4px;">'
+            f'{len(result.documents)} document(s) found</div>'
+        )
+        for doc in result.documents:
+            fn = doc.get("filename", doc.get("id", "Unknown"))
+            note = doc.get("relevance_note", "")
+            score = doc.get("score")
+            score_html = (
+                f'<span style="font-size:9px; background:#DBEAFE; color:#1E40AF; '
+                f'padding:1px 6px; border-radius:8px;">'
+                f'{int(score * 100)}%</span>'
+            ) if score else ""
+            parts.append(
+                f'<div style="padding:7px 10px; border-bottom:1px solid #f1f5f9; '
+                f'font-size:12px; display:flex; align-items:center; gap:8px;">'
+                f'<span style="font-size:14px;">&#128196;</span>'
+                f'<div style="flex:1; min-width:0;">'
+                f'<div style="font-weight:500; color:var(--text); overflow:hidden; '
+                f'text-overflow:ellipsis; white-space:nowrap;">{fn}</div>'
+                + (f'<div style="font-size:10px; color:var(--muted);">{note}</div>' if note else '')
+                + f'</div>{score_html}</div>'
+            )
+    elif not result.summary:
+        parts.append(
+            '<div style="padding:12px; font-size:12px; color:var(--muted); text-align:center;">'
+            'AI search returned no results. Try rephrasing your query.</div>'
+        )
+
+    # Token usage
+    if result.prompt_tokens:
+        parts.append(
+            f'<div style="font-size:10px; color:var(--muted); margin-top:6px; text-align:right;">'
+            f'{result.model_used} · {result.prompt_tokens + result.completion_tokens} tokens</div>'
+        )
+
+    return HTMLResponse("\n".join(parts))
+
+
+
+# ---------------------------------------------------------------------------
+# Document Move — drag-and-drop file to folder
+# ---------------------------------------------------------------------------
+
+@router.post("/matter/{matter_id}/document/move")
+async def move_document(request: Request, matter_id: str):
+    """Move a native Praesidium document to a different folder."""
+    from core.db.base import AsyncSessionLocal
+    import shutil as _shutil
+    tenant_id = request.state.tenant_id
+    body = await request.json()
+    doc_id = (body.get("doc_id") or "").strip()
+    target_folder = (body.get("target_folder") or "").strip()
+
+    if not doc_id:
+        raise HTTPException(status_code=400, detail="doc_id required")
+
+    target_leaf = target_folder.rsplit("/", 1)[-1] if target_folder else ""
+
+    async with AsyncSessionLocal() as session:
+        r = await session.execute(sa_text("""
+            SELECT id::text, title, storage_path, filename
+            FROM documents
+            WHERE id = CAST(:did AS uuid)
+              AND matter_id = CAST(:mid AS uuid)
+              AND trim(tenant_id) = trim(:tid)
+        """), {"did": doc_id, "mid": matter_id, "tid": tenant_id})
+        doc = r.mappings().fetchone()
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        old_storage = doc["storage_path"] or ""
+        filename = doc["filename"] or doc["title"] or "unknown"
+
+        # Build new storage_path: praesidium/matters/{uuid}/{leaf}/filename
+        prefix = f"praesidium/matters/{matter_id}"
+        new_storage = f"{prefix}/{target_leaf}/{filename}" if target_leaf else f"{prefix}/{filename}"
+
+        # Resolve disk paths:
+        # storage_path = praesidium/matters/{uuid}/folder/file
+        # disk_path    = /mnt/praesidium/{tenant}/matters/{uuid}/folder/file
+        tid = tenant_id.strip()
+        def storage_to_disk(sp):
+            if sp.startswith("praesidium/"):
+                return "/mnt/praesidium/" + tid + "/" + sp[len("praesidium/"):]
+            return None
+
+        old_disk = storage_to_disk(old_storage)
+        new_disk = storage_to_disk(new_storage)
+
+        moved = False
+        if old_disk and new_disk and old_disk != new_disk:
+            if os.path.isfile(old_disk):
+                new_dir = os.path.dirname(new_disk)
+                os.makedirs(new_dir, exist_ok=True)
+                _shutil.move(old_disk, new_disk)
+                moved = True
+                logger.info("Moved file %s -> %s", old_disk, new_disk)
+            else:
+                logger.warning("Source file not found on disk: %s", old_disk)
+
+        # Update DB
+        await session.execute(sa_text("""
+            UPDATE documents SET storage_path = :sp
+            WHERE id = CAST(:did AS uuid) AND trim(tenant_id) = trim(:tid)
+        """), {"sp": new_storage, "did": doc_id, "tid": tenant_id})
+        await session.commit()
+
+    return JSONResponse({"status": "moved", "new_path": new_storage, "disk_moved": moved})
+

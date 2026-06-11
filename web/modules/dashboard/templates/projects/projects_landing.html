@@ -1,0 +1,23 @@
+{% extends "shell.html" %}
+{% block title %}Workflows & Projects — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Workflows & Projects{% endblock %}
+
+{% block header_actions %}
+<button onclick="document.dispatchEvent(new CustomEvent('pm-quick-task'))" class="btn-secondary" style="font-size:12px;gap:5px;">
+  <svg style="width:13px;height:13px;" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+  </svg>
+  Quick Task
+</button>
+<button onclick="document.dispatchEvent(new CustomEvent('pm-new'))" class="btn-primary" style="font-size:12px;gap:5px;">
+  <svg style="width:13px;height:13px;" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
+  </svg>
+  New
+</button>
+{% endblock %}
+
+{% block content %}
+<div id="react-app"></div>
+<script type="module" src="/static/js/projects-home.js"></script>
+{% endblock %}

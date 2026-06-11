@@ -1,0 +1,12 @@
+{% extends "shell.html" %}
+{% block title %}{{ matter_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/matters" style="color:var(--muted);text-decoration:none;">Matters</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">{{ matter_name }}</span>
+{% endblock %}
+{% block content %}
+<div id="matter-dashboard-root" style="margin: -24px;"></div>
+<script>window.__MATTER_ID__ = '{{ matter_id }}';</script>
+<script type="module" src="/static/js/matter-dashboard.js?v=12"></script>
+{% endblock %}

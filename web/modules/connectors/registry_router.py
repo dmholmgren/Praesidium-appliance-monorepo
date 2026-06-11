@@ -24,7 +24,7 @@ Architectural constraints enforced:
   - trim(tenant_id) in all WHERE clauses
   - tenant_connectors uses 'connector' and 'is_active' columns
   - credentials_vault uses 'encrypted_key' column
-  - CAST(:value AS jsonb) not :value::jsonb
+  - CAST(:value AS jsonb) not CAST(:value AS jsonb)
   - Templates from ui_templates DB table, filesystem fallback
   - All AI calls via AIService (none here)
   - BrandingService for all branding
@@ -44,6 +44,52 @@ from modules.dashboard.services.auth_helper import get_current_user
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# credentials_vault crypto — Fernet symmetric encryption keyed off SECRET_KEY.
+# Matches the pattern in modules/tenant_admin/tenant_admin.py::tenant_byok_post
+# so that BYOK and connector credential rows use the same ciphertext format.
+# ---------------------------------------------------------------------------
+
+import base64 as _vault_base64
+import os as _vault_os
+
+
+def _vault_get_fernet():
+    """Return a Fernet keyed off SECRET_KEY (env). Same derivation everywhere."""
+    from cryptography.fernet import Fernet
+    secret = _vault_os.environ.get("SECRET_KEY", "changeme-32-bytes-exactly!!!!!!!")
+    key_bytes = (secret[:32]).encode().ljust(32, b"0")
+    fernet_key = _vault_base64.urlsafe_b64encode(key_bytes)
+    return Fernet(fernet_key)
+
+
+def _vault_encrypt(plaintext: str) -> str:
+    """Encrypt a credential before INSERT into credentials_vault.encrypted_key."""
+    if plaintext is None:
+        return ""
+    f = _vault_get_fernet()
+    return f.encrypt(plaintext.encode()).decode()
+
+
+def _vault_decrypt(stored: str) -> str:
+    """
+    Decrypt a credentials_vault.encrypted_key value.
+    Tries Fernet first; falls back to returning the raw value as plaintext
+    if decrypt fails. The fallback exists ONLY for transition — once all
+    rows are re-saved through the patched writer, the fallback is dead code.
+    """
+    if not stored:
+        return ""
+    try:
+        f = _vault_get_fernet()
+        return f.decrypt(stored.encode()).decode()
+    except Exception:
+        # Legacy plaintext row from before the encryption fix.
+        # Log at info level so we can see how many rows still need re-saving.
+        logger.info("_vault_decrypt: row appears to be plaintext (pre-encryption fix)")
+        return stored
+
 
 
 # ---------------------------------------------------------------------------
@@ -74,13 +120,21 @@ async def _get_registry_entry(session, connector_type: str) -> Optional[dict]:
     return entry
 
 
-async def _get_tenant_connector(session, tenant_id: str, connector_type: str) -> Optional[dict]:
+async def _get_tenant_connector(session, tenant_id: str, connector_type: str):
+    """
+    Get the tenant's instance of a connector.
+    Returns dict with {id, connector, config, is_active, last_sync_at} or None.
+    """
+    import json
+    from sqlalchemy import text
+
     result = await session.execute(
         text("""
             SELECT id, connector, config, is_active, last_sync_at
             FROM tenant_connectors
             WHERE trim(tenant_id) = trim(:tid)
               AND connector = :ct
+            LIMIT 1
         """),
         {"tid": tenant_id, "ct": connector_type},
     )
@@ -96,46 +150,114 @@ async def _get_tenant_connector(session, tenant_id: str, connector_type: str) ->
     return rec
 
 
-async def _get_credential(session, tenant_id: str, key_name: str) -> Optional[str]:
+async def _get_credential(session, tenant_id: str, key_name: str) -> str | None:
+    """
+    Retrieve a credential from credentials_vault. Decrypts via Fernet.
+
+    key_name format from the router: "{connector_type}.{field_name}"
+    Maps to: provider=connector_type, key_type=field_name
+    """
+    from sqlalchemy import text
+
+    # Parse "auth_ldap.bind_password" → provider="auth_ldap", key_type="bind_password"
+    if "." in key_name:
+        provider, key_type = key_name.split(".", 1)
+    else:
+        provider = key_name
+        key_type = key_name
+
     result = await session.execute(
         text("""
             SELECT encrypted_key
             FROM credentials_vault
             WHERE trim(tenant_id) = trim(:tid)
-              AND key_name = :kn
+              AND provider = :provider
+              AND key_type = :key_type
             LIMIT 1
         """),
-        {"tid": tenant_id, "kn": key_name},
+        {"tid": tenant_id, "provider": provider, "key_type": key_type},
     )
     row = result.fetchone()
-    return row[0] if row else None
+    if not row:
+        return None
+    return _vault_decrypt(row[0])
 
 
 async def _upsert_tenant_connector(session, tenant_id: str, connector_type: str, config: dict, is_active: bool):
-    await session.execute(
+    """
+    Upsert a tenant connector row.
+
+    No unique constraint on (tenant_id, connector), so we do SELECT-then-INSERT/UPDATE.
+    """
+    import json
+    from sqlalchemy import text
+
+    existing = await session.execute(
         text("""
-            INSERT INTO tenant_connectors (tenant_id, connector, config, is_active, updated_at)
-            VALUES (:tid, :ct, CAST(:cfg AS jsonb), :active, NOW())
-            ON CONFLICT (tenant_id, connector)
-            DO UPDATE SET
-                config     = CAST(:cfg AS jsonb),
-                is_active  = :active,
-                updated_at = NOW()
+            SELECT id FROM tenant_connectors
+            WHERE trim(tenant_id) = trim(:tid) AND connector = :ct
+            LIMIT 1
         """),
-        {"tid": tenant_id, "ct": connector_type, "cfg": json.dumps(config), "active": is_active},
+        {"tid": tenant_id, "ct": connector_type},
     )
+    row = existing.fetchone()
+
+    if row:
+        await session.execute(
+            text("""
+                UPDATE tenant_connectors
+                SET config = CAST(:cfg AS jsonb),
+                    is_active = :active,
+                    status = 'configured',
+                    updated_at = NOW()
+                WHERE id = :row_id
+            """),
+            {"cfg": json.dumps(config), "active": is_active, "row_id": row[0]},
+        )
+    else:
+        await session.execute(
+            text("""
+                INSERT INTO tenant_connectors
+                    (tenant_id, connector, connector_type, config, is_active, status, sync_frequency, created_at, updated_at)
+                VALUES
+                    (:tid, :ct, :ct, CAST(:cfg AS jsonb), :active, 'configured', 'manual', NOW(), NOW())
+            """),
+            {"tid": tenant_id, "ct": connector_type, "cfg": json.dumps(config), "active": is_active},
+        )
 
 
 async def _upsert_credential(session, tenant_id: str, key_name: str, value: str):
+    """
+    Upsert a credential into credentials_vault.
+
+    key_name format from the router: "{connector_type}.{field_name}"
+    Maps to: provider=connector_type, key_type=field_name
+
+    Uses ON CONFLICT on the unique index (tenant_id, provider, key_type).
+
+    Fernet-encrypts the value before insert. Mirrors the BYOK route's
+    encryption pattern — column `encrypted_key` holds Fernet ciphertext.
+    """
+    from sqlalchemy import text
+
+    if "." in key_name:
+        provider, key_type = key_name.split(".", 1)
+    else:
+        provider = key_name
+        key_type = key_name
+
+    encrypted = _vault_encrypt(value)
+
     await session.execute(
         text("""
-            INSERT INTO credentials_vault (tenant_id, key_name, encrypted_key, updated_at)
-            VALUES (:tid, :kn, :val, NOW())
-            ON CONFLICT (tenant_id, key_name)
+            INSERT INTO credentials_vault (tenant_id, provider, key_type, encrypted_key, updated_at)
+            VALUES (:tid, :provider, :key_type, :val, NOW())
+            ON CONFLICT (tenant_id, provider, key_type)
             DO UPDATE SET encrypted_key = :val, updated_at = NOW()
         """),
-        {"tid": tenant_id, "kn": key_name, "val": value},
+        {"tid": tenant_id, "provider": provider, "key_type": key_type, "val": encrypted},
     )
+
 
 
 async def _get_template(session, template_name: str) -> Optional[str]:

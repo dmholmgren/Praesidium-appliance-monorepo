@@ -1,0 +1,201 @@
+{% extends "shell.html" %}
+{% block title %}Review — {{ brand.platform_name if brand else 'Praesidium' }}<script>
+(function() {
+  var keymap = null;
+  fetch("/api/v1/user/keymap")
+    .then(function(r) { return r.json(); })
+    .then(function(data) { keymap = data.keymap || {}; })
+    .catch(function() {});
+
+  var mkBuf = "";
+  var mkTimer = null;
+
+  window.addEventListener("keydown", function(e) {
+    var el = document.activeElement;
+    var tag = el.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (el.contentEditable === "true") return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    var scopeB = (keymap["ediscovery_review"] || {}).bindings || {};
+    var globalB = (keymap["global"] || {}).bindings || {};
+    var key = e.key.toLowerCase();
+
+    if (mkBuf) {
+      var combo = mkBuf + " " + key;
+      mkBuf = ""; clearTimeout(mkTimer);
+      var aid = scopeB[combo] || globalB[combo];
+      if (aid) { e.preventDefault(); e.stopPropagation(); doAction(aid); return; }
+    }
+    var hasCombo = Object.keys(Object.assign({}, scopeB, globalB)).some(function(k) { return k.indexOf(key + " ") === 0; });
+    if (hasCombo) { mkBuf = key; mkTimer = setTimeout(function() { mkBuf = ""; }, 500); e.preventDefault(); return; }
+
+    var aid2 = scopeB[key] || globalB[key];
+    if (aid2) { e.preventDefault(); e.stopPropagation(); doAction(aid2); }
+  }, true);
+
+  function doAction(actionId) {
+    var docId = window.__praesidium_selected_doc_id;
+    if (actionId === "nav.next" || actionId === "nav.skip") {
+      document.dispatchEvent(new CustomEvent("ediscovery-nav", { detail: "next" }));
+      return;
+    }
+    if (actionId === "nav.prev") {
+      document.dispatchEvent(new CustomEvent("ediscovery-nav", { detail: "prev" }));
+      return;
+    }
+    var field = null, value = null;
+    if (actionId === "review.responsive") { field="review_status"; value="responsive"; }
+    if (actionId === "review.non_responsive") { field="review_status"; value="non_responsive"; }
+    if (actionId === "review.needs_further_review") { field="review_status"; value="needs_further_review"; }
+    if (actionId === "review.hot") { field="review_status"; value="hot"; }
+    if (actionId === "privilege.privileged") { field="privilege_status"; value="privileged"; }
+    if (actionId === "privilege.attorney_work_product") { field="privilege_status"; value="attorney_work_product"; }
+    if (actionId === "privilege.none") { field="privilege_status"; value="none"; }
+    if (field) {
+      var body = {}; body[field] = value;
+      fetch("/api/v1/ediscovery/review/doc/" + docId + "/status", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      }).then(function() {
+        document.dispatchEvent(new CustomEvent("praesidium-refresh-detail"));
+      });
+    }
+  }
+})();
+</script>
+<script>
+(function() {
+  var keymap = null;
+  fetch("/api/v1/user/keymap")
+    .then(function(r) { return r.json(); })
+    .then(function(data) { keymap = data.keymap || {}; })
+    .catch(function() {});
+
+  var mkBuf = "";
+  var mkTimer = null;
+
+  window.addEventListener("keydown", function(e) {
+    var el = document.activeElement;
+    var tag = el.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (el.contentEditable === "true") return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    var scopeB = (keymap["ediscovery_review"] || {}).bindings || {};
+    var globalB = (keymap["global"] || {}).bindings || {};
+    var key = e.key.toLowerCase();
+
+    if (mkBuf) {
+      var combo = mkBuf + " " + key;
+      mkBuf = ""; clearTimeout(mkTimer);
+      var aid = scopeB[combo] || globalB[combo];
+      if (aid) { e.preventDefault(); e.stopPropagation(); doAction(aid); return; }
+    }
+    var hasCombo = Object.keys(Object.assign({}, scopeB, globalB)).some(function(k) { return k.indexOf(key + " ") === 0; });
+    if (hasCombo) { mkBuf = key; mkTimer = setTimeout(function() { mkBuf = ""; }, 500); e.preventDefault(); return; }
+
+    var aid2 = scopeB[key] || globalB[key];
+    if (aid2) { e.preventDefault(); e.stopPropagation(); doAction(aid2); }
+  }, true);
+
+  function doAction(actionId) {
+    var docId = window.__praesidium_selected_doc_id;
+    if (actionId === "nav.next" || actionId === "nav.skip") {
+      document.dispatchEvent(new CustomEvent("ediscovery-nav", { detail: "next" }));
+      return;
+    }
+    if (actionId === "nav.prev") {
+      document.dispatchEvent(new CustomEvent("ediscovery-nav", { detail: "prev" }));
+      return;
+    }
+    var field = null, value = null;
+    if (actionId === "review.responsive") { field="review_status"; value="responsive"; }
+    if (actionId === "review.non_responsive") { field="review_status"; value="non_responsive"; }
+    if (actionId === "review.needs_further_review") { field="review_status"; value="needs_further_review"; }
+    if (actionId === "review.hot") { field="review_status"; value="hot"; }
+    if (actionId === "privilege.privileged") { field="privilege_status"; value="privileged"; }
+    if (actionId === "privilege.attorney_work_product") { field="privilege_status"; value="attorney_work_product"; }
+    if (actionId === "privilege.none") { field="privilege_status"; value="none"; }
+    if (field) {
+      var body = {}; body[field] = value;
+      fetch("/api/v1/ediscovery/review/doc/" + docId + "/status", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      }).then(function() {
+        document.dispatchEvent(new CustomEvent("praesidium-refresh-detail"));
+      });
+    }
+  }
+})();
+</script>
+<script>
+(function() {
+  var keymap = null;
+  fetch("/api/v1/user/keymap")
+    .then(function(r) { return r.json(); })
+    .then(function(data) { keymap = data.keymap || {}; })
+    .catch(function() {});
+
+  var mkBuf = "";
+  var mkTimer = null;
+
+  window.addEventListener("keydown", function(e) {
+    var el = document.activeElement;
+    var tag = el.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if (el.contentEditable === "true") return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+    var scopeB = (keymap["ediscovery_review"] || {}).bindings || {};
+    var globalB = (keymap["global"] || {}).bindings || {};
+    var key = e.key.toLowerCase();
+
+    if (mkBuf) {
+      var combo = mkBuf + " " + key;
+      mkBuf = ""; clearTimeout(mkTimer);
+      var aid = scopeB[combo] || globalB[combo];
+      if (aid) { e.preventDefault(); e.stopPropagation(); doAction(aid); return; }
+    }
+    var hasCombo = Object.keys(Object.assign({}, scopeB, globalB)).some(function(k) { return k.indexOf(key + " ") === 0; });
+    if (hasCombo) { mkBuf = key; mkTimer = setTimeout(function() { mkBuf = ""; }, 500); e.preventDefault(); return; }
+
+    var aid2 = scopeB[key] || globalB[key];
+    if (aid2) { e.preventDefault(); e.stopPropagation(); doAction(aid2); }
+  }, true);
+
+  function doAction(actionId) {
+    var docId = window.__praesidium_selected_doc_id;
+    if (actionId === "nav.next" || actionId === "nav.skip") {
+      document.dispatchEvent(new CustomEvent("ediscovery-nav", { detail: "next" }));
+      return;
+    }
+    if (actionId === "nav.prev") {
+      document.dispatchEvent(new CustomEvent("ediscovery-nav", { detail: "prev" }));
+      return;
+    }
+    var field = null, value = null;
+    if (actionId === "review.responsive") { field="review_status"; value="responsive"; }
+    if (actionId === "review.non_responsive") { field="review_status"; value="non_responsive"; }
+    if (actionId === "review.needs_further_review") { field="review_status"; value="needs_further_review"; }
+    if (actionId === "review.hot") { field="review_status"; value="hot"; }
+    if (actionId === "privilege.privileged") { field="privilege_status"; value="privileged"; }
+    if (actionId === "privilege.attorney_work_product") { field="privilege_status"; value="attorney_work_product"; }
+    if (actionId === "privilege.none") { field="privilege_status"; value="none"; }
+    if (field) {
+      var body = {}; body[field] = value;
+      fetch("/api/v1/ediscovery/review/doc/" + docId + "/status", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      }).then(function() {
+        document.dispatchEvent(new CustomEvent("praesidium-refresh-detail"));
+      });
+    }
+  }
+})();
+</script>
+{% endblock %}
+{% block content %}
+<div id="ediscovery-review-root" data-hotkey-scope="ediscovery_review" data-collection-id="{{ collection_id }}"></div>
+<script type="module" src="/static/js/ediscovery-review.js?v=3"></script>
+{% endblock %}

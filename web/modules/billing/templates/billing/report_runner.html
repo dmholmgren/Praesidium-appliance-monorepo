@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block title %}Reports — {{ brand.platform_name }}{% endblock %}
+{% block content %}
+<div class="px-6 py-4">
+  <h1 class="text-xl font-semibold text-gray-900 mb-2">Billing Reports</h1>
+  <p class="text-sm text-gray-500 mb-4">Select a report, set parameters, and run.</p>
+
+  <!-- Report selector + parameters -->
+  <div class="bg-white border rounded-lg p-5 mb-6">
+    <div class="flex items-end gap-3 flex-wrap">
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">Report</label>
+        <select id="report-select" class="border rounded px-3 py-1.5 text-sm w-64"
+                onchange="updateDescription()">
+          <option value="wip_summary">WIP Summary</option>
+          <option value="ar_aging">Accounts Receivable Aging</option>
+          <option value="timekeeper_productivity">Timekeeper Productivity</option>
+          <option value="client_revenue">Client Revenue Summary</option>
+          <option value="matter_profitability">Matter Profitability</option>
+          <option value="writeoff_report">Write-Off Report</option>
+          <option value="collections_summary">Collections Summary</option>
+          <option value="trust_balance">Trust Account Balances</option>
+        </select>
+      </div>
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">Start Date</label>
+        <input id="start-date" type="date" class="border rounded px-3 py-1.5 text-sm" />
+      </div>
+      <div>
+        <label class="block text-xs text-gray-500 mb-1">End Date</label>
+        <input id="end-date" type="date" value="{{ today }}" class="border rounded px-3 py-1.5 text-sm" />
+      </div>
+      <button onclick="runReport()"
+              class="bg-blue-600 text-white px-4 py-1.5 rounded text-sm font-semibold hover:bg-blue-700">
+        Run Report
+      </button>
+      <button onclick="exportCSV()" id="export-btn" class="hidden border px-3 py-1.5 rounded text-sm text-gray-600 hover:bg-gray-50">
+        ↓ Export CSV
+      </button>
+    </div>
+    <p id="report-desc" class="text-xs text-gray-400 mt-2"></p>
+  </div>
+
+  <!-- Loading -->
+  <div id="loading" class="hidden text-center py-8">
+    <div class="text-gray-400">Running report…</div>
+  </div>
+
+  <!-- Results -->
+  <div id="results" class="hidden">
+    <div class="flex justify-between items-center mb-3">
+      <h2 id="result-title" class="text-lg font-semibold text-gray-900"></h2>
+      <span id="row-count" class="text-sm text-gray-500"></span>
+    </div>
+    <div class="bg-white border rounded overflow-x-auto">
+      <table class="w-full text-sm" id="result-table">
+        <thead id="result-head" class="bg-gray-50 border-b"></thead>
+        <tbody id="result-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Empty state -->
+  <div id="empty" class="hidden text-center py-8 text-gray-400">
+    No data found for the selected parameters.
+  </div>
+</div>
+
+<script>
+const descriptions = {
+  wip_summary: 'Unbilled work-in-progress by matter. Shows hours, value, and client.',
+  ar_aging: 'Outstanding invoices grouped by aging bucket (Current, 1-30, 31-60, 61-90, 90+).',
+  timekeeper_productivity: 'Hours, billable ratio, and total value by timekeeper.',
+  client_revenue: 'Total billed, paid, and outstanding by client.',
+  matter_profitability: 'Hours worked, value generated, billed, and collected by matter.',
+  writeoff_report: 'All write-offs from prebill review with reasons and amounts.',
+  collections_summary: 'Monthly payment collection totals.',
+  trust_balance: 'Current trust account balances by client/matter.',
+};
+
+let reportData = null;
+
+function updateDescription() {
+  const sel = document.getElementById('report-select').value;
+  document.getElementById('report-desc').textContent = descriptions[sel] || '';
+}
+updateDescription();
+
+async function runReport() {
+  const reportId = document.getElementById('report-select').value;
+  const start = document.getElementById('start-date').value;
+  const end = document.getElementById('end-date').value;
+
+  document.getElementById('loading').classList.remove('hidden');
+  document.getElementById('results').classList.add('hidden');
+  document.getElementById('empty').classList.add('hidden');
+
+  const params = new URLSearchParams({report_id: reportId});
+  if (start) params.set('start_date', start);
+  if (end) params.set('end_date', end);
+
+  const res = await fetch('/api/billing/reports/execute?' + params);
+  reportData = await res.json();
+
+  document.getElementById('loading').classList.add('hidden');
+
+  if (!reportData.data || !reportData.data.length) {
+    document.getElementById('empty').classList.remove('hidden');
+    return;
+  }
+
+  document.getElementById('results').classList.remove('hidden');
+  document.getElementById('export-btn').classList.remove('hidden');
+  document.getElementById('result-title').textContent = reportData.report_name;
+  document.getElementById('row-count').textContent = reportData.row_count + ' rows';
+
+  const cols = reportData.columns;
+  const thead = document.getElementById('result-head');
+  thead.innerHTML = '<tr>' + cols.map(c =>
+    `<th class="px-3 py-2 text-left font-medium text-gray-600 text-xs uppercase whitespace-nowrap">${formatColName(c)}</th>`
+  ).join('') + '</tr>';
+
+  const tbody = document.getElementById('result-body');
+  tbody.innerHTML = reportData.data.map(row => {
+    return '<tr class="border-b hover:bg-gray-50">' + cols.map(c => {
+      const val = row[c];
+      const isNum = typeof val === 'number';
+      const isMoney = isNum && (c.includes('value') || c.includes('total') || c.includes('billed')
+                      || c.includes('paid') || c.includes('due') || c.includes('amount')
+                      || c.includes('balance') || c.includes('revenue') || c.includes('collected')
+                      || c.includes('fee') || c.includes('writeoff'));
+      if (isMoney) {
+        return `<td class="px-3 py-2 text-right font-mono">\$${val.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>`;
+      } else if (isNum) {
+        return `<td class="px-3 py-2 text-right">${val.toLocaleString('en-US',{maximumFractionDigits:2})}</td>`;
+      } else {
+        return `<td class="px-3 py-2 text-gray-700">${val ?? '—'}</td>`;
+      }
+    }).join('') + '</tr>';
+  }).join('');
+}
+
+function formatColName(c) {
+  return c.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+}
+
+function exportCSV() {
+  if (!reportData) return;
+  const cols = reportData.columns;
+  let csv = cols.join(',') + '\n';
+  for (const row of reportData.data) {
+    csv += cols.map(c => {
+      let v = row[c];
+      if (v === null || v === undefined) v = '';
+      if (typeof v === 'string' && (v.includes(',') || v.includes('"'))) {
+        v = '"' + v.replace(/"/g, '""') + '"';
+      }
+      return v;
+    }).join(',') + '\n';
+  }
+  const blob = new Blob([csv], {type: 'text/csv'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = reportData.report_id + '_' + new Date().toISOString().split('T')[0] + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+{% endblock %}

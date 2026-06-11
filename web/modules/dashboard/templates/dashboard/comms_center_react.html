@@ -1,0 +1,11 @@
+{% extends "shell.html" %}
+{% block title %}Communications Center{% endblock %}
+{% block breadcrumb %}
+<a href="/dashboard">Home</a>
+<span class="breadcrumb-sep">›</span>
+<span class="breadcrumb-current">Communications Center</span>
+{% endblock %}
+{% block content %}
+<div id="comms-react-root" style="height: calc(100vh - var(--header-h) - 48px); overflow: hidden; border-radius: var(--radius-lg); border: 1px solid var(--border); background: var(--bg);"></div>
+<script type="module" src="/static/js/comms-center.js?v=29"></script>
+{% endblock %}

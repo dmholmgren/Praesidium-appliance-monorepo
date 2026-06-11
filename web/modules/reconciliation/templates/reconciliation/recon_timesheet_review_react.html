@@ -1,0 +1,13 @@
+{% extends "shell.html" %}
+{% block title %}Session Review — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/reconciliation">Reconciliation</a>
+<span class="breadcrumb-sep">/</span>
+<a href="/reconciliation/timesheet">Timesheet</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">Session</span>
+{% endblock %}
+{% block content %}
+<div id="recon-timesheet-review-root" data-session-id="{{ session_id }}"></div>
+<script type="module" src="/static/js/recon-timesheet-review.js"></script>
+{% endblock %}

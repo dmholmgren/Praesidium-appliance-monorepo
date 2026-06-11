@@ -199,6 +199,10 @@ class LocalMountStorageAdapter(StorageService):
         if not resolved.exists():
             return False
         if resolved.is_dir():
+            from modules.dms.services.path_safety import is_deletable_subpath
+            if not is_deletable_subpath(str(resolved), tenant_id, min_depth=2):
+                raise StorageError(
+                    f"Refusing recursive delete of matter root / shared dir: {resolved}")
             shutil.rmtree(resolved)
         else:
             resolved.unlink()

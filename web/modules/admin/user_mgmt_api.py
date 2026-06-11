@@ -29,6 +29,10 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 
 from core.db.base import AsyncSessionLocal
+from core.services.stalwart_service import (
+    provision_mail_account, disable_mail_account,
+    enable_mail_account, update_mail_password,
+)
 
 log = logging.getLogger("praesidium.admin.user_mgmt")
 
@@ -251,6 +255,21 @@ async def user_create(
         log.exception("User create failed")
         return _err(f"Database error: {err_str[:120]}")
 
+    # ── Stalwart mail account provisioning (fire-and-forget) ────────
+    try:
+        result = await provision_mail_account(
+            email=email,
+            full_name=_strip(full_name),
+            description=f"{_strip(full_name)} — {role}",
+            password=password,
+        )
+        if result.get("success"):
+            log.info("Stalwart account provisioned for %s", email)
+        else:
+            log.warning("Stalwart provisioning failed for %s: %s", email, result.get("error"))
+    except Exception as e:
+        log.warning("Stalwart provisioning error for %s: %s (non-blocking)", email, e)
+
     return RedirectResponse(f"/admin/users?tenant_id={tid}", status_code=303)
 
 
@@ -349,6 +368,17 @@ async def user_update(
         )
         await db.commit()
 
+    # ── Sync password to Stalwart if changed ─────────────────────────
+    if new_password and email:
+        try:
+            result = await update_mail_password(email, new_password)
+            if result.get("success"):
+                log.info("Stalwart password synced for %s", email)
+            else:
+                log.warning("Stalwart password sync failed for %s: %s", email, result.get("error"))
+        except Exception as e:
+            log.warning("Stalwart password sync error (non-blocking): %s", e)
+
     return RedirectResponse(f"/admin/users?tenant_id={tid}", status_code=303)
 
 
@@ -369,6 +399,19 @@ async def user_deactivate(
             {"uid": user_id, "tid": tid},
         )
         await db.commit()
+
+    # ── Disable Stalwart mail account ────────────────────────────────
+    try:
+        user = await _get_user(user_id, tid)
+        if user and user.email:
+            result = await disable_mail_account(user.email)
+            if result.get("success"):
+                log.info("Stalwart account disabled for %s", user.email)
+            else:
+                log.warning("Stalwart disable failed for %s: %s", user.email, result.get("error"))
+    except Exception as e:
+        log.warning("Stalwart disable error (non-blocking): %s", e)
+
     return RedirectResponse(f"/admin/users?tenant_id={tid}", status_code=303)
 
 
@@ -389,6 +432,19 @@ async def user_reactivate(
             {"uid": user_id, "tid": tid},
         )
         await db.commit()
+
+    # ── Re-enable Stalwart mail account ──────────────────────────────
+    try:
+        user = await _get_user(user_id, tid)
+        if user and user.email:
+            result = await enable_mail_account(user.email)
+            if result.get("success"):
+                log.info("Stalwart account re-enabled for %s", user.email)
+            else:
+                log.warning("Stalwart enable failed for %s: %s", user.email, result.get("error"))
+    except Exception as e:
+        log.warning("Stalwart enable error (non-blocking): %s", e)
+
     return RedirectResponse(f"/admin/users?tenant_id={tid}", status_code=303)
 
 

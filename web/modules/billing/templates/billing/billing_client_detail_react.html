@@ -1,0 +1,15 @@
+{% extends "shell.html" %}
+{% block title %}{{ client.client_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/billing">Billing</a>
+<span class="breadcrumb-sep">&rsaquo;</span>
+<span class="breadcrumb-current">{{ client.client_name }}</span>
+{% endblock %}
+{% block content %}
+<div id="billing-client-detail-root" style="padding: 16px 20px;"></div>
+<script>
+  window.__CLIENT_ID = "{{ client.id }}";
+  window.__CLIENT_DATA = {{ client | tojson }};
+</script>
+<script type="module" src="/static/js/billing-client-detail.js"></script>
+{% endblock %}

@@ -1,0 +1,6 @@
+{% extends "shell.html" %}
+{% block title %}Search — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block content %}
+<div id="ediscovery-search-root"></div>
+<script type="module" src="/static/js/ediscovery-search.js?v=14"></script>
+{% endblock %}

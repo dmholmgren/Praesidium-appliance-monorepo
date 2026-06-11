@@ -1,0 +1,20 @@
+{% extends "shell.html" %}
+{% block title %}Client Portal — {{ client_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/billing">Billing</a>
+<span class="breadcrumb-sep">&rsaquo;</span>
+<a href="/billing/clients/{{ client_id }}">{{ client_name }}</a>
+<span class="breadcrumb-sep">&rsaquo;</span>
+<span class="breadcrumb-current">Client Portal</span>
+{% endblock %}
+{% block header_actions %}
+<a href="https://clients.hjmmlegal.com" target="_blank" rel="noreferrer" class="header-action-btn" style="font-size:11px; color:var(--primary); text-decoration:none;">clients.hjmmlegal.com ↗</a>
+{% endblock %}
+{% block content %}
+<div id="client-portal-admin-root"></div>
+<script>
+  window.__CLIENT_ID = "{{ client_id }}";
+  window.__CLIENT_NAME = "{{ client_name | e }}";
+</script>
+<script type="module" src="/static/js/client-portal-admin.js"></script>
+{% endblock %}

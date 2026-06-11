@@ -1,0 +1,11 @@
+{% extends "shell.html" %}
+{% block title %}Firm Administration — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/tenant-admin/" style="color:var(--muted);text-decoration:none;">Firm Administration</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">Overview</span>
+{% endblock %}
+{% block content %}
+<div id="tenant-admin-root"></div>
+<script type="module" src="/static/js/tenant-admin.js?v=4"></script>
+{% endblock %}

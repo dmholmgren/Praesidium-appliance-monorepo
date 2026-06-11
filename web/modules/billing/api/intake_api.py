@@ -225,3 +225,27 @@ DOCUMENT:
             {"error": "Document analysis failed. Please try again."},
             status_code=500,
         )
+from core.db.base import AsyncSessionLocal as _AsyncSL
+from sqlalchemy import text as _text
+from fastapi.responses import JSONResponse as _JSONResponse
+
+
+@router.get("/timekeepers")
+async def list_timekeepers_v1(request: Request):
+    """
+    Alias for /api/billing/timekeepers.
+    The billing_matter_intake widget fetches from /api/v1/billing/timekeepers.
+    """
+    tenant_id = (getattr(request.state, "tenant_id", "") or "").strip()
+    async with _AsyncSL() as session:
+        result = await session.execute(
+            _text("""
+                SELECT ts_tk_id, ts_name, ts_initials
+                FROM ts_timekeepers
+                WHERE trim(tenant_id) = trim(:tid)
+                ORDER BY ts_name
+            """),
+            {"tid": tenant_id},
+        )
+        tks = [dict(r._mapping) for r in result.fetchall()]
+    return _JSONResponse({"timekeepers": tks})

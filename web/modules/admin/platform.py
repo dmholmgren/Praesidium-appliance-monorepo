@@ -381,7 +381,7 @@ async def sidecar_set_default(
               (event_type, vm_name, triggered_by, detail, created_at)
             VALUES
               ('slot_change', 'MAIN-DMZ-RPRX-01', 'admin-api',
-               :detail::jsonb, NOW())
+               CAST(:detail AS jsonb), NOW())
             """),
             {"detail": f'{{"default_server": "{body.server_name}", "upstream": "{body.upstream}"}}'}
         )

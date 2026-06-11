@@ -94,6 +94,10 @@
   </div>
 </div>
 
+{# ── Flex layout: table left, AI chat right ────────────────────────────────── #}
+<div style="display:flex; gap:16px; align-items:flex-start;">
+<div style="flex:1; min-width:0;">
+
 {# ── AI Escalation (opt-in) ──────────────────────────────────────────────────── #}
 {% set unmatched = drafts | selectattr('ai_confidence', 'equalto', 0) | list %}
 {% if unmatched | length > 0 and filter == 'pending' %}
@@ -140,26 +144,55 @@
                  {% elif d.ai_confidence == 0 %}background:#FFFBEB;{% endif %}">
         <td><input type="checkbox" class="draft-cb" value="{{ d.id }}" onchange="updateCount();"></td>
         <td style="font-size:12px; white-space:nowrap;">{{ d.entry_date }}</td>
-        <td style="font-size:12px; max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
-            title="{{ d.matter_name or 'Unmatched' }}">
-          {% if d.matter_name %}
-            {{ d.matter_name }}
-          {% else %}
-            <span style="color:#B45309; font-style:italic;">Unmatched</span>
-          {% endif %}
+        <td style="font-size:12px; max-width:220px; position:relative;" class="matter-cell"
+            data-draft-id="{{ d.id }}" data-matter-id="{{ d.matter_id or '' }}">
+          <div class="matter-display" onclick="openMatterPicker(this)" style="cursor:pointer; min-height:18px;"
+               title="Click to reassign matter">
+            {% if d.matter_name %}
+              <span style="border-bottom:1px dashed #93C5FD;">{{ d.matter_name }}</span>
+            {% else %}
+              <span style="color:#B45309; font-style:italic; border-bottom:1px dashed #FCD34D;">Unmatched — click to assign</span>
+            {% endif %}
+          </div>
+          <div class="matter-picker" style="display:none; position:absolute; top:100%; left:0; z-index:50;
+                      background:#fff; border:1px solid #D1D5DB; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.15);
+                      width:320px; padding:6px;">
+            <input type="text" class="matter-search-input" placeholder="Search matters..."
+                   oninput="searchMatters(this)"
+                   style="width:100%; border:1px solid #D1D5DB; border-radius:4px; padding:5px 8px;
+                          font-size:12px; margin-bottom:4px; box-sizing:border-box;">
+            <div class="matter-results" style="max-height:200px; overflow-y:auto;"></div>
+            <div style="margin-top:4px; border-top:1px solid #F1F5F9; padding-top:4px;">
+              <button onclick="clearMatter(this)" style="font-size:10px; color:#991B1B; background:none;
+                      border:none; cursor:pointer; padding:2px 4px;">✕ Clear matter</button>
+              <button onclick="closeMatterPicker(this)" style="font-size:10px; color:var(--muted); background:none;
+                      border:none; cursor:pointer; padding:2px 4px; float:right;">Cancel</button>
+            </div>
+          </div>
         </td>
-        <td style="font-size:12px; text-align:right; font-weight:500;">{{ "%.2f"|format(d.hours) }}</td>
-        <td style="font-size:11px; max-width:280px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
-            title="{{ d.description }}">
-          {{ d.description }}
+        <td style="font-size:12px; text-align:right; font-weight:500; cursor:pointer;" class="hours-cell"
+            data-draft-id="{{ d.id }}" data-hours="{{ d.hours }}"
+            onclick="inlineEditHours(this)" title="Click to edit">
+          <span class="hours-display">{{ "%.2f"|format(d.hours) }}</span>
+        </td>
+        <td style="font-size:11px; max-width:280px;" class="desc-cell"
+            data-draft-id="{{ d.id }}">
+          <div class="desc-display" onclick="inlineEditDesc(this)"
+               style="cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+                      border-bottom:1px dashed transparent; min-height:16px;"
+               onmouseover="this.style.borderColor='#93C5FD'" onmouseout="this.style.borderColor='transparent'"
+               title="{{ d.description }}">{{ d.description }}</div>
         </td>
         <td>
           {% set src_colors = {
             'manictime': ('#E0E7FF','#3730A3'),
             'phone_csv': ('#FEF3C7','#92400E'),
+            'imazing_csv': ('#FEF3C7','#92400E'),
             'ai_api_calls': ('#F3E8FF','#6B21A8'),
             'timeslips': ('#E0F2FE','#0C4A6E'),
             'manual': ('#F1F5F9','#475569'),
+            'exchange_email': ('#DBEAFE','#1E40AF'),
+            'exchange_calendar': ('#D1FAE5','#065F46'),
             'excel': ('#DCFCE7','#166534'),
           } %}
           {% set sc = src_colors.get(d.source, ('#F1F5F9','#475569')) %}
@@ -189,31 +222,34 @@
           {% endif %}
         </td>
         <td>
-          {% if d.status == 'pending' %}
-            <div style="display:flex; gap:4px;">
-              <form action="/admin/timesheet/{{ session.id }}/approve/{{ d.id }}" method="post" style="display:inline;">
-                <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
-                <button type="submit"
-                        style="padding:2px 8px; font-size:11px; background:#DCFCE7; color:#166534;
-                               border:1px solid #86EFAC; border-radius:3px; cursor:pointer;">✓</button>
-              </form>
-              <form action="/admin/timesheet/{{ session.id }}/reject/{{ d.id }}" method="post" style="display:inline;">
-                <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
-                <button type="submit"
-                        style="padding:2px 8px; font-size:11px; background:#FEE2E2; color:#991B1B;
-                               border:1px solid #FECACA; border-radius:3px; cursor:pointer;">✕</button>
-              </form>
-              <button onclick="openEdit('{{ d.id }}')"
-                      style="padding:2px 8px; font-size:11px; background:#F1F5F9; color:var(--text);
-                             border:1px solid #D1D5DB; border-radius:3px; cursor:pointer;">✎</button>
-            </div>
-          {% elif d.status == 'approved' %}
-            <span style="font-size:11px; color:#166534; font-weight:500;">✓ Approved</span>
-          {% elif d.status == 'rejected' %}
-            <span style="font-size:11px; color:#991B1B;">✕ Rejected</span>
-          {% elif d.status == 'pushed' %}
-            <span style="font-size:11px; color:var(--primary); font-weight:500;">→ Pushed</span>
-          {% endif %}
+          <div style="display:flex; gap:3px; align-items:center;">
+            {% if d.status == 'approved' %}
+              <span style="font-size:9px; background:#DCFCE7; color:#166534; padding:1px 5px; border-radius:3px; font-weight:500; margin-right:2px;">✓</span>
+            {% elif d.status == 'rejected' %}
+              <span style="font-size:9px; background:#FEE2E2; color:#991B1B; padding:1px 5px; border-radius:3px; font-weight:500; margin-right:2px;">✕</span>
+            {% elif d.status == 'pushed' %}
+              <span style="font-size:9px; background:#DBEAFE; color:#1E40AF; padding:1px 5px; border-radius:3px; font-weight:500; margin-right:2px;">→</span>
+            {% endif %}
+            {% if d.status != 'approved' %}
+            <form action="/admin/timesheet/{{ session.id }}/approve/{{ d.id }}" method="post" style="display:inline;">
+              <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+              <button type="submit" title="Approve"
+                      style="padding:2px 8px; font-size:11px; background:#DCFCE7; color:#166534;
+                             border:1px solid #86EFAC; border-radius:3px; cursor:pointer;">✓</button>
+            </form>
+            {% endif %}
+            {% if d.status != 'rejected' %}
+            <form action="/admin/timesheet/{{ session.id }}/reject/{{ d.id }}" method="post" style="display:inline;">
+              <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+              <button type="submit" title="Reject"
+                      style="padding:2px 8px; font-size:11px; background:#FEE2E2; color:#991B1B;
+                             border:1px solid #FECACA; border-radius:3px; cursor:pointer;">✕</button>
+            </form>
+            {% endif %}
+            <button onclick="openEdit('{{ d.id }}')" title="Edit"
+                    style="padding:2px 8px; font-size:11px; background:#F1F5F9; color:var(--text);
+                           border:1px solid #D1D5DB; border-radius:3px; cursor:pointer;">✎</button>
+          </div>
         </td>
       </tr>
       {% endfor %}
@@ -229,6 +265,23 @@
   {% endif %}
 </div>
 {% endif %}
+
+{# ── End left column ──#}
+</div>
+
+{# ── Right panel: AI Assistant ───────────────────────────────────────────────── #}
+<div style="width:340px; flex-shrink:0; position:sticky; top:12px; max-height:calc(100vh - 100px); overflow:hidden;">
+  <div class="card" style="padding:0; height:calc(100vh - 120px); display:flex; flex-direction:column;">
+    <div style="padding:10px 14px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:6px;">
+      <span style="font-size:14px;">🤖</span>
+      <span style="font-size:12px; font-weight:600; color:var(--text);">AI Assistant</span>
+    </div>
+    <div hx-get="/widgets/admin_ai_chat" hx-trigger="load" hx-swap="innerHTML"
+         style="flex:1; overflow:hidden;"></div>
+  </div>
+</div>
+
+</div>{# ── End flex wrapper ──#}
 
 {# ── Edit Modal ──────────────────────────────────────────────────────────────── #}
 <div id="edit-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0;
@@ -398,6 +451,230 @@ function runAiEscalation() {
     btn.textContent = 'Run AI on Unmatched';
   });
 }
+
+
+
+// ── Inline Hours Edit ────────────────────────────────────────────────────
+function inlineEditHours(cell) {
+  if (cell.querySelector('input')) return;
+  var current = parseFloat(cell.dataset.hours) || 0;
+  var display = cell.querySelector('.hours-display');
+  display.style.display = 'none';
+  var input = document.createElement('input');
+  input.type = 'number'; input.step = '0.25'; input.min = '0'; input.max = '24';
+  input.value = current.toFixed(2);
+  input.style.cssText = 'width:60px;font-size:12px;font-weight:500;text-align:right;border:1px solid #93C5FD;border-radius:3px;padding:2px 4px;outline:none;';
+  cell.appendChild(input); input.focus(); input.select();
+  var saving = false;
+  function doSave() {
+    if (saving) return; saving = true;
+    var val = parseFloat(input.value);
+    if (isNaN(val) || val <= 0) { doCancel(); return; }
+    val = Math.ceil(val * 4) / 4;
+    input.disabled = true;
+    var pathParts = window.location.pathname.split('/');
+    var sessionId = pathParts[pathParts.length - 1].split('?')[0];
+    var tid = new URLSearchParams(window.location.search).get('tenant_id') || '';
+    fetch('/admin/timesheet/' + sessionId + '/inline-edit/' + cell.dataset.draftId, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({hours: val, tenant_id: tid})
+    }).then(function(r) { return r.json(); }).then(function() {
+      cell.dataset.hours = val;
+      display.textContent = val.toFixed(2);
+      display.style.display = '';
+      if (input.parentNode) input.remove();
+      cell.style.transition = 'background 0.3s';
+      cell.style.background = '#D1FAE5';
+      setTimeout(function() { cell.style.background = ''; }, 1500);
+    }).catch(function() { doCancel(); });
+  }
+  function doCancel() { saving = true; display.style.display = ''; if (input.parentNode) input.remove(); }
+  input.addEventListener('blur', function() { setTimeout(doSave, 150); });
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); doSave(); }
+    if (e.key === 'Escape') { e.preventDefault(); doCancel(); }
+  });
+}
+
+// ── Inline Description Edit ──────────────────────────────────────────────
+function inlineEditDesc(displayEl) {
+  var cell = displayEl.closest('.desc-cell');
+  if (cell.querySelector('textarea')) return;
+  var current = displayEl.textContent.trim();
+  displayEl.style.display = 'none';
+  var ta = document.createElement('textarea');
+  ta.value = current; ta.rows = 3;
+  ta.style.cssText = 'width:100%;font-size:11px;font-family:inherit;border:1px solid #93C5FD;border-radius:3px;padding:4px 6px;outline:none;resize:vertical;box-sizing:border-box;';
+  cell.appendChild(ta); ta.focus();
+  var btns = document.createElement('div');
+  btns.style.cssText = 'display:flex;gap:4px;justify-content:flex-end;margin-top:3px;';
+  var saveBtn = document.createElement('button');
+  saveBtn.textContent = 'Save';
+  saveBtn.style.cssText = 'padding:2px 8px;font-size:10px;background:#DCFCE7;color:#166534;border:1px solid #86EFAC;border-radius:3px;cursor:pointer;';
+  saveBtn.addEventListener('click', function() { _saveDesc(cell); });
+  var cancelBtn = document.createElement('button');
+  cancelBtn.textContent = 'Cancel';
+  cancelBtn.style.cssText = 'padding:2px 8px;font-size:10px;background:#F1F5F9;color:#475569;border:1px solid #D1D5DB;border-radius:3px;cursor:pointer;';
+  cancelBtn.addEventListener('click', function() { _cancelDesc(cell); });
+  btns.appendChild(saveBtn); btns.appendChild(cancelBtn);
+  cell.appendChild(btns);
+}
+function _saveDesc(cell) {
+  var ta = cell.querySelector('textarea');
+  var val = ta ? ta.value.trim() : '';
+  if (!val) { _cancelDesc(cell); return; }
+  ta.disabled = true;
+  var pathParts = window.location.pathname.split('/');
+  var sessionId = pathParts[pathParts.length - 1].split('?')[0];
+  var tid = new URLSearchParams(window.location.search).get('tenant_id') || '';
+  fetch('/admin/timesheet/' + sessionId + '/inline-edit/' + cell.dataset.draftId, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({description: val, tenant_id: tid})
+  }).then(function(r) { return r.json(); }).then(function() {
+    var display = cell.querySelector('.desc-display');
+    display.textContent = val; display.title = val; display.style.display = '';
+    if (ta && ta.parentNode) ta.remove();
+    var b = cell.querySelector('.desc-cell > div:last-child');
+    if (b && b.querySelector('button')) b.remove();
+    cell.style.transition = 'background 0.3s';
+    cell.style.background = '#D1FAE5';
+    setTimeout(function() { cell.style.background = ''; }, 1500);
+  }).catch(function() { _cancelDesc(cell); });
+}
+function _cancelDesc(cell) {
+  var display = cell.querySelector('.desc-display');
+  if (display) display.style.display = '';
+  var ta = cell.querySelector('textarea'); if (ta) ta.remove();
+  var divs = cell.querySelectorAll(':scope > div');
+  divs.forEach(function(d) { if (d !== display && d.querySelector && d.querySelector('button')) d.remove(); });
+}
+
+
+// ── Inline Matter Picker ─────────────────────────────────────────────────
+var _searchTimeout = null;
+var _activePicker = null;
+
+function openMatterPicker(displayEl) {
+  // Close any other open pickers
+  document.querySelectorAll('.matter-picker').forEach(function(p) { p.style.display = 'none'; });
+  var cell = displayEl.closest('.matter-cell');
+  var picker = cell.querySelector('.matter-picker');
+  picker.style.display = 'block';
+  _activePicker = picker;
+  var input = picker.querySelector('.matter-search-input');
+  input.value = '';
+  input.focus();
+  picker.querySelector('.matter-results').innerHTML =
+    '<div style="padding:8px; font-size:11px; color:var(--muted);">Type to search matters...</div>';
+}
+
+function closeMatterPicker(btn) {
+  var picker = btn.closest('.matter-picker');
+  picker.style.display = 'none';
+  _activePicker = null;
+}
+
+function searchMatters(input) {
+  clearTimeout(_searchTimeout);
+  var q = input.value.trim();
+  var results = input.closest('.matter-picker').querySelector('.matter-results');
+  if (q.length < 2) {
+    results.innerHTML = '<div style="padding:8px; font-size:11px; color:var(--muted);">Type at least 2 characters...</div>';
+    return;
+  }
+  results.innerHTML = '<div style="padding:8px; font-size:11px; color:var(--muted);">Searching...</div>';
+  _searchTimeout = setTimeout(function() {
+    fetch('/admin/timesheet/{{ session.id }}/search-matters?tenant_id={{ tenant_id }}&q=' + encodeURIComponent(q))
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        if (!data.matters || !data.matters.length) {
+          results.innerHTML = '<div style="padding:8px; font-size:11px; color:var(--muted);">No matters found</div>';
+          return;
+        }
+        var html = '';
+        data.matters.forEach(function(m) {
+          html += '<div class="matter-option" onclick="selectMatter(this, \'' + m.id + '\', ' + JSON.stringify(m.name).replace(/'/g, "\\'") + ')"'
+            + ' style="padding:6px 8px; cursor:pointer; border-radius:4px; font-size:12px;"'
+            + ' onmouseover="this.style.background=\'#F0F4FF\'" onmouseout="this.style.background=\'\'">'
+            + '<div style="font-weight:500;">' + (m.name || '') + '</div>'
+            + '<div style="font-size:10px; color:var(--muted);">' + (m.client || '') + (m.number ? ' · ' + m.number : '') + '</div>'
+            + '</div>';
+        });
+        results.innerHTML = html;
+      })
+      .catch(function() {
+        results.innerHTML = '<div style="padding:8px; font-size:11px; color:#991B1B;">Search failed</div>';
+      });
+  }, 300);
+}
+
+function selectMatter(optionEl, matterId, matterName) {
+  var cell = optionEl.closest('.matter-cell');
+  var draftId = cell.dataset.draftId;
+  var picker = cell.querySelector('.matter-picker');
+  var display = cell.querySelector('.matter-display');
+
+  // Show loading
+  display.innerHTML = '<span style="color:var(--muted); font-size:11px;">Saving...</span>';
+  picker.style.display = 'none';
+
+  fetch('/admin/timesheet/{{ session.id }}/reassign/' + draftId, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      matter_id: matterId,
+      matter_name: matterName,
+      tenant_id: '{{ tenant_id }}'
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    display.innerHTML = '<span style="border-bottom:1px dashed #93C5FD;">' + matterName + '</span>';
+    cell.dataset.matterId = matterId;
+    // Flash green
+    cell.style.transition = 'background 0.3s';
+    cell.style.background = '#D1FAE5';
+    setTimeout(function() { cell.style.background = ''; }, 1500);
+  })
+  .catch(function() {
+    display.innerHTML = '<span style="color:#991B1B;">Save failed — click to retry</span>';
+  });
+}
+
+function clearMatter(btn) {
+  var cell = btn.closest('.matter-cell');
+  var draftId = cell.dataset.draftId;
+  var picker = cell.querySelector('.matter-picker');
+  var display = cell.querySelector('.matter-display');
+
+  picker.style.display = 'none';
+  display.innerHTML = '<span style="color:var(--muted); font-size:11px;">Clearing...</span>';
+
+  fetch('/admin/timesheet/{{ session.id }}/reassign/' + draftId, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      matter_id: null,
+      matter_name: null,
+      tenant_id: '{{ tenant_id }}'
+    })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function() {
+    display.innerHTML = '<span style="color:#B45309; font-style:italic; border-bottom:1px dashed #FCD34D;">Unmatched — click to assign</span>';
+    cell.dataset.matterId = '';
+  });
+}
+
+// Close picker on click outside
+document.addEventListener('click', function(e) {
+  if (_activePicker && !_activePicker.contains(e.target) && !e.target.closest('.matter-display')) {
+    _activePicker.style.display = 'none';
+    _activePicker = null;
+  }
+});
 
 // Auto-refresh if session is running
 {% if session.status == 'running' %}

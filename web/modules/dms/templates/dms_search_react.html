@@ -1,0 +1,9 @@
+{% extends "shell.html" %}
+{% block title %}{{ brand.platform_name }} — DMS Search{% endblock %}
+{% block head_extra %}
+<script type="module" crossorigin src="/static/js/dms-search.js?v=2"></script>
+<link rel="stylesheet" crossorigin href="/static/js/assets/style.css?v=2">
+{% endblock %}
+{% block content %}
+<div id="dms-search-root"></div>
+{% endblock %}

@@ -1,0 +1,302 @@
+{% extends "base.html" %}
+{% block title %}Folder Migration Report — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Folder Migration Report{% endblock %}
+{% block content %}
+
+{# ── Summary Strip ────────────────────────────────────────────────────────────── #}
+<div style="margin-bottom:14px; display:flex; gap:12px; flex-wrap:wrap;">
+  <div class="card" style="padding:10px 16px; flex:1; min-width:140px; text-align:center;">
+    <div style="font-size:22px; font-weight:700; color:var(--text);">{{ summary.total_folders }}</div>
+    <div style="font-size:11px; color:var(--muted);">Legacy Folders</div>
+  </div>
+  <div class="card" style="padding:10px 16px; flex:1; min-width:140px; text-align:center;">
+    <div style="font-size:22px; font-weight:700; color:#166534;">{{ summary.synced }}</div>
+    <div style="font-size:11px; color:var(--muted);">Synced</div>
+  </div>
+  <div class="card" style="padding:10px 16px; flex:1; min-width:140px; text-align:center;">
+    <div style="font-size:22px; font-weight:700; color:#B45309;">{{ summary.partial }}</div>
+    <div style="font-size:11px; color:var(--muted);">Partial / Missing Files</div>
+  </div>
+  <div class="card" style="padding:10px 16px; flex:1; min-width:140px; text-align:center;">
+    <div style="font-size:22px; font-weight:700; color:#991B1B;">{{ summary.unsynced }}</div>
+    <div style="font-size:11px; color:var(--muted);">Not Synced</div>
+  </div>
+  <div class="card" style="padding:10px 16px; flex:1; min-width:140px; text-align:center;">
+    <div style="font-size:22px; font-weight:700; color:#6B7280;">{{ summary.unmatched }}</div>
+    <div style="font-size:11px; color:var(--muted);">No Matter Match</div>
+  </div>
+</div>
+
+{# ── Filters ──────────────────────────────────────────────────────────────────── #}
+<div class="card" style="padding:8px 16px; margin-bottom:12px; display:flex; gap:4px; align-items:center;">
+  <span style="font-size:11px; color:var(--muted); margin-right:6px;">Show:</span>
+  {% set filters = [('all','All'),('synced','Synced'),('partial','Partial'),('unsynced','Not Synced'),('unmatched','Unmatched')] %}
+  {% for slug, label in filters %}
+  <a href="?tenant_id={{ tenant_id }}&filter={{ slug }}"
+     style="padding:3px 10px; font-size:11px; font-weight:500; border-radius:4px;
+            text-decoration:none;
+            {% if current_filter == slug %}background:var(--primary); color:#fff;
+            {% else %}background:#F1F5F9; color:var(--text);{% endif %}">{{ label }}</a>
+  {% endfor %}
+  <div style="flex:1;"></div>
+  <input type="text" id="folder-search" placeholder="Search folders..."
+         oninput="filterRows(this.value)"
+         style="padding:4px 10px; font-size:11px; border:1px solid var(--border); border-radius:4px; width:200px;">
+</div>
+
+{# ── Main Table ───────────────────────────────────────────────────────────────── #}
+<div class="card" style="padding:0; overflow-x:auto;">
+  <table class="data-table" style="margin:0; min-width:1100px;" id="migration-table">
+    <thead>
+      <tr>
+        <th style="width:26px;"></th>
+        <th>Legacy Folder</th>
+        <th>Mapped Matter</th>
+        <th style="text-align:center;">Legacy Files</th>
+        <th style="text-align:center;">Praesidium Files</th>
+        <th style="text-align:center;">Status</th>
+        <th style="width:200px;">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in folders %}
+      <tr class="folder-row" data-status="{{ row.status }}" data-name="{{ row.folder_name|lower }}"
+          style="{% if row.status == 'synced' %}background:#F0FDF4;
+                 {% elif row.status == 'partial' %}background:#FFFBEB;
+                 {% elif row.status == 'unsynced' %}background:#FEF2F2;
+                 {% endif %}">
+        <td style="text-align:center; color:var(--muted); font-size:10px;">
+          {% if row.depth == 0 %}📁{% elif row.depth == 1 %}↳{% else %}⤷{% endif %}
+        </td>
+        <td style="font-size:12px; padding-left:{{ 10 + row.depth * 20 }}px;">
+          <div style="font-weight:{% if row.depth == 0 %}600{% else %}400{% endif %};"
+               title="{{ row.legacy_path }}">{{ row.folder_name }}</div>
+          {% if row.depth == 0 %}
+          <div style="font-size:10px; color:var(--muted); margin-top:1px; max-width:300px;
+                      overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+               title="{{ row.legacy_path }}">{{ row.legacy_path }}</div>
+          {% endif %}
+        </td>
+        <td style="font-size:12px;">
+          {% if row.matter_name %}
+            <div><span style="font-weight:500;">{{ row.matter_name }}</span>
+              {% if row.client_name %}<span style="font-size:10px; color:var(--muted);"> · {{ row.client_name }}</span>{% endif %}
+            </div>
+            {% if row.match_score is not none %}
+            <div style="font-size:10px; color:var(--muted);">Score: {{ "%.0f"|format(row.match_score * 100) }}%
+              {% if row.accepted %} · <span style="color:#166534;">Accepted</span>{% endif %}</div>
+            {% endif %}
+          {% else %}
+            <span style="color:#9CA3AF; font-style:italic; font-size:11px;">No match</span>
+          {% endif %}
+        </td>
+        <td style="text-align:center; font-size:12px; font-weight:500;">{{ row.legacy_file_count }}</td>
+        <td style="text-align:center; font-size:12px; font-weight:500;">
+          {% if row.praesidium_file_count > 0 %}
+            <span style="color:#166534;">{{ row.praesidium_file_count }}</span>
+            {% if row.praesidium_file_count < row.legacy_file_count %}
+              <span style="font-size:10px; color:#B45309;"> ({{ row.legacy_file_count - row.praesidium_file_count }} missing)</span>
+            {% endif %}
+          {% else %}<span style="color:#9CA3AF;">—</span>{% endif %}
+        </td>
+        <td style="text-align:center;">
+          {% if row.status == 'synced' %}
+            <span style="padding:2px 8px; background:#DCFCE7; color:#166534; border-radius:10px; font-size:10px; font-weight:500;">✓ Synced</span>
+          {% elif row.status == 'partial' %}
+            <span style="padding:2px 8px; background:#FEF3C7; color:#92400E; border-radius:10px; font-size:10px; font-weight:500;">⚠ Partial</span>
+          {% elif row.status == 'unsynced' %}
+            <span style="padding:2px 8px; background:#FEE2E2; color:#991B1B; border-radius:10px; font-size:10px; font-weight:500;">✕ Not Synced</span>
+          {% else %}
+            <span style="padding:2px 8px; background:#F1F5F9; color:#6B7280; border-radius:10px; font-size:10px; font-weight:500;">— Unmatched</span>
+          {% endif %}
+          {% if row.synced_at %}<div style="font-size:9px; color:var(--muted); margin-top:2px;">{{ row.synced_at }}</div>{% endif %}
+        </td>
+        <td>
+          <div style="display:flex; gap:3px; flex-wrap:wrap;">
+            {% if row.matter_id and row.accepted %}
+              <button onclick="syncFolder('{{ row.match_id }}', '{{ row.matter_id }}', 'smart')"
+                      title="Sync with folder remapping"
+                      style="padding:3px 8px; font-size:10px; font-weight:500; background:#DBEAFE; color:#1E40AF; border:1px solid #93C5FD; border-radius:3px; cursor:pointer;">🗂 Smart Sync</button>
+              <button onclick="syncFolder('{{ row.match_id }}', '{{ row.matter_id }}', 'raw')"
+                      title="Copy folder as-is"
+                      style="padding:3px 8px; font-size:10px; font-weight:500; background:#F3E8FF; color:#6B21A8; border:1px solid #C4B5FD; border-radius:3px; cursor:pointer;">📋 Raw Copy</button>
+            {% elif row.matter_id and not row.accepted %}
+              <button onclick="acceptAndSync('{{ row.match_id }}', '{{ row.matter_id }}', 'smart')"
+                      title="Accept match and sync"
+                      style="padding:3px 8px; font-size:10px; font-weight:500; background:#DCFCE7; color:#166534; border:1px solid #86EFAC; border-radius:3px; cursor:pointer;">✓ Accept & Sync</button>
+            {% else %}
+              <button onclick="openAssignModal('{{ row.folder_name|e }}', '{{ row.legacy_path|e }}')"
+                      title="Assign to matter"
+                      style="padding:3px 8px; font-size:10px; font-weight:500; background:#FEF3C7; color:#92400E; border:1px solid #FDE68A; border-radius:3px; cursor:pointer;">🔗 Assign Matter</button>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{# ── Assign Matter Modal ─────────────────────────────────────────────────────── #}
+<div id="assign-modal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0;
+                               background:rgba(0,0,0,0.4); z-index:100; justify-content:center; align-items:center;">
+  <div style="background:#fff; border-radius:8px; padding:24px; width:500px; max-width:90vw; box-shadow:0 8px 30px rgba(0,0,0,0.2);">
+    <div style="font-size:14px; font-weight:600; margin-bottom:4px;">Assign Legacy Folder to Matter</div>
+    <div id="assign-folder-name" style="font-size:12px; color:var(--muted); margin-bottom:14px;"></div>
+    <input type="hidden" id="assign-legacy-path" value="">
+    <div style="margin-bottom:12px;">
+      <div style="font-size:11px; font-weight:500; color:var(--muted); margin-bottom:3px;">SEARCH EXISTING MATTERS</div>
+      <input type="text" id="assign-search" placeholder="Type to search..."
+             oninput="searchMattersForAssign(this.value)"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:5px; padding:6px 10px; font-size:12px; box-sizing:border-box;">
+      <div id="assign-results" style="max-height:180px; overflow-y:auto; margin-top:4px; border:1px solid #E5E7EB; border-radius:5px; display:none;"></div>
+    </div>
+    <div style="text-align:center; font-size:11px; color:var(--muted); margin:8px 0;">— or create new —</div>
+    <div style="display:flex; gap:8px; margin-bottom:12px;">
+      <div style="flex:1;">
+        <div style="font-size:11px; font-weight:500; color:var(--muted); margin-bottom:3px;">CLIENT NAME</div>
+        <input type="text" id="new-client" placeholder="e.g. Smith"
+               style="width:100%; border:1px solid #D1D5DB; border-radius:5px; padding:6px 10px; font-size:12px; box-sizing:border-box;">
+      </div>
+      <div style="flex:1;">
+        <div style="font-size:11px; font-weight:500; color:var(--muted); margin-bottom:3px;">MATTER NAME</div>
+        <input type="text" id="new-matter" placeholder="e.g. v. Jones"
+               style="width:100%; border:1px solid #D1D5DB; border-radius:5px; padding:6px 10px; font-size:12px; box-sizing:border-box;">
+      </div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11px; font-weight:500; color:var(--muted); margin-bottom:3px;">SYNC MODE</div>
+      <div style="display:flex; gap:8px;">
+        <label style="font-size:12px; cursor:pointer;"><input type="radio" name="assign-sync-mode" value="smart" checked> Smart (remap folders)</label>
+        <label style="font-size:12px; cursor:pointer;"><input type="radio" name="assign-sync-mode" value="raw"> Raw (copy as-is)</label>
+        <label style="font-size:12px; cursor:pointer;"><input type="radio" name="assign-sync-mode" value="none"> Assign only (no sync)</label>
+      </div>
+    </div>
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <button onclick="closeAssignModal()" style="padding:6px 14px; font-size:12px; background:#F1F5F9; border:1px solid #D1D5DB; border-radius:5px; cursor:pointer;">Cancel</button>
+      <button onclick="createAndAssign()" id="assign-btn" style="padding:6px 14px; font-size:12px; background:var(--primary); color:#fff; border:none; border-radius:5px; cursor:pointer;">Create & Assign</button>
+    </div>
+  </div>
+</div>
+
+<div id="sync-toast" style="display:none; position:fixed; bottom:20px; right:20px; z-index:200;
+                             padding:12px 20px; border-radius:8px; font-size:12px; font-weight:500;
+                             box-shadow:0 4px 16px rgba(0,0,0,0.2); transition:opacity 0.3s;"></div>
+
+<style>
+  .data-table { width:100%; border-collapse:collapse; }
+  .data-table th { padding:6px 10px; font-size:11px; font-weight:600; color:var(--muted); text-align:left; border-bottom:1px solid var(--border); background:#FAFBFC; position:sticky; top:0; }
+  .data-table td { padding:6px 10px; border-bottom:1px solid var(--border); }
+  .data-table tr:hover { background:#F8FAFF !important; }
+  .assign-result-item { padding:8px 10px; cursor:pointer; border-bottom:1px solid #F1F5F9; font-size:12px; }
+  .assign-result-item:hover { background:#F0F4FF; }
+</style>
+
+<script>
+var TID = '{{ tenant_id }}';
+
+function filterRows(q) {
+  q = q.toLowerCase();
+  document.querySelectorAll('.folder-row').forEach(function(row) {
+    row.style.display = (row.dataset.name || '').indexOf(q) >= 0 ? '' : 'none';
+  });
+}
+
+function showToast(msg, type) {
+  var t = document.getElementById('sync-toast');
+  t.textContent = msg; t.style.display = 'block'; t.style.opacity = '1';
+  if (type === 'success') { t.style.background = '#DCFCE7'; t.style.color = '#166534'; }
+  else if (type === 'error') { t.style.background = '#FEE2E2'; t.style.color = '#991B1B'; }
+  else { t.style.background = '#DBEAFE'; t.style.color = '#1E40AF'; }
+  setTimeout(function() { t.style.opacity = '0'; setTimeout(function() { t.style.display = 'none'; }, 300); }, 4000);
+}
+
+function syncFolder(matchId, matterId, mode) {
+  var btn = event.target; var orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Syncing...';
+  showToast('Starting sync (' + mode + ' mode)...', 'info');
+  fetch('/admin/folder-migration/sync', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({tenant_id:TID, matter_id:matterId, match_id:matchId, sync_mode:mode})
+  }).then(function(r){return r.json()}).then(function(data){
+    if(data.status==='ok'){showToast(data.message||'Sync complete!','success');setTimeout(function(){location.reload();},1500);}
+    else{showToast('Failed: '+(data.detail||'unknown'),'error');btn.disabled=false;btn.textContent=orig;}
+  }).catch(function(e){showToast('Failed: '+e,'error');btn.disabled=false;btn.textContent=orig;});
+}
+
+function acceptAndSync(matchId, matterId, mode) {
+  var btn = event.target; btn.disabled = true; btn.textContent = 'Accepting...';
+  fetch('/admin/folder-migration/accept-and-sync', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({tenant_id:TID, matter_id:matterId, match_id:matchId, sync_mode:mode})
+  }).then(function(r){return r.json()}).then(function(data){
+    if(data.status==='ok'){showToast(data.message||'Done!','success');setTimeout(function(){location.reload();},1500);}
+    else{showToast('Failed: '+(data.detail||''),'error');btn.disabled=false;btn.textContent='✓ Accept & Sync';}
+  }).catch(function(e){showToast('Failed: '+e,'error');btn.disabled=false;btn.textContent='✓ Accept & Sync';});
+}
+
+var _assignSearchTimeout=null, _selectedMatterId=null;
+
+function openAssignModal(folderName, legacyPath) {
+  _selectedMatterId=null;
+  document.getElementById('assign-folder-name').textContent=folderName;
+  document.getElementById('assign-legacy-path').value=legacyPath;
+  document.getElementById('assign-search').value='';
+  document.getElementById('assign-results').style.display='none';
+  document.getElementById('new-client').value=folderName.split(',')[0]||folderName;
+  document.getElementById('new-matter').value='';
+  document.getElementById('assign-btn').textContent='Create & Assign';
+  document.getElementById('assign-modal').style.display='flex';
+  document.getElementById('assign-search').focus();
+}
+
+function closeAssignModal(){document.getElementById('assign-modal').style.display='none';}
+
+function searchMattersForAssign(q) {
+  clearTimeout(_assignSearchTimeout);
+  var results=document.getElementById('assign-results');
+  if(q.length<2){results.style.display='none';return;}
+  _assignSearchTimeout=setTimeout(function(){
+    fetch('/admin/folder-migration/search-matters?tenant_id='+TID+'&q='+encodeURIComponent(q))
+    .then(function(r){return r.json()}).then(function(data){
+      if(!data.matters||!data.matters.length){results.innerHTML='<div style="padding:8px;font-size:11px;color:var(--muted);">No matters found</div>';results.style.display='block';return;}
+      var html='';data.matters.forEach(function(m){
+        html+='<div class="assign-result-item" onclick="pickExistingMatter(\''+m.id+'\',\''+((m.name||'').replace(/'/g,"\\'"))+'\')">'
+          +'<div style="font-weight:500;">'+(m.name||'')+'</div>'
+          +'<div style="font-size:10px;color:var(--muted);">'+(m.client||'')+(m.number?' · '+m.number:'')+'</div></div>';
+      });results.innerHTML=html;results.style.display='block';
+    });
+  },300);
+}
+
+function pickExistingMatter(matterId,matterName){
+  _selectedMatterId=matterId;
+  document.getElementById('assign-search').value=matterName;
+  document.getElementById('assign-results').style.display='none';
+  document.getElementById('assign-btn').textContent='Assign to '+matterName;
+  document.getElementById('new-client').value='';
+  document.getElementById('new-matter').value='';
+}
+
+function createAndAssign(){
+  var legacyPath=document.getElementById('assign-legacy-path').value;
+  var syncMode=document.querySelector('input[name="assign-sync-mode"]:checked').value;
+  var btn=document.getElementById('assign-btn');
+  btn.disabled=true;btn.textContent='Working...';
+  var body={tenant_id:TID,legacy_path:legacyPath,sync_mode:syncMode};
+  if(_selectedMatterId){body.matter_id=_selectedMatterId;}
+  else{
+    body.new_client=document.getElementById('new-client').value.trim();
+    body.new_matter=document.getElementById('new-matter').value.trim();
+    if(!body.new_client||!body.new_matter){alert('Enter both client name and matter name, or search for an existing matter.');btn.disabled=false;btn.textContent='Create & Assign';return;}
+  }
+  fetch('/admin/folder-migration/assign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+  .then(function(r){return r.json()}).then(function(data){
+    if(data.status==='ok'){showToast(data.message||'Assigned!','success');closeAssignModal();setTimeout(function(){location.reload();},1500);}
+    else{showToast('Failed: '+(data.detail||''),'error');btn.disabled=false;btn.textContent='Create & Assign';}
+  }).catch(function(e){showToast('Failed: '+e,'error');btn.disabled=false;btn.textContent='Create & Assign';});
+}
+
+document.addEventListener('keydown',function(e){if(e.key==='Escape')closeAssignModal();});
+document.getElementById('assign-modal').addEventListener('click',function(e){if(e.target===this)closeAssignModal();});
+</script>
+
+{% endblock %}

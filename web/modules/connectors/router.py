@@ -52,18 +52,13 @@ REDIS_URL = os.environ.get("REDIS_URL", "redis://10.10.60.12:6379/0")
 
 @router.get("/tenant-admin/connectors", response_class=HTMLResponse)
 async def connector_list(request: Request, user=Depends(get_current_user)):
-    tenant_id = (getattr(user, "tenant_id", None) or "").strip()
-    if not tenant_id:
-        raise HTTPException(status_code=401, detail="No tenant context")
-
-    connector_groups = await ConnectorService.list_connectors_grouped(tenant_id)
+    """Serve React connectors page."""
+    from core.services.nav_context import get_nav_context
+    nav = await get_nav_context(request)
     branding = getattr(request.state, "branding", None)
-    nav = await get_nav_context(request, page="connectors")
-
-    return _templates(request).TemplateResponse(request, "connectors/list.html", {
-        "connector_groups": connector_groups,
-        "branding": branding,
-        "user": user,
+    return _templates(request).TemplateResponse(request, "connectors_react.html", {
+        "user": user, "brand": branding, "page": "connectors",
+        "current_user": getattr(request.state, "current_user", None),
         **nav,
     })
 
@@ -112,7 +107,7 @@ async def connector_catalog(request: Request, user=Depends(get_current_user)):
             })
 
     branding = getattr(request.state, "branding", None)
-    nav = await get_nav_context(request, page="connectors")
+    nav = await get_nav_context(request)
 
     return _templates(request).TemplateResponse(request, "connectors/catalog.html", {
         "catalog_groups": groups,
@@ -163,7 +158,7 @@ async def connector_configure_get(
     base_url = f"{request.url.scheme}://{request.url.hostname}"
     ingest_url = f"{base_url}/api/connectors/{connector_type}/ingest" if ingest_api_key else None
 
-    nav = await get_nav_context(request, page="connectors")
+    nav = await get_nav_context(request)
     return _templates(request).TemplateResponse(request, "connectors/configure.html", {
         "registry":         registry,
         "instance":         instance,

@@ -1,0 +1,9 @@
+{% extends "shell.html" %}
+{% block title %}Fill Me In — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<span class="breadcrumb-current">Fill Me In</span>
+{% endblock %}
+{% block content %}
+<div id="fill-me-in-root"></div>
+<script type="module" src="/static/js/fill-me-in.js?v=1"></script>
+{% endblock %}

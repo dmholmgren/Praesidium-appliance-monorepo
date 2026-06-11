@@ -1,0 +1,23 @@
+{# ── Assign-client successful response ────────────────────────────────────
+   Returned from POST /contacts/{id}/assign-client. Two effects:
+     - Empty the modal slot (this template's primary content is empty)
+     - Out-of-band swap of the linked-matters table
+
+   HTMX hx-swap-oob doesn't require enabling — it's checked on every response.
+─────────────────────────────────────────────────────────────────────────── #}
+{# Primary swap: clear the modal slot #}
+
+{# OOB: refresh the linked-matters table #}
+<div id="linked-matters-container" hx-swap-oob="innerHTML">
+  {% include "contacts/_linked_matters_table.html" %}
+</div>
+
+{# OOB: brief success toast (auto-dismisses) #}
+<div id="assign-toast" hx-swap-oob="innerHTML"
+     style="position:fixed; bottom:24px; right:24px; z-index:1100;
+            padding:10px 16px; background:#166534; color:#fff;
+            border-radius:6px; font-size:13px; font-weight:500;
+            box-shadow:0 4px 12px rgba(0,0,0,0.2);"
+     onload="setTimeout(() => this.remove(), 2400);">
+  ✓ Assigned successfully
+</div>

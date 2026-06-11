@@ -1,0 +1,35 @@
+{% extends "shell.html" %}
+{% block title %}Practice Intelligence — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Practice Intelligence{% endblock %}
+
+{% block header_actions %}
+<a href="/matters/new" class="btn-primary" style="font-size:12px;">
+  <svg style="width:13px;height:13px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+  </svg>
+  New Matter
+</a>
+{% endblock %}
+
+{% block content %}
+<div id="pi-react-root" style="min-height:400px;">
+  <div style="padding:48px; text-align:center; color:var(--muted); font-size:13px;">
+    <div class="spinner" style="margin:0 auto 12px;"></div>
+    Loading Practice Intelligence…
+  </div>
+</div>
+
+<script>
+  window.__PI_CTX__ = {
+    tabs: {{ tabs | tojson }},
+    defaultTab: {{ default_tab | tojson }},
+    isPartnerOrAdmin: {{ is_partner_or_admin | tojson }},
+    attorneys: {{ attorneys | tojson }},
+    currentUserId: {{ (user.id|string) if user and user.id else 'null' }},
+  };
+</script>
+
+{# Pre-compiled Vite bundle — no Babel, no CDN React, no {% raw %} needed #}
+<script type="module" src="/static/js/pi-dashboard.js?v=14"></script>
+<style>@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}</style>
+{% endblock %}

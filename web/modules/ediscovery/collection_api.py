@@ -94,51 +94,15 @@ async def _get_user_id(request: Request) -> Optional[str]:
 # Collections CRUD
 # ══════════════════════════════════════════════════════════════════════════════
 
-@router.get("/collections", response_class=HTMLResponse)
+@router.get("/collections")
 async def all_collections(request: Request):
-    """
-    Firm-wide collections list — all ediscovery_collections for the tenant.
-    Nav entry point from base.html sidebar.
-    Returns plain dicts (raw SQL) — template handles string status/source_type values.
-    """
-    tenant_id = request.state.tenant_id.strip()
-    branding = getattr(request.state, "branding", None)
-
-    async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            text("""
-                SELECT
-                    c.id,
-                    c.collection_name,
-                    c.source_party,
-                    c.source_type,
-                    c.received_date,
-                    c.received_method,
-                    c.status,
-                    c.total_docs,
-                    c.processed_docs,
-                    c.reviewed_docs,
-                    c.created_at,
-                    m.matter_name,
-                    m.id::text AS matter_id
-                FROM ediscovery_collections c
-                LEFT JOIN matters m
-                    ON m.id = c.matter_id
-                    AND m.tenant_id = c.tenant_id
-                WHERE c.tenant_id = :tid
-                ORDER BY c.created_at DESC
-            """),
-            {"tid": tenant_id},
-        )
-        collections = [dict(r) for r in result.mappings().fetchall()]
-
-    nav = await get_nav_context(request, page="collections")
-    return templates.TemplateResponse(request, "collection_list.html", {
-        "nav": nav,
-        "collections": collections,
-        "matter": None,
-        "branding": branding,
-    })
+    """Redirect old collections page to new React imports page."""
+    from fastapi.responses import RedirectResponse
+    matter_id = request.query_params.get("matter_id", "")
+    url = "/ediscovery/imports"
+    if matter_id:
+        url += "?matter_id=" + matter_id
+    return RedirectResponse(url=url, status_code=302)
 
 
 @router.get("/review", response_class=HTMLResponse)
@@ -181,6 +145,7 @@ async def review_landing(request: Request):
         "nav": nav,
         "matters": matters,
         "branding": branding,
+        "edisco_tab": "review",
     })
 
 
@@ -199,7 +164,7 @@ async def list_collections(matter_id: str, request: Request):
                     c.total_docs, c.processed_docs, c.reviewed_docs,
                     c.created_at
                 FROM ediscovery_collections c
-                WHERE c.tenant_id = :tid AND c.matter_id = :mid::uuid
+                WHERE c.tenant_id = :tid AND c.matter_id = CAST(:mid AS uuid)
                 ORDER BY c.created_at DESC
             """),
             {"tid": tenant_id, "mid": matter_id},
@@ -207,7 +172,7 @@ async def list_collections(matter_id: str, request: Request):
         collections = [dict(r) for r in result.mappings().fetchall()]
 
         matter_result = await session.execute(
-            text("SELECT id, matter_name FROM matters WHERE id = :mid::uuid AND tenant_id = :tid"),
+            text("SELECT id, matter_name FROM matters WHERE id = CAST(:mid AS uuid) AND tenant_id = :tid"),
             {"mid": matter_id, "tid": tenant_id},
         )
         matter = matter_result.mappings().fetchone()
@@ -221,6 +186,7 @@ async def list_collections(matter_id: str, request: Request):
         "collections": collections,
         "matter": dict(matter),
         "branding": branding,
+        "edisco_tab": "collections",
     })
 
 
@@ -287,6 +253,7 @@ async def collection_new(request: Request):
         "nav": nav,
         "matters": matters,
         "branding": branding,
+        "edisco_tab": "review",
     })
 
 
@@ -456,7 +423,7 @@ async def upload_document(
         try:
             REDIS_URL = os.environ.get("REDIS_URL", "redis://10.10.60.12:6379/0")
             redis_conn = Redis.from_url(REDIS_URL)
-            q = Queue("ediscovery_proc", connection=redis_conn)
+            q = Queue("ediscovery", connection=redis_conn)
             job = q.enqueue(
                 "jobs.ingest_collection_document.run",
                 doc_id,
@@ -607,7 +574,7 @@ async def confirm_dms_override(collection_id: str, doc_id: str, request: Request
         try:
             REDIS_URL = os.environ.get("REDIS_URL", "redis://10.10.60.12:6379/0")
             redis_conn = Redis.from_url(REDIS_URL)
-            q = Queue("ediscovery_proc", connection=redis_conn)
+            q = Queue("ediscovery", connection=redis_conn)
             job = q.enqueue(
                 "jobs.ingest_collection_document.run",
                 doc_id,

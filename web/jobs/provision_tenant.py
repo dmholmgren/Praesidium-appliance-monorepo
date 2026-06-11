@@ -1,37 +1,68 @@
 """
 jobs/provision_tenant.py
-RQ job — Tenant Provisioning
-Runs async after wizard confirmation. Creates:
-  1. tenants DB record
-  2. Feature flag defaults for tier
-  3. Branding defaults
-  4. Storage directory on FBRG-01 via CIFS bridge
-  5. First user (bcrypt hashed, must_change_password=True)
-  6. Nginx server block on RPRX-01 via SSH subprocess
-  7. Marks provision_status = 'complete'
+Praesidium Series 2.0 — Tenant Provisioning (Data Path)
+
+RQ job invoked by the admin provisioning wizard. Performs the data-layer
+work of standing up a new tenant:
+
+  1. Insert tenants row (is_active=False until proxy step succeeds)
+  2. Insert tenant_branding row
+  3. Insert tenant_licenses row (feature flags from wizard)
+  4. Provision storage root via STORAGE_BACKEND
+  5. Insert first admin user
+  6. Enqueue proxy_provision job (separate RQ job, separate failure semantics)
+  7. Return job result dict; orchestrator polls until proxy step also completes
+
+The proxy/infra work is delegated entirely to jobs/proxy_provision.py +
+infra/proxy/. That separation lets the same wizard work on:
+  - The appliance              (PROXY_BACKEND=local, STORAGE_BACKEND=local)
+  - HJMM production            (PROXY_BACKEND=ssh-rprx, STORAGE_BACKEND=cifs)
+  - On-prem multi-tenant test  (PROXY_BACKEND=local, STORAGE_BACKEND=local)
+  - Future cloud installs      (whatever combination)
+
+Idempotent retry semantics:
+  - tenants row is inserted with is_active=False ("provisioning" state).
+  - On the proxy step succeeding, is_active is flipped to True.
+  - If the proxy step fails, the tenant row stays at is_active=False.
+    The wizard's retry control re-enqueues only proxy_provision (the data
+    work is already done). When proxy succeeds, is_active flips to True.
+
+Schema notes (validated against live DB 2026-04-29):
+  - tenants.tier is enum tenant_tier ('shared'|'isolated'|'dedicated')
+  - tenants.status is enum tenant_status ('active'|'suspended'|'cancelled')
+    — there is NO 'provisioning' value; we use is_active=False instead.
+  - tenants.feature_flags is jsonb on the tenants row itself, but
+    runtime feature checks read tenant_licenses.feature_flags. We
+    populate both for back-compat with the licensing checker.
+  - users.password_hash (NOT hashed_password)
+  - users requires username + full_name; we derive both from email.
+  - There is NO 'must_change_password' column. First-login password
+    change is handled via the invitation_token flow.
+
+⚖  PATENT NOTICE: Patent Pending — 64/020,027
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import secrets
-import subprocess
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 import bcrypt
-import httpx
 import psycopg2
+import psycopg2.extras
 
-log = logging.getLogger(__name__)
+log = logging.getLogger("praesidium.jobs.provision_tenant")
 
-CIFS_BRIDGE_URL = os.environ.get("CIFS_BRIDGE_URL", "http://10.10.60.13:8080")
-RPRX_HOST = os.environ.get("RPRX_HOST", "10.10.40.50")
-DATABASE_URL_SYNC = os.environ.get("DATABASE_URL_SYNC", "")  # direct psycopg2 URL
-NGINX_SITES_DIR = "/etc/nginx/sites-available"
 
-# Tier → feature flag presets  (feature_key: enabled bool)
+# ── Tier → feature flag presets ──────────────────────────────────────────────
+# Names match the canonical flags persisted in tenant_licenses.feature_flags
+# in production today (verified 2026-04-29). Do NOT prefix with 'feature_'.
+
 TIER_PRESETS: dict[str, dict[str, bool]] = {
     "intelligence": {
         "ediscovery": True,
@@ -90,250 +121,331 @@ TIER_PRESETS: dict[str, dict[str, bool]] = {
 }
 
 
-def _get_conn(dsn: str):
-    """Return a direct psycopg2 connection with autocommit."""
-    conn = psycopg2.connect(dsn)
-    conn.autocommit = True
-    return conn
+# ── DB connection helpers ────────────────────────────────────────────────────
 
 
 def _parse_dsn(database_url: str) -> str:
+    """Convert a SQLAlchemy asyncpg URL to a psycopg2 keyword DSN.
+
+    Tolerates passwords containing '@' by using rfind for the credential
+    separator. This is the same pattern used elsewhere in the codebase
+    (see core/db/base.py).
     """
-    Convert asyncpg URL to psycopg2-compatible DSN.
-    Handles passwords containing @ by using rfind.
-    """
-    url = database_url.replace("postgresql+asyncpg://", "postgresql://")
-    at = url.rfind("@")
-    credentials = url[len("postgresql://") : at]
-    host_db = url[at + 1 :]
-    colon = credentials.rfind(":")
-    user = credentials[:colon]
-    password = credentials[colon + 1 :]
+    url = (
+        database_url
+        .replace("postgresql+asyncpg://", "postgresql://")
+        .replace("postgresql+psycopg2://", "postgresql://")
+    )
+    if not url.startswith("postgresql://"):
+        raise ValueError(f"DATABASE_URL must be postgresql://: {url[:40]}...")
+
+    rest = url[len("postgresql://"):]
+    at = rest.rfind("@")
+    if at < 0:
+        raise ValueError("DATABASE_URL missing credentials@host separator")
+    creds = rest[:at]
+    host_db = rest[at + 1:]
+
+    colon = creds.rfind(":")
+    if colon < 0:
+        raise ValueError("DATABASE_URL credentials missing user:password")
+    user, password = creds[:colon], creds[colon + 1:]
+
     slash = host_db.rfind("/")
-    host_port = host_db[:slash]
-    dbname = host_db[slash + 1 :]
+    if slash < 0:
+        raise ValueError("DATABASE_URL missing /dbname")
+    host_port, dbname = host_db[:slash], host_db[slash + 1:]
     if ":" in host_port:
         host, port = host_port.rsplit(":", 1)
     else:
         host, port = host_port, "5432"
+
     return f"host={host} port={port} dbname={dbname} user={user} password={password}"
 
 
-def _create_storage_dir(slug: str) -> bool:
-    """Ask CIFS bridge to create /mnt/praesidium/{slug}/."""
-    try:
-        resp = httpx.post(
-            f"{CIFS_BRIDGE_URL}/storage/mkdir",
-            json={"path": f"praesidium/{slug}"},
-            timeout=15,
-        )
-        resp.raise_for_status()
-        return True
-    except Exception as exc:
-        log.error("Storage mkdir failed for %s: %s", slug, exc)
-        return False
+def _get_conn():
+    """Return an autocommit psycopg2 connection."""
+    raw = os.environ.get("DATABASE_URL_SYNC") or os.environ.get("DATABASE_URL", "")
+    if not raw:
+        raise RuntimeError("Neither DATABASE_URL_SYNC nor DATABASE_URL is set")
+    conn = psycopg2.connect(_parse_dsn(raw))
+    conn.autocommit = True
+    return conn
 
 
-def _write_nginx_block(slug: str, domain: str, ssl_mode: str, ssl_cert_path: str | None, ssl_key_path: str | None) -> bool:
-    """
-    Write nginx server block for this tenant.
-    letsencrypt → wildcard cert at /etc/letsencrypt/live/praesidium-legal.com/
-    custom       → paths from ssl_cert_path / ssl_key_path
-    """
-    if ssl_mode == "letsencrypt":
-        cert = "/etc/letsencrypt/live/praesidium-legal.com/fullchain.pem"
-        key = "/etc/letsencrypt/live/praesidium-legal.com/privkey.pem"
-    else:
-        cert = ssl_cert_path or ""
-        key = ssl_key_path or ""
+# ── Helpers ──────────────────────────────────────────────────────────────────
 
-    block = f"""# Praesidium tenant: {slug}
-server {{
-    listen 443 ssl http2;
-    server_name {domain};
 
-    ssl_certificate     {cert};
-    ssl_certificate_key {key};
-    ssl_protocols       TLSv1.2 TLSv1.3;
-    ssl_ciphers         HIGH:!aNULL:!MD5;
+def _username_from_email(email: str) -> str:
+    """Derive a unique-enough username from an email local-part."""
+    local = email.split("@", 1)[0].lower()
+    # Strip anything that isn't safe in a username column.
+    safe = "".join(c if (c.isalnum() or c in "._-") else "_" for c in local)
+    return safe[:90]  # leave headroom under the 100-char limit
 
-    location / {{
-        proxy_pass         http://10.10.60.10:8000;
-        proxy_set_header   Host $host;
-        proxy_set_header   X-Real-IP $remote_addr;
-        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header   X-Forwarded-Proto https;
-    }}
-}}
 
-server {{
-    listen 80;
-    server_name {domain};
-    return 301 https://$host$request_uri;
-}}
-"""
-    conf_path = f"{NGINX_SITES_DIR}/{slug}.conf"
-    enabled_path = f"/etc/nginx/sites-enabled/{slug}.conf"
-    try:
-        # Write via SSH to RPRX-01 using tee (requires passwordless sudo from app host)
-        proc = subprocess.run(
-            [
-                "ssh",
-                "-o",
-                "StrictHostKeyChecking=no",
-                f"praesidium@{RPRX_HOST}",
-                f"sudo tee {conf_path} > /dev/null && "
-                f"sudo ln -sf {conf_path} {enabled_path} && "
-                f"sudo nginx -t && sudo systemctl reload nginx",
-            ],
-            input=block.encode(),
-            capture_output=True,
-            timeout=30,
-        )
-        if proc.returncode != 0:
-            log.error("nginx block write failed: %s", proc.stderr.decode())
-            return False
-        return True
-    except Exception as exc:
-        log.error("nginx SSH error: %s", exc)
-        return False
+def _full_name_from_email(email: str) -> str:
+    """Provisional full name. The user can edit this on first login."""
+    local = email.split("@", 1)[0]
+    parts = [p.capitalize() for p in local.replace(".", " ").replace("_", " ").split()]
+    return " ".join(parts) or local
+
+
+# ── Main job entry point ─────────────────────────────────────────────────────
 
 
 def provision_tenant(payload: dict) -> dict:
-    """
-    Main RQ entry point.
+    """RQ job entry point. See module docstring for payload contract.
 
-    payload keys:
-      slug, firm_name, tier, deployment_channel,
-      domain, ssl_mode, ssl_cert_path, ssl_key_path,
-      first_user_email, first_user_password,
-      feature_overrides (dict of feature_key -> bool, may be empty)
+    Required payload keys:
+        slug, firm_name, domain, ssl_mode, first_user_email
+    Optional:
+        feature_pack ('intelligence' | 'standard' | 'starter') — default 'intelligence'
+        deployment_tier ('shared' | 'isolated' | 'dedicated') — default 'dedicated'
+        deployment_channel — default 'none'
+        first_user_password — auto-generated if missing
+        feature_overrides — dict of flag_name → bool
+        ssl_cert_path, ssl_key_path — for ssl_mode='custom'
+        triggered_by — string for audit (default 'wizard')
     """
     slug = payload["slug"]
     firm_name = payload["firm_name"]
-    tier = payload.get("tier", "intelligence")
-    deployment_channel = payload.get("deployment_channel", "none")
     domain = payload.get("domain") or f"{slug}.praesidium-legal.com"
     ssl_mode = payload.get("ssl_mode", "letsencrypt")
     ssl_cert_path = payload.get("ssl_cert_path")
     ssl_key_path = payload.get("ssl_key_path")
+    feature_pack = payload.get("feature_pack", "intelligence")
+    deployment_tier = payload.get("deployment_tier", "dedicated")
+    deployment_channel = payload.get("deployment_channel", "none")
     first_user_email = payload["first_user_email"]
-    first_user_password = payload["first_user_password"]
-    feature_overrides: dict[str, bool] = payload.get("feature_overrides", {})
+    first_user_password = (
+        payload.get("first_user_password")
+        or secrets.token_urlsafe(12)
+    )
+    feature_overrides: dict[str, bool] = payload.get("feature_overrides") or {}
+    triggered_by = payload.get("triggered_by", "wizard")
 
-    errors: list[str] = []
+    warnings: list[str] = []
+    tenant_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
 
-    dsn = _parse_dsn(DATABASE_URL_SYNC or os.environ.get("DATABASE_URL", ""))
-    conn = _get_conn(dsn)
-    cur = conn.cursor()
+    # Compute the merged feature flag set.
+    base_flags = TIER_PRESETS.get(feature_pack, TIER_PRESETS["starter"]).copy()
+    base_flags.update(feature_overrides)
 
+    conn = None
     try:
-        # ── 1. Insert tenant record ──────────────────────────────────────
-        tenant_id = str(uuid.uuid4())
-        now = datetime.now(timezone.utc)
+        conn = _get_conn()
+        cur = conn.cursor()
+
+        # ── Step 1. Tenant row (is_active=False until proxy succeeds). ──
         cur.execute(
             """
             INSERT INTO tenants (
-                id, slug, firm_name, tier, deployment_channel,
-                is_active, ssl_mode, ssl_cert_path, ssl_key_path, ssl_domain,
-                provision_status, created_at, updated_at
-            ) VALUES (%s,%s,%s,%s,%s, true,%s,%s,%s,%s, 'provisioning',%s,%s)
+                id, name, slug, tier, plan, status, is_active,
+                domain, deployment_channel, feature_flags,
+                ssl_mode, ssl_cert_path, ssl_key_path, ssl_domain,
+                storage_adapter, auth_adapter, email_adapter,
+                calendar_adapter, research_providers, ai_provider,
+                created_at, updated_at
+            ) VALUES (
+                %s, %s, %s, %s::tenant_tier, %s, 'active'::tenant_status, false,
+                %s, %s, %s::jsonb,
+                %s, %s, %s, %s,
+                %s, 'local', 'none',
+                'none', 'none', 'anthropic',
+                %s, %s
+            )
             ON CONFLICT (slug) DO NOTHING
+            RETURNING id
             """,
             (
-                tenant_id, slug, firm_name, tier, deployment_channel,
+                tenant_id, firm_name, slug, deployment_tier, deployment_tier,
+                domain, deployment_channel, json.dumps(base_flags),
                 ssl_mode, ssl_cert_path, ssl_key_path, domain,
+                # storage_adapter set via separate UPDATE after backend runs
+                "local",
                 now, now,
             ),
         )
-        log.info("Tenant record inserted: %s (%s)", slug, tenant_id)
+        row = cur.fetchone()
+        if row is None:
+            # Slug already exists — fail loudly. The wizard validated this
+            # at step 1 but a race is possible.
+            return {
+                "status": "failed",
+                "slug": slug,
+                "error": f"slug '{slug}' already in use (race condition)",
+            }
+        tenant_id = row[0]
+        log.info("provision_tenant: tenants row created id=%s slug=%s", tenant_id, slug)
 
-        # ── 2. Feature flags ─────────────────────────────────────────────
-        preset = TIER_PRESETS.get(tier, TIER_PRESETS["starter"]).copy()
-        preset.update(feature_overrides)  # apply wizard overrides
-        for feature_key, enabled in preset.items():
-            cur.execute(
-                """
-                INSERT INTO feature_overrides (tenant_id, feature_key, enabled, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (tenant_id, feature_key) DO UPDATE
-                  SET enabled = EXCLUDED.enabled, updated_at = EXCLUDED.updated_at
-                """,
-                (tenant_id, feature_key, enabled, now, now),
-            )
-        log.info("Feature flags seeded for %s (%d features)", slug, len(preset))
-
-        # ── 3. Branding defaults ─────────────────────────────────────────
+        # ── Step 2. Tenant branding ──────────────────────────────────────
         cur.execute(
             """
             INSERT INTO tenant_branding (
-                tenant_id, platform_name, platform_short_name,
-                suppress_attribution, base_domain,
-                use_praesidium_subdomain, created_at, updated_at
-            ) VALUES (%s,%s,%s, false,%s, %s,%s,%s)
+                tenant_id, firm_name, base_domain,
+                platform_name, platform_short_name,
+                suppress_attribution, use_praesidium_subdomain,
+                created_at, updated_at
+            ) VALUES (
+                %s, %s, %s,
+                %s, %s,
+                false, %s,
+                %s, %s
+            )
             ON CONFLICT (tenant_id) DO NOTHING
             """,
             (
-                tenant_id, firm_name, firm_name[:20],
-                domain,
-                (ssl_mode == "letsencrypt"),
+                tenant_id, firm_name, domain,
+                firm_name[:255], firm_name[:50],
+                ssl_mode == "letsencrypt",
                 now, now,
             ),
         )
-        log.info("Branding defaults written for %s", slug)
+        log.info("provision_tenant: tenant_branding row written")
 
-        # ── 4. Storage directory ─────────────────────────────────────────
-        if not _create_storage_dir(slug):
-            errors.append("storage_dir_failed")
-            log.warning("Storage dir not created for %s — continuing", slug)
+        # ── Step 3. Tenant license (feature flags) ──────────────────────
+        cur.execute(
+            """
+            INSERT INTO tenant_licenses (
+                tenant_id, tier, feature_flags, billing_plan,
+                licensed_at
+            ) VALUES (%s, %s, %s::jsonb, %s, %s)
+            ON CONFLICT (tenant_id) DO UPDATE
+              SET tier = EXCLUDED.tier,
+                  feature_flags = EXCLUDED.feature_flags,
+                  billing_plan = EXCLUDED.billing_plan
+            """,
+            (tenant_id, feature_pack, json.dumps(base_flags),
+             deployment_tier, now),
+        )
+        log.info("provision_tenant: tenant_licenses row written (%d flags)",
+                 len(base_flags))
 
-        # ── 5. First user ────────────────────────────────────────────────
-        pw_hash = bcrypt.hashpw(
+        # ── Step 4. Storage provisioning ─────────────────────────────────
+        # Lazy import so failed-load of an optional dep doesn't break the
+        # entire job module.
+        from infra.storage import get_storage_backend
+
+        storage = get_storage_backend()
+        ok, msg_or_adapter = storage.create_tenant_root(slug)
+        if ok:
+            adapter_name = msg_or_adapter
+            cur.execute(
+                "UPDATE tenants SET storage_adapter = %s, updated_at = %s "
+                "WHERE id = %s",
+                (adapter_name, datetime.now(timezone.utc), tenant_id),
+            )
+            log.info("provision_tenant: storage provisioned (%s)", adapter_name)
+        else:
+            warnings.append(f"storage_provisioning_failed: {msg_or_adapter}")
+            log.warning("provision_tenant: storage provisioning failed: %s",
+                        msg_or_adapter)
+
+        # ── Step 5. First admin user ─────────────────────────────────────
+        username = _username_from_email(first_user_email)
+        full_name = _full_name_from_email(first_user_email)
+        password_hash = bcrypt.hashpw(
             first_user_password.encode(), bcrypt.gensalt()
         ).decode()
+        invitation_token = secrets.token_urlsafe(32)
+        invitation_expires = now + timedelta(days=7)
+
         cur.execute(
             """
             INSERT INTO users (
-                tenant_id, email, hashed_password, role,
-                is_active, must_change_password, created_at, updated_at
-            ) VALUES (%s,%s,%s,'admin', true, true,%s,%s)
+                tenant_id, username, email, full_name, password_hash,
+                role, is_active, is_timekeeper, auth_provider,
+                invitation_token, invitation_expires_at,
+                created_at, updated_at
+            ) VALUES (
+                %s, %s, %s, %s, %s,
+                'admin'::user_role_enum, true, false, 'local',
+                %s, %s,
+                %s, %s
+            )
             ON CONFLICT (tenant_id, email) DO NOTHING
             """,
-            (tenant_id, first_user_email, pw_hash, now, now),
+            (
+                tenant_id, username, first_user_email, full_name, password_hash,
+                invitation_token, invitation_expires,
+                now, now,
+            ),
         )
-        log.info("First admin user seeded: %s", first_user_email)
+        log.info("provision_tenant: first admin user created (%s)",
+                 first_user_email)
 
-        # ── 6. Nginx block ───────────────────────────────────────────────
-        nginx_ok = _write_nginx_block(slug, domain, ssl_mode, ssl_cert_path, ssl_key_path)
-        if not nginx_ok:
-            errors.append("nginx_block_failed")
-            log.warning("Nginx block not written for %s — manual step required", slug)
-
-        # ── 7. Mark complete ─────────────────────────────────────────────
-        status = "complete" if not errors else "complete_with_warnings"
-        cur.execute(
-            "UPDATE tenants SET provision_status=%s, updated_at=%s WHERE id=%s",
-            (status, datetime.now(timezone.utc), tenant_id),
-        )
-        log.info("Tenant %s provisioned — status: %s", slug, status)
-
-        return {
-            "tenant_id": tenant_id,
-            "slug": slug,
-            "status": status,
-            "errors": errors,
-        }
-
-    except Exception as exc:
-        log.exception("Provisioning failed for %s: %s", slug, exc)
-        try:
-            cur.execute(
-                "UPDATE tenants SET provision_status='failed', updated_at=%s WHERE slug=%s",
-                (datetime.now(timezone.utc), slug),
-            )
-        except Exception:
-            pass
-        return {"slug": slug, "status": "failed", "errors": [str(exc)]}
-    finally:
         cur.close()
         conn.close()
+        conn = None
+
+    except Exception as exc:
+        log.exception("provision_tenant: data path failed: %s", exc)
+        # Best-effort cleanup: mark tenant as suspended so it doesn't
+        # appear active in admin lists.
+        try:
+            if conn is not None:
+                with conn.cursor() as ccur:
+                    ccur.execute(
+                        "UPDATE tenants SET status = 'suspended'::tenant_status, "
+                        "is_active = false, updated_at = %s WHERE id = %s",
+                        (datetime.now(timezone.utc), tenant_id),
+                    )
+        except Exception:
+            pass
+        return {
+            "status": "failed",
+            "slug": slug,
+            "tenant_id": tenant_id,
+            "error": str(exc),
+        }
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+    # ── Step 6. Enqueue the proxy job (separate RQ job, separate retry) ──
+    # The wizard's progress page tracks the proxy job's progress and
+    # flips is_active=True when proxy succeeds.
+    try:
+        import redis as _redis
+        from rq import Queue
+        from jobs.proxy_provision import provision_proxy
+
+        r = _redis.Redis.from_url(
+            os.environ.get("REDIS_URL", "redis://10.10.60.12:6379/0")
+        )
+        q = Queue("default", connection=r)
+        proxy_job = q.enqueue(
+            provision_proxy,
+            {
+                "tenant_id": tenant_id,
+                "slug": slug,
+                "domain": domain,
+                "ssl_mode": ssl_mode,
+                "ssl_cert_path": ssl_cert_path,
+                "ssl_key_path": ssl_key_path,
+                "triggered_by": triggered_by,
+            },
+            job_timeout=300,
+        )
+        proxy_job_id = proxy_job.id
+        log.info("provision_tenant: enqueued proxy job %s", proxy_job_id)
+    except Exception as exc:
+        warnings.append(f"proxy_enqueue_failed: {exc}")
+        proxy_job_id = None
+        log.error("provision_tenant: failed to enqueue proxy job: %s", exc)
+
+    return {
+        "status": "data_complete",
+        "slug": slug,
+        "tenant_id": tenant_id,
+        "proxy_job_id": proxy_job_id,
+        "first_user_email": first_user_email,
+        "first_user_password": first_user_password,
+        "invitation_token": invitation_token if 'invitation_token' in locals() else None,
+        "warnings": warnings,
+    }

@@ -1,0 +1,25 @@
+{# ── Read-mode field label ────────────────────────────────────────────────
+   Renders one field as a clickable label. Clicking swaps it for the
+   _field_input.html partial via HTMX.
+
+   Context required:
+     contact_id : int
+     field_name : str (key in EDITABLE_FIELDS)
+     field_spec : dict
+     current_value : str  (display value, possibly empty)
+─────────────────────────────────────────────────────────────────────────── #}
+<div id="field-{{ field_name }}-{{ contact_id }}" class="inline-field">
+  <div class="inline-field-label-text"
+       hx-get="/contacts/{{ contact_id }}/field/{{ field_name }}/edit"
+       hx-target="#field-{{ field_name }}-{{ contact_id }}"
+       hx-swap="outerHTML"
+       title="Click to edit"
+       style="cursor:pointer; min-height:32px; padding:6px 10px; border-radius:6px;
+              border:1px solid transparent; transition:background 100ms, border-color 100ms;
+              {% if field_spec.type == 'phone' %}font-family:ui-monospace,monospace;{% endif %}
+              {% if not current_value %}color:var(--muted); font-style:italic;{% endif %}"
+       onmouseenter="this.style.background='#F8FAFC'; this.style.borderColor='var(--border)';"
+       onmouseleave="this.style.background=''; this.style.borderColor='transparent';">
+    {{ current_value if current_value else '— click to add —' }}
+  </div>
+</div>

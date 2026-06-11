@@ -1,0 +1,154 @@
+{% extends "billing/layout.html" %}
+{% block title %}{{ brand.platform_name if brand else 'Praesidium' }} — Dedup Review{% endblock %}
+{% block page_title %}Contact Deduplication Review{% endblock %}
+
+{% block billing_content %}
+
+{# ── Subtabs ──────────────────────────────────────────────────────────────── #}
+<div class="tab-nav" style="margin-bottom:20px;">
+  <a href="/contacts" class="tab-btn">Contacts</a>
+  <a href="/contacts/dedup-review" class="tab-btn active">Dedup ({{ candidates | length }})</a>
+  <a href="/contacts/proposals-review" class="tab-btn">Matter Proposals</a>
+</div>
+
+<div class="card" style="margin-bottom:20px; padding:14px;
+                          background:#EFF6FF; border-color:#BFDBFE;">
+  <div style="font-size:12px; color:#1E40AF; line-height:1.5;">
+    <strong>How this works:</strong> The hygiene job detects clusters of contacts
+    that look like duplicates (same phone, same email, similar name with same phone).
+    Choose one record as canonical — its data is preserved, all matter links from
+    the others are re-pointed to it, and the others are archived.
+    Or keep them separate, or mark as a false positive.
+  </div>
+</div>
+
+{% if candidates %}
+{# ── Accept-all banner ──────────────────────────────────────────────────── #}
+<div class="card" style="margin-bottom:16px; padding:14px; background:#F0FDF4;
+                          border-color:#86EFAC; display:flex; align-items:center;
+                          justify-content:space-between; gap:12px;">
+  <div style="font-size:13px; color:#166534;">
+    <strong>{{ candidates | length }}</strong>
+    pending cluster{{ 's' if candidates | length != 1 else '' }} ready for bulk merge
+    using the suggested canonical (highlighted record on each cluster below).
+  </div>
+  <form method="post" action="/contacts/dedup-review/accept-all"
+        onsubmit="return confirm('Accept all {{ candidates | length }} pending dedup clusters? This will archive {{ total_losers }} contact record{{ 's' if total_losers != 1 else '' }} and re-point any matter_contacts links to the suggested canonical record. This cannot be undone via the UI.');">
+    <button type="submit" class="btn-primary" style="background:#166534;">
+      Accept All →
+    </button>
+  </form>
+</div>
+{% endif %}
+
+{% if not candidates %}
+<div class="card empty-state" style="padding:60px;">
+  <div style="font-size:32px; margin-bottom:12px;">✓</div>
+  <div style="font-size:14px; color:var(--text);">No pending dedup clusters. All clean.</div>
+</div>
+{% endif %}
+
+{% for c in candidates %}
+<div class="card" style="margin-bottom:16px;">
+
+  {# Cluster header #}
+  <div style="display:flex; align-items:center; justify-content:space-between;
+              margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+      <span class="badge
+        {% if c.signal_type == 'exact_email' %}badge-green
+        {% elif c.signal_type == 'exact_phone' %}badge-blue
+        {% elif c.signal_type == 'fuzzy_name+exact_phone' %}badge-yellow
+        {% else %}badge-gray{% endif %}">
+        {{ c.signal_type }}
+      </span>
+      <span style="font-size:12px; color:var(--muted);">
+        confidence
+        <span style="font-family:ui-monospace,monospace; color:var(--text);">{{ "%.2f"|format(c.confidence) }}</span>
+      </span>
+      <span style="font-size:11px; color:var(--muted);">
+        · detected {{ c.detected_at.strftime('%b %d %Y %H:%M') }}
+      </span>
+    </div>
+    <div style="font-size:11px; color:var(--muted); font-family:ui-monospace,monospace;">cluster {{ c.id[:8] }}…</div>
+  </div>
+
+  {% if c.notes %}
+  <div style="font-size:12px; color:var(--muted); font-style:italic; margin-bottom:12px;">{{ c.notes }}</div>
+  {% endif %}
+
+  <form method="post" action="/contacts/dedup-review/{{ c.id }}/merge">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th style="width:60px;">Keep?</th>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Phone</th>
+          <th>Type</th>
+          <th style="text-align:center;">Matters</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for contact in c.contacts %}
+        <tr {% if contact.id == c.suggested_canonical_id %}style="background:#F0FDF4;"{% endif %}>
+          <td>
+            <input type="radio" name="canonical_contact_id"
+                   value="{{ contact.id }}"
+                   {% if contact.id == c.suggested_canonical_id %}checked{% endif %}>
+          </td>
+          <td>
+            <a href="/contacts/{{ contact.id }}" target="_blank"
+               style="color:var(--text); text-decoration:none; font-weight:500;">
+              {{ contact.full_name }}
+            </a>
+            {% if contact.id == c.suggested_canonical_id %}
+            <span class="badge badge-green" style="margin-left:6px; font-size:10px;">suggested</span>
+            {% endif %}
+            {% if contact.company or contact.firm_name %}
+            <div style="font-size:11px; color:var(--muted);">
+              {{ contact.company }}{% if contact.firm_name %}{% if contact.company %} · {% endif %}{{ contact.firm_name }}{% endif %}
+            </div>
+            {% endif %}
+          </td>
+          <td style="font-size:12px;">{{ contact.email or '—' }}</td>
+          <td style="font-size:12px; font-family:ui-monospace,monospace;">{{ contact.phone or '—' }}</td>
+          <td><span class="badge badge-gray">{{ contact.contact_type or 'manual' }}</span></td>
+          <td style="text-align:center;">
+            {% if contact.n_matters > 0 %}
+            <span class="badge badge-blue">{{ contact.n_matters }}</span>
+            {% else %}
+            <span style="color:var(--muted);">—</span>
+            {% endif %}
+          </td>
+          <td style="font-size:11px; color:var(--muted);">{{ contact.created_at.strftime('%b %d %Y') if contact.created_at else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div style="display:flex; align-items:center; gap:8px; margin-top:14px;
+                padding-top:14px; border-top:1px solid var(--border);">
+      <button type="submit"
+              onclick="return confirm('Merge non-selected records into the selected canonical? matter_contacts links will be re-pointed; losers archived.')"
+              class="btn-primary"
+              style="background:#166534;">
+        Merge into selected
+      </button>
+      <button type="submit" formaction="/contacts/dedup-review/{{ c.id }}/keep-separate"
+              class="btn-secondary">
+        Keep Separate
+      </button>
+      <button type="submit" formaction="/contacts/dedup-review/{{ c.id }}/reject"
+              style="font-size:13px; padding:7px 14px; background:transparent;
+                     color:#991B1B; border:1px solid #FCA5A5; border-radius:6px;
+                     cursor:pointer; font-family:'DM Sans',sans-serif;">
+        False Positive
+      </button>
+    </div>
+  </form>
+</div>
+{% endfor %}
+
+{% endblock %}

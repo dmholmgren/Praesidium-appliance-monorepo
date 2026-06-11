@@ -1,0 +1,11 @@
+{% extends "shell.html" %}
+{% block title %}Timesheet Reconciliation — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/reconciliation">Reconciliation</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">Timesheet</span>
+{% endblock %}
+{% block content %}
+<div id="recon-timesheet-root"></div>
+<script type="module" src="/static/js/recon-timesheet.js"></script>
+{% endblock %}

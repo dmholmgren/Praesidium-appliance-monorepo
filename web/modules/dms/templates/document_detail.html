@@ -32,8 +32,8 @@
           <div><dt class="text-gray-500">Size</dt><dd class="font-medium">{{ (doc.file_size / 1024)|round(1) }} KB</dd></div>
           <div><dt class="text-gray-500">Client</dt><dd class="font-medium">{{ doc.client_name or '—' }}</dd></div>
           <div><dt class="text-gray-500">Matter</dt><dd class="font-medium">{{ doc.matter_name or '—' }}</dd></div>
-          <div><dt class="text-gray-500">Created</dt><dd class="font-medium">{{ doc.created_at[:16] if doc.created_at else '—' }}</dd></div>
-          <div><dt class="text-gray-500">Modified</dt><dd class="font-medium">{{ doc.updated_at[:16] if doc.updated_at else '—' }}</dd></div>
+          <div><dt class="text-gray-500">Created</dt><dd class="font-medium">{{ (doc.created_at|string)[:16] if doc.created_at else '—' }}</dd></div>
+          <div><dt class="text-gray-500">Modified</dt><dd class="font-medium">{{ (doc.updated_at|string)[:16] if doc.updated_at else '—' }}</dd></div>
           <div><dt class="text-gray-500">OCR Status</dt><dd class="font-medium">{{ doc.ocr_status or 'pending' }}</dd></div>
           <div><dt class="text-gray-500">Path</dt><dd class="font-medium text-xs">{{ doc.storage_path }}</dd></div>
         </dl>
@@ -62,7 +62,7 @@
                       class="text-xs text-blue-600 hover:underline">Restore</button>
             </div>
             <div class="text-xs text-gray-500 mt-1">
-              {{ ver.created_at[:16] if ver.created_at else '' }} · {{ (ver.file_size / 1024)|round(1) }} KB
+              {{ (ver.created_at|string)[:16] if ver.created_at else '' }} · {{ (ver.file_size / 1024)|round(1) }} KB
             </div>
           </div>
           {% endfor %}

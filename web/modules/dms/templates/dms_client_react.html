@@ -1,0 +1,12 @@
+{% extends "shell.html" %}
+{% block title %}{{ client_name }} — Documents — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/dms" style="color:var(--muted);text-decoration:none;">Documents</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">{{ client_name }}</span>
+{% endblock %}
+{% block content %}
+<div id="dms-client-root" style="margin: -24px;"></div>
+<script>window.__CLIENT_ID__ = '{{ client_id }}';</script>
+<script type="module" src="/static/js/dms-client.js?v=1"></script>
+{% endblock %}

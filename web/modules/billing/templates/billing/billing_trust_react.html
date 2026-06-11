@@ -1,0 +1,11 @@
+{% extends "shell.html" %}
+{% block title %}{{ brand.platform_name if brand else 'Praesidium' }} — Trust{% endblock %}
+{% block breadcrumb %}
+<a href="/billing">Billing</a>
+<span class="breadcrumb-sep">&rsaquo;</span>
+<span class="breadcrumb-current">Trust</span>
+{% endblock %}
+{% block content %}
+<div id="billing-trust-root" style="padding: 16px 20px;"></div>
+<script type="module" src="/static/js/billing-trust.js"></script>
+{% endblock %}

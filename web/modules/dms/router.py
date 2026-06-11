@@ -24,8 +24,8 @@ def register_dms_routes(app: FastAPI):
     app.include_router(dms_router)
 
     # COMP 7: WebDAV endpoint
-    from modules.dms.services.webdav_endpoint import mount_webdav
-    mount_webdav(app)
+    from modules.dms.services.webdav_endpoint import router as webdav_router
+    app.include_router(webdav_router)
 
     # COMP 8: Document comparison
     from modules.dms.services.comparison_engine import router as compare_router
@@ -51,6 +51,22 @@ def register_dms_routes(app: FastAPI):
     from modules.dms.services.scanning_portal import router as scan_router
     app.include_router(scan_router)
 
+    # DMS upload + versioning + email
+    from modules.dms.services.dms_upload_route import router as upload_router
+    app.include_router(upload_router)
+
     # Admin: Crawl exclusion rules
     from modules.dms.services.crawl_exclusion_rules import router as crawl_rules_router
     app.include_router(crawl_rules_router)
+
+    # OnlyOffice editor (oo-config, oo-download, oo-callback)
+    from modules.dms.services.onlyoffice_route import router as oo_router
+    app.include_router(oo_router)
+
+    # Tags API (matter-level issue + project tag management)
+    from modules.dms.services.tags_api import router as tags_api_router
+    app.include_router(tags_api_router)
+
+    # Folder mapping review API (file-import legacy onboarding)
+    from modules.dms.services.folder_mapping_api import router as folder_map_router
+    app.include_router(folder_map_router)

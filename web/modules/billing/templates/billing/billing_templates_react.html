@@ -1,0 +1,13 @@
+{% extends "shell.html" %}
+{% block title %}{{ brand.platform_name if brand else 'Praesidium' }} — Bill Templates{% endblock %}
+{% block breadcrumb %}
+<a href="/billing">Billing</a>
+<span class="breadcrumb-sep">&rsaquo;</span>
+<a href="/billing/run-bills">Billing</a>
+<span class="breadcrumb-sep">&rsaquo;</span>
+<span class="breadcrumb-current">Templates</span>
+{% endblock %}
+{% block content %}
+<div id="billing-templates-root" style="padding: 16px 20px;"></div>
+<script type="module" src="/static/js/billing-templates.js"></script>
+{% endblock %}

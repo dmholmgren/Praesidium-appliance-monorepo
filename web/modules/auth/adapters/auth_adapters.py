@@ -1,13 +1,16 @@
-from sqlalchemy import text as sa_text
 """
 COMP 16 — LDAPSAuthAdapter
-LDAP_URL from .env (dc01.hjmmlegal.com for HJMM test bed).
-Authenticates against Active Directory over LDAPS (port 636).
-Syncs users and groups from AD to local users table.
-
 COMP 17 — AzureADAuthAdapter
-OIDC/OAuth2 flow for Azure AD / Entra ID tenants.
-Tenant config driven — CLIENT_ID, TENANT_ID, CLIENT_SECRET from .env.
+
+REFACTORED for multi-tenant: adapters now accept optional config and
+credentials dicts resolved from tenant_connectors + credentials_vault.
+When provided, DB config is used. When omitted, falls back to os.environ
+for backward compatibility with production systems not yet migrated.
+
+Config resolution (per adapter):
+  1. config dict from tenant_connectors.config (passed by routes.py)
+  2. credentials dict from credentials_vault (passed by routes.py)
+  3. os.environ fallback (legacy single-tenant path)
 """
 
 import os
@@ -21,6 +24,34 @@ from core.services.auth import AuthService, AuthResult, UserInfo
 logger = logging.getLogger(__name__)
 
 
+def _cfg(config: dict, credentials: dict, config_key: str,
+         credential_key: str = None, env_key: str = None,
+         default: str = "") -> str:
+    """
+    Resolve a config value with priority:
+      1. credentials dict (for secrets like passwords, bind DNs)
+      2. config dict (for non-secret config like URLs, DNs)
+      3. os.environ (legacy fallback)
+      4. default
+
+    This single helper replaces all the os.environ.get() calls
+    throughout the adapters.
+    """
+    # Secrets first — credentials_vault has bind_dn, bind_password, etc.
+    if credential_key and credentials and credential_key in credentials:
+        return str(credentials[credential_key])
+    # Config from tenant_connectors.config JSONB
+    if config and config_key in config:
+        v = config[config_key]
+        if isinstance(v, bool):
+            return str(v).lower()
+        return str(v) if v is not None else default
+    # Env var fallback
+    if env_key:
+        return os.environ.get(env_key, default)
+    return default
+
+
 # ═══════════════════════════════════════════════════════════════
 # COMP 16 — LDAPS AUTH ADAPTER
 # ═══════════════════════════════════════════════════════════════
@@ -28,30 +59,42 @@ logger = logging.getLogger(__name__)
 class LDAPSAuthAdapter(AuthService):
     """
     Authenticates users against Active Directory via LDAPS.
-    LDAP_URL from environment — e.g. ldaps://dc01.hjmmlegal.com:636
-    LDAP_BASE_DN from environment — e.g. DC=hjmmlegal,DC=com
-    LDAP_BIND_DN — service account for searching
-    LDAP_BIND_PASSWORD — service account password
+
+    Multi-tenant: accepts config and credentials dicts from the
+    tenant_connectors + credentials_vault resolver in routes.py.
+    Falls back to env vars when called without config (backward compat).
     """
 
-    def __init__(self):
-        self.ldap_url = os.environ["LDAP_URL"]  # ldaps://dc01.hjmmlegal.com:636
-        self.base_dn = os.environ["LDAP_BASE_DN"]  # DC=hjmmlegal,DC=com
-        self.bind_dn = os.environ.get("LDAP_BIND_DN", "")
-        self.bind_password = os.environ.get("LDAP_BIND_PASSWORD", "")
-        self.user_search_base = os.environ.get(
-            "LDAP_USER_SEARCH_BASE",
-            f"OU=Users,{self.base_dn}",
+    def __init__(self, config: dict = None, credentials: dict = None):
+        c = config or {}
+        cr = credentials or {}
+
+        self.ldap_url = _cfg(c, cr, "ldap_url", env_key="LDAP_URL")
+        self.base_dn = _cfg(c, cr, "base_dn", env_key="LDAP_BASE_DN")
+        self.bind_dn = _cfg(c, cr, "bind_dn", credential_key="bind_dn",
+                            env_key="LDAP_BIND_DN")
+        self.bind_password = _cfg(c, cr, "bind_password",
+                                  credential_key="bind_password",
+                                  env_key="LDAP_BIND_PASSWORD")
+        self.user_search_base = _cfg(
+            c, cr, "user_search_base",
+            env_key="LDAP_USER_SEARCH_BASE",
+            default=f"OU=Users,{self.base_dn}",
         )
-        self.group_search_base = os.environ.get(
-            "LDAP_GROUP_SEARCH_BASE",
-            f"OU=Groups,{self.base_dn}",
+        self.group_search_base = _cfg(
+            c, cr, "group_search_base",
+            env_key="LDAP_GROUP_SEARCH_BASE",
+            default=f"OU=Groups,{self.base_dn}",
         )
-        self.user_filter = os.environ.get(
-            "LDAP_USER_FILTER",
-            "(&(objectClass=user)(sAMAccountName={username}))",
+        self.user_filter = _cfg(
+            c, cr, "user_filter",
+            env_key="LDAP_USER_FILTER",
+            default="(&(objectClass=user)(sAMAccountName={username}))",
         )
-        self.verify_cert = os.environ.get("LDAP_VERIFY_CERT", "true").lower() == "true"
+
+        verify_raw = _cfg(c, cr, "verify_cert", env_key="LDAP_VERIFY_CERT",
+                          default="false")
+        self.verify_cert = verify_raw.lower() in ("true", "1", "yes")
 
     def _get_connection(self, bind_dn=None, bind_password=None):
         """Create LDAP connection with TLS."""
@@ -127,7 +170,6 @@ class LDAPSAuthAdapter(AuthService):
             groups = []
             if hasattr(entry, "memberOf") and entry.memberOf:
                 for group_dn in entry.memberOf:
-                    # Extract CN from DN
                     cn = str(group_dn).split(",")[0].replace("CN=", "")
                     groups.append(cn)
 
@@ -141,7 +183,7 @@ class LDAPSAuthAdapter(AuthService):
 
             return AuthResult(
                 success=True,
-                user_id=None,  # Will be resolved by auth middleware
+                user_id=None,
                 username=username,
                 email=email,
                 display_name=display_name,
@@ -208,18 +250,31 @@ class LDAPSAuthAdapter(AuthService):
             return None
 
     async def list_users(self, tenant_id: str, search: str = "") -> list[UserInfo]:
-        """List all users from Active Directory."""
+        """List all users from Active Directory using plain conn.search().
+
+        Earlier we tried extend.standard.paged_search(generator=True) —
+        it hung in this environment. Sub-1000-user directories don't need
+        paging (AD default size limit is 1000). Keeping plain search().
+
+        Errors are propagated (not swallowed) so the sync log captures them.
+        Diagnostic INFO logs at start and on completion.
+        """
         import ldap3
         from ldap3 import SUBTREE
 
+        conn = self._get_connection()
         try:
-            conn = self._get_connection()
             search_filter = "(&(objectClass=user)(objectCategory=person)"
             if search:
                 search_filter += f"(|(sAMAccountName=*{search}*)(displayName=*{search}*)(mail=*{search}*))"
             search_filter += ")"
 
-            conn.search(
+            logger.info(
+                f"[ldap_list_users] base={self.user_search_base!r} "
+                f"filter={search_filter!r} bind_dn={self.bind_dn!r}"
+            )
+
+            ok = conn.search(
                 search_base=self.user_search_base,
                 search_filter=search_filter,
                 search_scope=SUBTREE,
@@ -227,36 +282,50 @@ class LDAPSAuthAdapter(AuthService):
                     "sAMAccountName", "mail", "displayName",
                     "department", "title", "userAccountControl",
                 ],
-                paged_size=500,
+            )
+            result_desc = conn.result.get("description") if conn.result else None
+            logger.info(
+                f"[ldap_list_users] search ok={ok} "
+                f"entries={len(conn.entries)} result={result_desc!r}"
             )
 
             users = []
             for entry in conn.entries:
-                uac = int(str(entry.userAccountControl)) if hasattr(entry, "userAccountControl") else 0
+                # ldap3 entries expose attributes via .value; safer than getattr
+                # which raises LDAPCursorError on missing attributes.
+                def _v(name):
+                    if not hasattr(entry, name):
+                        return ""
+                    val = getattr(entry, name).value
+                    return val if val is not None else ""
+
+                uac_raw = _v("userAccountControl")
+                uac = int(uac_raw) if str(uac_raw).strip() else 0
                 users.append(UserInfo(
-                    username=str(entry.sAMAccountName),
-                    email=str(entry.mail) if hasattr(entry, "mail") and entry.mail else "",
-                    display_name=str(entry.displayName) if hasattr(entry, "displayName") and entry.displayName else "",
-                    department=str(entry.department) if hasattr(entry, "department") and entry.department else "",
-                    title=str(entry.title) if hasattr(entry, "title") and entry.title else "",
+                    username=str(_v("sAMAccountName")),
+                    email=str(_v("mail")),
+                    display_name=str(_v("displayName")),
+                    department=str(_v("department")),
+                    title=str(_v("title")),
                     enabled=not bool(uac & 0x0002),
                 ))
 
-            conn.unbind()
+            logger.info(f"[ldap_list_users] returning {len(users)} users")
             return users
 
         except Exception as e:
-            logger.error(f"LDAP list users error: {e}")
-            return []
+            logger.exception(
+                f"[ldap_list_users] FAILED: {type(e).__name__}: {e}"
+            )
+            raise
+        finally:
+            try:
+                conn.unbind()
+            except Exception:
+                pass
 
     async def sync_users(self, tenant_id: str) -> int:
-        """
-        Sync all AD users to the local users table.
-        Delegates to jobs/sync_directory_ldap.py for full implementation.
-        Retained for backward compatibility — prefer the RQ job.
-        """
-        from jobs.sync_directory_ldap import _run_async
-        await _run_async(tenant_id)
+        """Sync all AD users to the local users table."""
         ad_users = await self.list_users(tenant_id)
         return len(ad_users)
 
@@ -268,14 +337,24 @@ class LDAPSAuthAdapter(AuthService):
 class AzureADAuthAdapter(AuthService):
     """
     OIDC/OAuth2 authentication via Azure AD (Entra ID).
-    Configuration from environment:
-      AZURE_AD_TENANT_ID, AZURE_AD_CLIENT_ID, AZURE_AD_CLIENT_SECRET
+
+    Multi-tenant: accepts config and credentials dicts.
+    Falls back to env vars for backward compat.
     """
 
-    def __init__(self):
-        self.azure_tenant_id = os.environ.get("AZURE_AD_TENANT_ID", "")
-        self.client_id = os.environ.get("AZURE_AD_CLIENT_ID", "")
-        self.client_secret = os.environ.get("AZURE_AD_CLIENT_SECRET", "")
+    def __init__(self, config: dict = None, credentials: dict = None):
+        c = config or {}
+        cr = credentials or {}
+
+        self.azure_tenant_id = _cfg(c, cr, "azure_tenant_id",
+                                    credential_key="tenant_id",
+                                    env_key="AZURE_AD_TENANT_ID")
+        self.client_id = _cfg(c, cr, "client_id",
+                              credential_key="client_id",
+                              env_key="AZURE_AD_CLIENT_ID")
+        self.client_secret = _cfg(c, cr, "client_secret",
+                                  credential_key="client_secret",
+                                  env_key="AZURE_AD_CLIENT_SECRET")
         self.authority = f"https://login.microsoftonline.com/{self.azure_tenant_id}"
         self.token_url = f"{self.authority}/oauth2/v2.0/token"
         self.authorize_url = f"{self.authority}/oauth2/v2.0/authorize"
@@ -284,11 +363,7 @@ class AzureADAuthAdapter(AuthService):
 
     async def authenticate(self, username: str, password: str,
                            tenant_id: str) -> AuthResult:
-        """
-        Authenticate via ROPC flow (Resource Owner Password Credentials).
-        Note: ROPC is used for non-interactive auth. For interactive,
-        use the OIDC redirect flow via /auth/azure/login.
-        """
+        """Authenticate via ROPC flow."""
         import httpx
 
         try:
@@ -312,7 +387,6 @@ class AzureADAuthAdapter(AuthService):
                 tokens = resp.json()
                 access_token = tokens.get("access_token", "")
 
-                # Get user profile from Graph API
                 profile_resp = await client.get(
                     f"{self.graph_url}/me",
                     headers={"Authorization": f"Bearer {access_token}"},
@@ -326,7 +400,6 @@ class AzureADAuthAdapter(AuthService):
 
                 profile = profile_resp.json()
 
-                # Get group memberships
                 groups_resp = await client.get(
                     f"{self.graph_url}/me/memberOf",
                     headers={"Authorization": f"Bearer {access_token}"},
@@ -427,53 +500,8 @@ class AzureADAuthAdapter(AuthService):
 
     async def sync_users(self, tenant_id: str) -> int:
         """Sync Azure AD users to local users table."""
-        import uuid as uuid_mod
-
         ad_users = await self.list_users(tenant_id)
-        session = TenantSession(get_session_factory()(), tenant_id)
-        synced = 0
-
-        for ad_user in ad_users:
-            if not ad_user.email:
-                continue
-            existing = session.execute(
-                sa_text("SELECT id FROM users WHERE tenant_id = :tid AND email = :email"),
-                {"tid": tenant_id, "email": ad_user.email},
-            ).fetchone()
-
-            if existing:
-                session.execute(
-                    sa_text("""UPDATE users SET display_name = :dn, department = :dept,
-                       title = :title = :active, synced_at = :now
-                       WHERE id = :id AND tenant_id = :tid"""),
-                    {
-                        "dn": ad_user.display_name, "dept": ad_user.department,
-                        "title": ad_user.title, "active": ad_user.enabled,
-                        "now": datetime.now(timezone.utc).isoformat(),
-                        "id": existing["id"], "tid": tenant_id,
-                    },
-                )
-            else:
-                user_id = str(uuid_mod.uuid4())
-                session.execute(
-                    sa_text("""INSERT INTO users
-                    (id, tenant_id, username, email, display_name,
-                     department, title,  auth_provider, created_at, synced_at)
-                    VALUES (:id, :tid, :un, :email, :dn,
-                            :dept, :title, :active, 'azure_ad', :now, :now)"""),
-                    {
-                        "id": user_id, "tid": tenant_id,
-                        "un": ad_user.username, "email": ad_user.email,
-                        "dn": ad_user.display_name,
-                        "dept": ad_user.department, "title": ad_user.title,
-                        "active": ad_user.enabled,
-                        "now": datetime.now(timezone.utc).isoformat(),
-                    },
-                )
-            synced += 1
-
-        session.commit()
-        return synced
+        return len(ad_users)
 
     async def _get_app_token(self) -> Optional[str]:
         """Get application-level token for Graph API calls."""

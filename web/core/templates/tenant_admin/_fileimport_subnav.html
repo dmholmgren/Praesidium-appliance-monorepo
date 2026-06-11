@@ -1,0 +1,23 @@
+{#
+  Sub-navigation for File Import tab.
+  Usage: {% include "tenant_admin/_fileimport_subnav.html" %}
+#}
+{% set p = request.url.path %}
+<div style="display:flex; gap:0; margin-bottom:16px; border-bottom:1px solid var(--border); padding-bottom:0;">
+  <a href="/tenant-admin/data-sources"
+     style="padding:6px 16px; font-size:12px; text-decoration:none; border-bottom:2px solid {% if p.startswith('/tenant-admin/data-sources') %}var(--primary){% else %}transparent{% endif %}; margin-bottom:-1px; color:{% if p.startswith('/tenant-admin/data-sources') %}var(--primary){% else %}var(--muted){% endif %}; font-weight:{% if p.startswith('/tenant-admin/data-sources') %}600{% else %}400{% endif %};">
+    Data Sources
+  </a>
+  <a href="/tenant-admin/folder-reconciliation"
+     style="padding:6px 16px; font-size:12px; text-decoration:none; border-bottom:2px solid {% if p.startswith('/tenant-admin/folder-reconciliation') %}var(--primary){% else %}transparent{% endif %}; margin-bottom:-1px; color:{% if p.startswith('/tenant-admin/folder-reconciliation') %}var(--primary){% else %}var(--muted){% endif %}; font-weight:{% if p.startswith('/tenant-admin/folder-reconciliation') %}600{% else %}400{% endif %};">
+    AI Reconciliation
+  </a>
+  <a href="/tenant-admin/folder-migration"
+     style="padding:6px 16px; font-size:12px; text-decoration:none; border-bottom:2px solid {% if p.startswith('/tenant-admin/folder-migration') %}var(--primary){% else %}transparent{% endif %}; margin-bottom:-1px; color:{% if p.startswith('/tenant-admin/folder-migration') %}var(--primary){% else %}var(--muted){% endif %}; font-weight:{% if p.startswith('/tenant-admin/folder-migration') %}600{% else %}400{% endif %};">
+    Sync Report
+  </a>
+  <a href="/tenant-admin/integrity"
+     style="padding:6px 16px; font-size:12px; text-decoration:none; border-bottom:2px solid {% if p.startswith('/tenant-admin/integrity') %}var(--primary){% else %}transparent{% endif %}; margin-bottom:-1px; color:{% if p.startswith('/tenant-admin/integrity') %}var(--primary){% else %}var(--muted){% endif %}; font-weight:{% if p.startswith('/tenant-admin/integrity') %}600{% else %}400{% endif %};">
+    Integrity
+  </a>
+</div>

@@ -1,0 +1,12 @@
+{% extends "shell.html" %}
+{% block title %}Client Collection Project — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}eDiscovery{% endblock %}
+
+{% block content %}
+<div id="ediscovery-collection-project-root" style="min-height:400px;">
+  <div style="padding:48px; text-align:center; color:var(--muted); font-size:13px;">
+    Loading collection project…
+  </div>
+</div>
+<script type="module" src="/static/js/ediscovery-collection-project.js?v=1"></script>
+{% endblock %}

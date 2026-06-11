@@ -1,72 +1,44 @@
 {#
   core/templates/tenant_admin/_topnav.html
-  Top tab bar for all tenant admin pages.
-  Matches eDiscovery tab style exactly.
-  Usage: {% include "tenant_admin/_topnav.html" %}
+  Breadcrumb + tab bar for tenant admin HTMX pages.
+  Set {{ ta_page_breadcrumb }} before including this template.
+  Tabs link to React pages where available.
 #}
 <style>
+  .ta-breadcrumb { font-size:12px; color:var(--muted); margin-bottom:8px; }
+  .ta-breadcrumb a { color:var(--muted); text-decoration:none; }
+  .ta-breadcrumb a:hover { color:var(--text); }
+  .ta-breadcrumb .sep { margin:0 6px; color:#D1D5DB; }
   .ta-tabs {
-    display: flex;
-    gap: 2px;
-    border-bottom: 2px solid var(--border);
-    margin-bottom: 20px;
-    flex-shrink: 0;
+    display:flex; gap:2px; border-bottom:2px solid var(--border);
+    margin-bottom:20px; flex-shrink:0;
   }
   .ta-tab {
-    padding: 8px 18px;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--muted);
-    text-decoration: none;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -2px;
-    border-radius: 4px 4px 0 0;
-    white-space: nowrap;
-    display: inline-block;
+    padding:8px 18px; font-size:12px; font-weight:500; color:var(--muted);
+    text-decoration:none; border-bottom:2px solid transparent;
+    margin-bottom:-2px; border-radius:4px 4px 0 0; white-space:nowrap; display:inline-block;
   }
-  .ta-tab:hover { color: var(--text); background: #f8fafc; }
-  .ta-tab.active {
-    color: var(--primary);
-    border-bottom-color: var(--primary);
-    font-weight: 600;
-  }
+  .ta-tab:hover { color:var(--text); background:#f8fafc; }
+  .ta-tab.active { color:var(--primary); border-bottom-color:var(--primary); font-weight:600; }
+  .ta-tab .ext { font-size:9px; margin-left:2px; opacity:.5; }
 </style>
 
-<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-  <div style="font-size:10px; color:var(--muted);">
-    <a href="https://admin.praesidium-legal.com/" target="_blank"
-       style="color:var(--muted); text-decoration:none; margin-right:16px;">Platform Admin ↗</a>
-    <a href="/tenant-admin/break-glass"
-       style="color:var(--muted); text-decoration:none;">Emergency Access</a>
-  </div>
+<div class="ta-breadcrumb">
+  <a href="/tenant-admin/">Firm Administration</a>
+  {% if ta_page_breadcrumb %}
+  <span class="sep">/</span>
+  {{ ta_page_breadcrumb | safe }}
+  {% endif %}
 </div>
 
 {% set p = request.url.path %}
 
 <div class="ta-tabs">
-
-  <a href="/tenant-admin/" class="ta-tab {% if p == '/tenant-admin/' %}active{% endif %}">
-    Overview
-  </a>
-
-  <a href="/tenant-admin/users" class="ta-tab {% if p.startswith('/tenant-admin/users') %}active{% endif %}">
-    Users
-  </a>
-
-  <a href="/tenant-admin/connectors" class="ta-tab {% if p.startswith('/tenant-admin/connectors') %}active{% endif %}">
-    Connectors
-  </a>
-
-  <a href="/tenant-admin/features" class="ta-tab {% if p.startswith('/tenant-admin/features') %}active{% endif %}">
-    Features
-  </a>
-
-  <a href="/tenant-admin/folder-reconciliation" class="ta-tab {% if p.startswith('/tenant-admin/folder-reconciliation') or p.startswith('/tenant-admin/client-matter-cleanup') or p.startswith('/tenant-admin/client-merge') %}active{% endif %}">
-    Data Quality
-  </a>
-
-  <a href="/tenant-admin/profile" class="ta-tab {% if p.startswith('/tenant-admin/profile') or p.startswith('/tenant-admin/ssl') or p.startswith('/tenant-admin/byok') %}active{% endif %}">
-    Settings
-  </a>
-
+  <a href="/tenant-admin/" class="ta-tab {% if p == '/tenant-admin/' %}active{% endif %}">Overview</a>
+  <a href="/tenant-admin/file-import" class="ta-tab {% if '/data-sources' in p or '/folder-rec' in p or '/folder-mig' in p or '/integrity' in p or '/file-import' in p %}active{% endif %}">File Import</a>
+  <a href="/tenant-admin/connectors" class="ta-tab {% if '/connectors' in p %}active{% endif %}">Connectors</a>
+  <a href="/tenant-admin/#users" class="ta-tab {% if '/users' in p or '/permissions' in p %}active{% endif %}">Users</a>
+  <a href="/tenant-admin/#ai-settings" class="ta-tab {% if '/byok' in p %}active{% endif %}">AI Settings</a>
+  <a href="/tenant-admin/#platform" class="ta-tab {% if '/break-glass' in p %}active{% endif %}">Platform Control</a>
+  <a href="/tenant-admin/#settings" class="ta-tab {% if '/profile' in p or '/ssl' in p or '/features' in p or '/onboarding' in p or '/client-matter' in p or '/client-merge' in p %}active{% endif %}">Settings</a>
 </div>

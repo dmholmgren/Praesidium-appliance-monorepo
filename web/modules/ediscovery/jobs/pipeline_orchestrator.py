@@ -62,14 +62,37 @@ def _storage_path(cur, tenant, cid):
 
 def _extract_archives(storage_path):
     """Extract zip/tar archives in originals/as_received -> originals/unpacked,
-    leaving the archive in place (immutable received copy). Returns count."""
+    leaving the archive in place (immutable received copy). Returns count.
+
+    Skips any archive whose extraction manifest (written by intake's
+    preserve_archive) verifies: signature match + spot-checked files.
+    Prevents the duplicate re-extract when intake already unpacked it."""
+    import json as _json
     asr = Path(storage_path) / "originals" / "as_received"
     unp = Path(storage_path) / "originals" / "unpacked"
+    orig = Path(storage_path) / "originals"
     n = 0
     if not asr.exists():
         return 0
     for f in sorted(asr.rglob("*")):
         if f.is_file() and f.suffix.lower() in ARCHIVE_EXTS:
+            manifest = orig / (".extract-manifest-" + f.name + ".json")
+            try:
+                if manifest.exists():
+                    m = _json.loads(manifest.read_text())
+                    st = f.stat()
+                    sig = {"size": st.st_size, "mtime": int(st.st_mtime)}
+                    fl = m.get("files") or []
+                    if m.get("sig") == sig and fl:
+                        probe = fl[:50] + fl[-50:]
+                        if all((unp / p).exists() for p in probe):
+                            logger.info(
+                                "skip re-extract (manifest verified, %d files): %s",
+                                len(fl), f.name)
+                            n += 1
+                            continue
+            except Exception:
+                logger.warning("manifest check failed for %s; extracting", f.name)
             dest = unp / f.stem
             dest.mkdir(parents=True, exist_ok=True)
             try:
@@ -116,7 +139,9 @@ def run_ediscovery_pipeline(tenant_id, collection_id, user_id=None):
             ("enrich",    [PY, "modules/ediscovery/jobs/enrich_collection.py"] + T + C),
             ("geometry", [PY, "-m", "modules.ediscovery.jobs.geometry_intake"] + C),
             ("render",   [PY, "-m", "modules.ediscovery.jobs.geometry_intake", "--stage", "render"] + C),
-            ("ocr",      [PY, "-m", "modules.ediscovery.jobs.geometry_intake", "--stage", "ocr"] + C),
+            ("ocr",      [PY, "-m", "modules.ediscovery.jobs.geometry_intake", "--stage", "ocr",
+                          "--limit", os.environ.get("OCR_INLINE_LIMIT", "500")] + C),
+            ("enrich2",  [PY, "modules/ediscovery/jobs/enrich_collection.py"] + T + C),
             ("segment",  [PY, "jobs/canonical_segmenter.py", "--corpus", "ediscovery", "--all"] + C),
             ("chunk",    [PY, "jobs/spine_chunker.py", "--corpus", "ediscovery", "--all"] + C),
             ("embed",    [PY, "-m", "modules.ediscovery.jobs.embed_ediscovery_chunks"] + C),
@@ -130,11 +155,33 @@ def run_ediscovery_pipeline(tenant_id, collection_id, user_id=None):
             last = lines[-1] if lines else ""
             if r.returncode != 0:
                 err = (r.stderr or "").strip().splitlines()
+                if name == "ocr":
+                    prog("stage %s failed rc=%d (non-gating; OCR drains in "
+                         "background / on pipeline re-runs): %s"
+                         % (name, r.returncode, (err[-1] if err else "")[:400]),
+                         "warning")
+                    continue
                 prog("stage %s FAILED rc=%d: %s" % (name, r.returncode,
                      (err[-1] if err else "")[:400]), "error")
                 _status(cur, tenant, cid, "failed")
                 raise RuntimeError("stage %s failed (rc=%d)" % (name, r.returncode))
             prog("stage %s: done -- %s" % (name, last[:400]))
+            if name == "enrich2":
+                try:
+                    cur.execute(
+                        "SELECT count(*), "
+                        "count(*) FILTER (WHERE extracted_text IS NOT NULL "
+                        "OR text_path IS NOT NULL), "
+                        "count(*) FILTER (WHERE processing_status='ocr_pending') "
+                        "FROM ediscovery_documents "
+                        "WHERE TRIM(tenant_id)=%s AND collection_id=CAST(%s AS uuid)",
+                        (tenant, cid))
+                    tot, txt, pend = cur.fetchone()
+                    prog("text coverage %d/%d (%.1f%%); %d doc(s) ocr_pending "
+                         "(background)" % (txt, tot,
+                         (100.0 * txt / tot if tot else 100.0), pend))
+                except Exception as _ce:
+                    prog("coverage query failed: %s" % _ce, "warning")
 
         _status(cur, tenant, cid, "review_ready")
         prog("Pipeline complete -- collection ready for review", "success")

@@ -240,9 +240,13 @@ async function dmsSearch() {
   var results = document.getElementById('dms-search-results');
   results.style.display = 'block';
   results.innerHTML = '<div class="card" style="padding:12px 14px;font-size:12px;color:var(--muted);">Searching…</div>';
-  if (searchMode !== 'keyword') {
-    results.innerHTML = '<div class="card" style="padding:12px 14px;font-size:12px;color:var(--muted);">🧠 '
-      + (searchMode === 'ai' ? 'AI' : 'Semantic') + ' search — falling back to keyword (AI adapter not yet wired)…</div>';
+  if (searchMode === 'ai') {
+    doAISearch(q, results);
+    return;
+  }
+  if (searchMode === 'semantic') {
+    results.innerHTML = '<div class="card" style="padding:12px 14px;font-size:12px;color:var(--muted);">'
+      + 'Semantic search requires the embedding pipeline — falling back to keyword…</div>';
     setTimeout(function() { doKeywordSearch(q, ed, results); }, 600);
     return;
   }
@@ -257,6 +261,20 @@ async function doKeywordSearch(q, ed, resultsEl) {
       '<div class="card" style="padding:16px;text-align:center;color:var(--muted);font-size:12px;">No results found.</div>';
   } catch(e) {
     resultsEl.innerHTML = '<div class="card" style="padding:12px;font-size:12px;color:#dc2626;">Search failed.</div>';
+  }
+}
+
+
+async function doAISearch(q, resultsEl) {
+  resultsEl.innerHTML = '<div class="card" style="padding:14px;font-size:12px;color:var(--muted);">'
+    + '<span style="font-size:14px;">&#129302;</span> Asking AI to search your documents…</div>';
+  try {
+    var resp = await fetch('/dms/ai-search?q=' + encodeURIComponent(q));
+    var html = await resp.text();
+    resultsEl.innerHTML = '<div class="card" style="padding:0; overflow:hidden;">' + html + '</div>';
+  } catch(e) {
+    resultsEl.innerHTML = '<div class="card" style="padding:12px;font-size:12px;color:#dc2626;">'
+      + 'AI search failed: ' + e.message + '</div>';
   }
 }
 

@@ -1,59 +1,367 @@
 {% extends "base.html" %}
 {% block title %}Firm Administration — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
 {% block page_title %}Firm Administration{% endblock %}
+
+{% block head_extra %}
+<style>
+  /* ── Command Center Layout ── */
+  .cc-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .cc-stat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .cc-stat-icon {
+    width: 36px; height: 36px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .cc-stat-value {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.1;
+  }
+  .cc-stat-label {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+    letter-spacing: 0.01em;
+  }
+  .cc-stat-sub {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  /* ── Main two-column ── */
+  .cc-main {
+    display: grid;
+    grid-template-columns: 3fr 2fr;
+    gap: 12px;
+    min-height: 0;
+  }
+
+  /* ── Chat panel ── */
+  .cc-chat {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    min-height: 520px;
+    max-height: calc(100vh - 260px);
+    overflow: hidden;
+  }
+  .cc-chat-header {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .cc-chat-header span {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .cc-chat-body {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  /* Override the widget's fixed height */
+  .cc-chat-body #admin-ai-chat {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .cc-chat-body #aichat-messages {
+    height: auto !important;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* ── Right panel tabs ── */
+  .cc-right {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    min-height: 520px;
+    max-height: calc(100vh - 260px);
+    overflow: hidden;
+  }
+  .cc-right-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .cc-right-tab {
+    flex: 1;
+    padding: 10px 8px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    text-align: center;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    background: none;
+    border-top: none;
+    border-left: none;
+    border-right: none;
+    font-family: 'DM Sans', sans-serif;
+    transition: all 120ms;
+  }
+  .cc-right-tab:hover { color: var(--text); background: var(--bg); }
+  .cc-right-tab.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+    font-weight: 600;
+  }
+  .cc-right-body {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+  }
+  .cc-tab-panel { display: none; padding: 14px 16px; }
+  .cc-tab-panel.active { display: block; }
+
+  /* ── Onboarding checklist ── */
+  .cc-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid #F3F4F6;
+  }
+  .cc-step:last-child { border-bottom: none; }
+  .cc-step-dot {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+    margin-top: 1px;
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .cc-step-dot.done {
+    background: #D1FAE5; color: #065F46;
+  }
+  .cc-step-dot.pending {
+    background: #F3F4F6; color: var(--muted);
+  }
+  .cc-step-dot.active {
+    background: #FEF3C7; color: #92400E;
+  }
+  .cc-step-title {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .cc-step-desc {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+
+  /* ── Quick links ── */
+  .cc-links {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 14px 16px;
+  }
+  .cc-link {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    text-decoration: none;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 500;
+    transition: all 120ms;
+  }
+  .cc-link:hover {
+    background: var(--bg);
+    border-color: var(--primary);
+    color: var(--primary);
+  }
+  .cc-link svg {
+    width: 14px; height: 14px;
+    flex-shrink: 0;
+    opacity: 0.6;
+  }
+  .cc-link:hover svg { opacity: 1; }
+
+  /* ── Service status ── */
+  .cc-svc {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    font-size: 12px;
+  }
+  .cc-svc-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .cc-svc-dot.up { background: #10B981; }
+  .cc-svc-dot.down { background: #EF4444; }
+  .cc-svc-dot.unknown { background: #D1D5DB; }
+  .cc-svc-name { color: var(--text); flex: 1; }
+  .cc-svc-info { color: var(--muted); font-size: 11px; }
+</style>
+{% endblock %}
+
 {% block content %}
 <div style="padding:0;">
 
   {% include "tenant_admin/_topnav.html" %}
 
+  {# ── Tenant info bar ── #}
+  {% if tenant %}
+  <div style="margin-bottom:14px;">
+    <p style="font-size:12px; color:var(--muted);">
+      {{ tenant.name or tenant.slug }} &middot;
+      <span style="color:var(--accent); font-weight:500;">{{ tenant.tier | title if tenant.tier else 'Standard' }}</span>
+      &middot; {{ tenant.slug }}
+      &middot; <span style="color:var(--primary); font-weight:500;">{{ tenant.status | upper if tenant.status else 'ACTIVE' }}</span>
+    </p>
+  </div>
+  {% endif %}
 
-
-    <div style="margin-bottom:20px;">
-      {% if tenant %}
-      <p style="font-size:12px; color:var(--muted);">
-        {{ tenant.name or tenant.slug }} &middot;
-        <span style="color:var(--accent); font-weight:500;">{{ tenant.tier | title if tenant.tier else 'Standard' }}</span>
-        &middot; {{ tenant.slug }}
-      </p>
-      {% endif %}
-    </div>
-
-    <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:24px;">
-      <div class="card" style="text-align:center; padding:20px;">
-        <div style="font-size:28px; font-weight:700; color:var(--text);">{{ user_count or 0 }}</div>
-        <div style="font-size:12px; color:var(--muted); margin-top:4px;">Active Users</div>
-      </div>
-      <div class="card" style="text-align:center; padding:20px;">
-        <div style="font-size:16px; font-weight:600; color:var(--accent);">{{ tenant.tier | title if tenant and tenant.tier else '—' }}</div>
-        <div style="font-size:12px; color:var(--muted); margin-top:4px;">Subscription Tier</div>
-      </div>
-      <div class="card" style="text-align:center; padding:20px;">
-        <div style="font-size:14px; font-weight:600; color:var(--primary);">{{ tenant.status | upper if tenant and tenant.status else 'ACTIVE' }}</div>
-        <div style="font-size:12px; color:var(--muted); margin-top:4px;">Status</div>
+  {# ── Stat cards row ── #}
+  <div class="cc-grid" id="cc-stats"
+       hx-get="/tenant-admin/stats" hx-trigger="load" hx-swap="innerHTML">
+    {# Skeleton placeholders #}
+    {% for _ in range(4) %}
+    <div class="cc-stat">
+      <div class="cc-stat-icon" style="background:#F3F4F6;"></div>
+      <div>
+        <div class="cc-stat-value" style="color:#E5E7EB;">—</div>
+        <div class="cc-stat-label">Loading...</div>
       </div>
     </div>
+    {% endfor %}
+  </div>
 
-    <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-      <a href="/tenant-admin/users" class="card" style="text-decoration:none; display:block;">
-        <div style="font-weight:500; color:var(--text); margin-bottom:4px;">Manage Users</div>
-        <div style="font-size:12px; color:var(--muted);">Add or remove attorneys and staff.</div>
-      </a>
-      <a href="/tenant-admin/byok" class="card" style="text-decoration:none; display:block;">
-        <div style="font-weight:500; color:var(--text); margin-bottom:4px;">AI API Keys</div>
-        <div style="font-size:12px; color:var(--muted);">Set your Anthropic or OpenAI API key.</div>
-      </a>
-      <a href="/tenant-admin/connectors" class="card" style="text-decoration:none; display:block;">
-        <div style="font-weight:500; color:var(--text); margin-bottom:4px;">Connectors</div>
-        <div style="font-size:12px; color:var(--muted);">Configure data sources feeding Praesidium.</div>
-      </a>
-      <a href="/tenant-admin/features" class="card" style="text-decoration:none; display:block;">
-        <div style="font-weight:500; color:var(--text); margin-bottom:4px;">Feature Settings</div>
-        <div style="font-size:12px; color:var(--muted);">Enable or disable platform features.</div>
-      </a>
-      <a href="/tenant-admin/ssl" class="card" style="text-decoration:none; display:block;">
-        <div style="font-weight:500; color:var(--text); margin-bottom:4px;">SSL & Domain</div>
-        <div style="font-size:12px; color:var(--muted);">Certificate status and renewal.</div>
-      </a>
+  {# ── Main two-column layout ── #}
+  <div class="cc-main">
+
+    {# ── LEFT: AI Chat ── #}
+    <div class="cc-chat">
+      <div class="cc-chat-header">
+        <svg width="15" height="15" fill="none" stroke="var(--accent)" viewBox="0 0 24 24" stroke-width="1.75">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+        </svg>
+        <span>AI Assistant</span>
+        <span style="font-size:10px; color:var(--muted); margin-left:auto;">MCP Connected</span>
+        <span style="width:6px; height:6px; border-radius:50%; background:#10B981; flex-shrink:0;"></span>
+      </div>
+      <div class="cc-chat-body"
+           hx-get="/widgets/admin_ai_chat" hx-trigger="load" hx-swap="innerHTML">
+        <div style="padding:30px; text-align:center; color:var(--muted); font-size:12px;">Loading AI Assistant...</div>
+      </div>
     </div>
+
+    {# ── RIGHT: Tabbed panel ── #}
+    <div class="cc-right">
+      <div class="cc-right-tabs">
+        <button class="cc-right-tab active" onclick="ccTab(this,'cc-onboard')">Onboarding</button>
+        <button class="cc-right-tab" onclick="ccTab(this,'cc-quick')">Quick Links</button>
+        <button class="cc-right-tab" onclick="ccTab(this,'cc-services')">Services</button>
+      </div>
+      <div class="cc-right-body">
+
+        {# ── Onboarding tab ── #}
+        <div id="cc-onboard" class="cc-tab-panel active"
+             hx-get="/tenant-admin/onboarding-checklist" hx-trigger="load" hx-swap="innerHTML">
+          <div style="padding:20px; text-align:center; color:var(--muted); font-size:12px;">
+            <span class="spinner" style="display:inline-block; margin-bottom:8px;"></span><br>
+            Loading onboarding status...
+          </div>
+        </div>
+
+        {# ── Quick links tab ── #}
+        <div id="cc-quick" class="cc-tab-panel">
+          <div class="cc-links">
+            <a href="/tenant-admin/users" class="cc-link">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+              Manage Users
+            </a>
+            <a href="/tenant-admin/byok" class="cc-link">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg>
+              AI API Keys
+            </a>
+            <a href="/tenant-admin/connectors" class="cc-link">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"/></svg>
+              Connectors
+            </a>
+            <a href="/tenant-admin/features" class="cc-link">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
+              Features
+            </a>
+            <a href="/tenant-admin/folder-reconciliation" class="cc-link">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+              Folder Reconciliation
+            </a>
+            <a href="/tenant-admin/ssl" class="cc-link">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+              SSL &amp; Domain
+            </a>
+            <a href="/tenant-admin/client-matter-cleanup" class="cc-link">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+              Data Quality
+            </a>
+            <a href="/tenant-admin/profile" class="cc-link">
+              <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.75" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+              Firm Profile
+            </a>
+          </div>
+        </div>
+
+        {# ── Services tab ── #}
+        <div id="cc-services" class="cc-tab-panel"
+             hx-get="/tenant-admin/service-status" hx-trigger="load" hx-swap="innerHTML">
+          <div style="padding:20px; text-align:center; color:var(--muted); font-size:12px;">
+            <span class="spinner" style="display:inline-block; margin-bottom:8px;"></span><br>
+            Checking services...
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+
 </div>
-{% endblock %} %}
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+function ccTab(btn, panelId) {
+  btn.parentElement.querySelectorAll('.cc-right-tab').forEach(function(t) { t.classList.remove('active'); });
+  btn.classList.add('active');
+  btn.closest('.cc-right').querySelectorAll('.cc-tab-panel').forEach(function(p) { p.classList.remove('active'); });
+  document.getElementById(panelId).classList.add('active');
+}
+</script>
+{% endblock %}

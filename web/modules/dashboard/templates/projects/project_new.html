@@ -1,0 +1,399 @@
+{% extends "shell.html" %}
+{% block title %}New Project — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block breadcrumb %}
+<a href="/projects">Projects</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">New Project</span>
+{% endblock %}
+
+{% block content %}
+<div style="max-width:640px;">
+
+  <div style="margin-bottom:24px;">
+    <div style="font-size:18px;font-weight:600;color:var(--text);">Create Project</div>
+    <div style="font-size:13px;color:var(--muted);margin-top:4px;">Select a matter, choose a template, and configure your workflow.</div>
+  </div>
+
+  <div id="project-form">
+
+    {# ── Step 1: Matter Selection ── #}
+    <div class="card" style="margin-bottom:16px;" id="step-matter">
+      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:12px;">1. Select Matter</div>
+      <div style="position:relative;">
+        <input type="text" id="matter-search-input" placeholder="Search matters by name, number, or client…"
+               autocomplete="off"
+               hx-get="/projects/api/matter-search" hx-trigger="keyup changed delay:200ms"
+               hx-target="#matter-results" hx-swap="innerHTML"
+               style="width:100%;height:40px;padding:0 12px;border:1px solid var(--border);border-radius:8px;
+                      font-size:13px;font-family:inherit;color:var(--text);background:var(--surface);">
+        <div id="matter-results" style="position:absolute;top:42px;left:0;right:0;z-index:10;
+                                        background:var(--surface);border:1px solid var(--border);border-radius:8px;
+                                        box-shadow:0 4px 20px rgba(0,0,0,0.08);max-height:240px;overflow-y:auto;display:none;"></div>
+      </div>
+      <div id="selected-matter" style="display:none;margin-top:10px;padding:10px 12px;background:var(--bg);
+                                       border-radius:8px;font-size:13px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <div>
+            <span id="selected-matter-name" style="font-weight:500;"></span>
+            <span id="selected-matter-type" style="font-size:11px;color:var(--muted);margin-left:8px;"></span>
+          </div>
+          <button type="button" onclick="clearMatter()" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;">&times;</button>
+        </div>
+      </div>
+      <input type="hidden" id="matter-id" name="matter_id" value="">
+      <input type="hidden" id="matter-type" name="matter_type" value="">
+    </div>
+
+    {# ── Step 2: Template Selection ── #}
+    <div class="card" style="margin-bottom:16px;" id="step-template">
+      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:12px;">2. Choose Template</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;" id="template-grid">
+        {% for t in templates %}
+        <div class="template-option" data-key="{{ t.key }}" data-category="{{ t.category }}"
+             onclick="selectTemplate('{{ t.key }}')"
+             style="padding:12px;border:2px solid var(--border);border-radius:8px;cursor:pointer;
+                    transition:all 120ms;">
+          <div style="font-size:13px;font-weight:500;margin-bottom:2px;">{{ t.name }}</div>
+          <div style="font-size:11px;color:var(--muted);line-height:1.4;">{{ t.description }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      <input type="hidden" id="template-type" name="template_type" value="">
+
+      {# Task preview for selected template #}
+      <div id="task-preview" style="margin-top:12px;display:none;">
+        <div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px;">Default Tasks</div>
+        <div id="task-preview-body"
+             hx-get="/projects/api/template-tasks?template_type=general"
+             hx-trigger="load"
+             hx-swap="innerHTML">
+        </div>
+      </div>
+    </div>
+
+    {# ── Step 3: Project Details ── #}
+    <div class="card" style="margin-bottom:16px;" id="step-details">
+      <div style="font-size:13px;font-weight:600;color:var(--text);margin-bottom:12px;">3. Project Details</div>
+
+      <div style="margin-bottom:12px;">
+        <label style="font-size:12px;font-weight:500;color:var(--text);display:block;margin-bottom:4px;">Title</label>
+        <input type="text" id="project-title" placeholder="e.g., MSJ — Liability Issues"
+               style="width:100%;height:38px;padding:0 12px;border:1px solid var(--border);border-radius:8px;
+                      font-size:13px;font-family:inherit;color:var(--text);background:var(--surface);">
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <label style="font-size:12px;font-weight:500;color:var(--text);display:block;margin-bottom:4px;">Description <span style="color:var(--muted);font-weight:400;">(optional)</span></label>
+        <textarea id="project-description" rows="2" placeholder="Brief description of the project scope…"
+                  style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;
+                         font-size:13px;font-family:inherit;color:var(--text);background:var(--surface);resize:vertical;"></textarea>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+        <div>
+          <label style="font-size:12px;font-weight:500;color:var(--text);display:block;margin-bottom:4px;">Priority</label>
+          <select id="project-priority"
+                  style="width:100%;height:38px;padding:0 8px;border:1px solid var(--border);border-radius:8px;
+                         font-size:13px;font-family:inherit;color:var(--text);background:var(--surface);">
+            <option value="low">Low</option>
+            <option value="medium" selected>Medium</option>
+            <option value="high">High</option>
+            <option value="critical">Critical</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:500;color:var(--text);display:block;margin-bottom:4px;">Due Date <span style="color:var(--muted);font-weight:400;">(optional)</span></label>
+          <input type="date" id="project-due-date"
+                 style="width:100%;height:38px;padding:0 8px;border:1px solid var(--border);border-radius:8px;
+                        font-size:13px;font-family:inherit;color:var(--text);background:var(--surface);">
+        </div>
+      </div>
+
+      {# Team picker #}
+      <div>
+        <label style="font-size:12px;font-weight:500;color:var(--text);display:block;margin-bottom:4px;">Team Members <span style="color:var(--muted);font-weight:400;">(optional)</span></label>
+        <div id="selected-team" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;"></div>
+        <input type="text" id="team-search-input" placeholder="Search by name…"
+               autocomplete="off"
+               hx-get="/projects/api/team-search" hx-trigger="keyup changed delay:200ms, focus"
+               hx-target="#team-results" hx-swap="innerHTML"
+               style="width:100%;height:36px;padding:0 12px;border:1px solid var(--border);border-radius:8px;
+                      font-size:13px;font-family:inherit;color:var(--text);background:var(--surface);">
+        <div id="team-results" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);
+                                      border-radius:8px;margin-top:4px;display:none;background:var(--surface);"></div>
+      </div>
+    </div>
+
+    {# ── Submit ── #}
+    <div style="display:flex;align-items:center;gap:10px;">
+      <button type="button" onclick="createProject()" id="create-btn" class="btn-primary" style="font-size:13px;">
+        Create Project
+      </button>
+      <a href="/projects" class="btn-secondary" style="font-size:13px;">Cancel</a>
+      <span id="create-status" style="font-size:12px;color:var(--muted);"></span>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+let selectedMatterId = '';
+let selectedTemplateType = '';
+let selectedTeamIds = new Set();
+
+// ── Matter picker ──
+const matterInput = document.getElementById('matter-search-input');
+const matterResults = document.getElementById('matter-results');
+
+matterInput.addEventListener('focus', () => { if (matterResults.innerHTML.trim()) matterResults.style.display = 'block'; });
+matterInput.addEventListener('blur', () => { setTimeout(() => matterResults.style.display = 'none', 200); });
+
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target.id === 'matter-results' && e.detail.target.innerHTML.trim()) {
+    matterResults.style.display = 'block';
+  }
+});
+
+function selectMatter(id, name, mtype) {
+  selectedMatterId = id;
+  document.getElementById('matter-id').value = id;
+  document.getElementById('matter-type').value = mtype;
+  document.getElementById('selected-matter').style.display = 'block';
+  document.getElementById('selected-matter-name').textContent = name;
+  document.getElementById('selected-matter-type').textContent = mtype ? mtype.replace(/_/g, ' ') : '';
+  matterInput.style.display = 'none';
+  matterResults.style.display = 'none';
+
+  // Auto-suggest title based on matter + template
+  autoTitle();
+}
+
+function clearMatter() {
+  selectedMatterId = '';
+  document.getElementById('matter-id').value = '';
+  document.getElementById('matter-type').value = '';
+  document.getElementById('selected-matter').style.display = 'none';
+  matterInput.style.display = 'block';
+  matterInput.value = '';
+  matterInput.focus();
+}
+
+// ── Template selection ──
+function selectTemplate(key) {
+  selectedTemplateType = key;
+  document.getElementById('template-type').value = key;
+
+  // Visual highlight
+  document.querySelectorAll('.template-option').forEach(el => {
+    if (el.dataset.key === key) {
+      el.style.borderColor = 'var(--primary)';
+      el.style.background = '#EFF6FF';
+    } else {
+      el.style.borderColor = 'var(--border)';
+      el.style.background = 'transparent';
+    }
+  });
+
+  // Load task preview
+  const preview = document.getElementById('task-preview');
+  preview.style.display = 'block';
+  htmx.ajax('GET', '/projects/api/template-tasks?template_type=' + key, {
+    target: '#task-preview-body', swap: 'innerHTML'
+  });
+
+  autoTitle();
+}
+
+// ── Auto-generate title ──
+function autoTitle() {
+  const titleInput = document.getElementById('project-title');
+  if (titleInput.value.trim()) return; // Don't overwrite user input
+
+  const matterName = document.getElementById('selected-matter-name').textContent.trim();
+  const tmplNames = {
+    'simple_motion': 'Motion Draft',
+    'collaborative_motion': 'Collaborative Motion',
+    'contract_assembly': 'Contract Assembly',
+    'deal_room': 'Deal Room',
+    'ediscovery_review': 'eDiscovery Review',
+    'discovery_requests': 'Discovery Requests',
+    'general': 'Project',
+  };
+  const tmplName = tmplNames[selectedTemplateType] || '';
+
+  if (matterName && tmplName) {
+    // Extract short matter name (first ~40 chars)
+    const shortMatter = matterName.length > 40 ? matterName.substring(0, 40) + '…' : matterName;
+    titleInput.value = tmplName + ' — ' + shortMatter;
+  }
+}
+
+// ── Team picker ──
+const teamInput = document.getElementById('team-search-input');
+const teamResults = document.getElementById('team-results');
+
+teamInput.addEventListener('focus', () => {
+  if (teamResults.innerHTML.trim()) teamResults.style.display = 'block';
+  else htmx.ajax('GET', '/projects/api/team-search?q=', { target: '#team-results', swap: 'innerHTML' });
+});
+teamInput.addEventListener('blur', () => { setTimeout(() => teamResults.style.display = 'none', 200); });
+
+document.body.addEventListener('htmx:afterSwap', function(e) {
+  if (e.detail.target.id === 'team-results' && e.detail.target.innerHTML.trim()) {
+    teamResults.style.display = 'block';
+    // Re-check boxes for already-selected members
+    selectedTeamIds.forEach(uid => {
+      const cb = teamResults.querySelector('input[value="' + uid + '"]');
+      if (cb) cb.checked = true;
+    });
+  }
+});
+
+function updateTeam() {
+  selectedTeamIds.clear();
+  document.querySelectorAll('#team-results input[name="team_member"]:checked').forEach(cb => {
+    selectedTeamIds.add(parseInt(cb.value));
+  });
+
+  // Render selected chips
+  const container = document.getElementById('selected-team');
+  container.innerHTML = '';
+  document.querySelectorAll('#team-results input[name="team_member"]:checked').forEach(cb => {
+    const label = cb.closest('label');
+    const name = label ? label.querySelector('div[style*="font-weight:500"]').textContent : cb.value;
+    container.innerHTML += '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;' +
+      'background:#EFF6FF;border-radius:12px;font-size:11px;font-weight:500;color:var(--primary);">' +
+      name + '</span>';
+  });
+}
+
+// ── Create project ──
+async function createProject() {
+  const btn = document.getElementById('create-btn');
+  const status = document.getElementById('create-status');
+
+  const matterId = document.getElementById('matter-id').value;
+  const templateType = document.getElementById('template-type').value;
+  const title = document.getElementById('project-title').value.trim();
+
+  if (!matterId) { status.textContent = 'Please select a matter.'; status.style.color = '#991B1B'; return; }
+  if (!title) { status.textContent = 'Please enter a project title.'; status.style.color = '#991B1B'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+  status.textContent = '';
+
+  try {
+    const resp = await fetch('/api/projects', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        matter_id: matterId,
+        template_type: templateType || 'general',
+        title: title,
+        description: document.getElementById('project-description').value.trim() || null,
+        priority: document.getElementById('project-priority').value,
+        due_date: document.getElementById('project-due-date').value || null,
+        members: Array.from(selectedTeamIds).map(uid => ({ user_id: uid, role: 'member' })),
+      }),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.detail || 'Failed to create project');
+    }
+
+    const data = await resp.json();
+    const projectId = data.id;
+
+    // Seed default tasks from template if template selected
+    if (templateType) {
+      await seedTemplateTasks(projectId, matterId, templateType);
+    }
+
+    // Redirect to project detail
+    window.location.href = '/projects/' + projectId;
+  } catch (err) {
+    status.textContent = err.message;
+    status.style.color = '#991B1B';
+    btn.disabled = false;
+    btn.textContent = 'Create Project';
+  }
+}
+
+async function seedTemplateTasks(projectId, matterId, templateType) {
+  // Fetch template default tasks from the known set
+  const templateTasks = {
+    'simple_motion': [
+      {title: 'Research legal standard', task_type: 'research', priority: 'high'},
+      {title: 'Draft motion', task_type: 'drafting', priority: 'high'},
+      {title: 'Assemble exhibits', task_type: 'assembly', priority: 'medium'},
+      {title: 'Final review', task_type: 'review', priority: 'high'},
+      {title: 'File with court', task_type: 'filing', priority: 'critical'},
+    ],
+    'collaborative_motion': [
+      {title: 'Assign research sections', task_type: 'coordination', priority: 'high'},
+      {title: 'Draft argument sections', task_type: 'drafting', priority: 'high'},
+      {title: 'Peer review drafts', task_type: 'review', priority: 'high'},
+      {title: 'Merge and harmonize', task_type: 'drafting', priority: 'high'},
+      {title: 'Assemble exhibits', task_type: 'assembly', priority: 'medium'},
+      {title: 'Senior partner review', task_type: 'review', priority: 'critical'},
+      {title: 'File with court', task_type: 'filing', priority: 'critical'},
+    ],
+    'contract_assembly': [
+      {title: 'Select template / exemplar', task_type: 'preparation', priority: 'high'},
+      {title: 'Draft contract terms', task_type: 'drafting', priority: 'high'},
+      {title: 'Redline review cycle', task_type: 'review', priority: 'high'},
+      {title: 'Attach exhibits and schedules', task_type: 'assembly', priority: 'medium'},
+      {title: 'Final approval', task_type: 'review', priority: 'critical'},
+      {title: 'Circulate for execution', task_type: 'delivery', priority: 'critical'},
+    ],
+    'deal_room': [
+      {title: 'Organize data room folders', task_type: 'preparation', priority: 'high'},
+      {title: 'Upload initial document set', task_type: 'assembly', priority: 'high'},
+      {title: 'Configure access permissions', task_type: 'configuration', priority: 'high'},
+      {title: 'Share portal with counterparty', task_type: 'delivery', priority: 'critical'},
+    ],
+    'ediscovery_review': [
+      {title: 'Define search terms and custodians', task_type: 'preparation', priority: 'high'},
+      {title: 'Run collections', task_type: 'processing', priority: 'high'},
+      {title: 'First-pass review', task_type: 'review', priority: 'high'},
+      {title: 'Privilege review', task_type: 'review', priority: 'critical'},
+      {title: 'QC and production', task_type: 'review', priority: 'high'},
+    ],
+    'discovery_requests': [
+      {title: 'Review opposing pleadings', task_type: 'research', priority: 'high'},
+      {title: 'Draft discovery requests', task_type: 'drafting', priority: 'high'},
+      {title: 'Attorney review', task_type: 'review', priority: 'high'},
+      {title: 'Serve on opposing counsel', task_type: 'delivery', priority: 'critical'},
+    ],
+  };
+
+  const tasks = templateTasks[templateType] || [];
+  for (let i = 0; i < tasks.length; i++) {
+    try {
+      await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...tasks[i],
+          matter_id: matterId,
+          project_id: projectId,
+          sort_order: (i + 1) * 100,
+          source: 'template',
+        }),
+      });
+    } catch (e) { /* best-effort seeding */ }
+  }
+}
+
+// ── Pre-select template from URL param ──
+document.addEventListener('DOMContentLoaded', function() {
+  const params = new URLSearchParams(window.location.search);
+  const tmpl = params.get('template');
+  if (tmpl) selectTemplate(tmpl);
+});
+</script>
+{% endblock %}

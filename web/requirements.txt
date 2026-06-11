@@ -50,9 +50,15 @@ pytesseract>=0.3.10
 pdfplumber>=0.11.0
 Pillow>=10.0
 python-docx>=1.1.0
+pdf2image>=0.17.0
+beautifulsoup4>=4.12.0
 openpyxl>=3.1.0
 extract-msg>=0.48.0
 PyMuPDF>=1.24.0
+
+# ─── Email Normalization ─────────────────────────────────
+email-reply-parser>=0.5,<1.0
+html2text>=2024.0
 
 # ─── NLP / Similarity ────────────────────────────────────────
 faiss-cpu
@@ -71,3 +77,14 @@ pytest>=8.0,<9.0
 pytest-asyncio>=0.23,<1.0
 pytest-cov>=5.0,<6.0
 exchangelib>=5.0,<6.0
+requests-ntlm
+requests-ntlm
+docx-revisions>=0.1.5
+
+# ─── Timeslips───────────────────────────────────────────────
+fdb>=2.0,<3.0
+docker>=7.0,<8.0
+langdetect>=1.0
+
+# ─── eDiscovery PST ingestion (pypff primary; readpst fallback) ───
+libpff-python==20231205

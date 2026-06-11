@@ -1,0 +1,40 @@
+# Praesidium SMTP Relay — Postfix in a container
+#
+# Outbound-only relay through Exchange or external spam provider.
+# No inbox, no local delivery.
+#
+# Usage:
+#   docker compose -f docker-compose.smtp.yml up -d
+
+services:
+  smtp:
+    image: boky/postfix:latest
+    container_name: praesidium-smtp
+    restart: unless-stopped
+    environment:
+      - RELAYHOST=${SMTP_RELAY_HOST:-exchange.hjmmlegal.com}:${SMTP_RELAY_PORT:-25}
+      - ALLOWED_SENDER_DOMAINS=${SMTP_FROM_DOMAIN:-hjmmlegal.com}
+      - RELAYHOST_USERNAME=${SMTP_RELAY_USER:-}
+      - RELAYHOST_PASSWORD=${SMTP_RELAY_PASS:-}
+      - HOSTNAME=mail.${SMTP_FROM_DOMAIN:-hjmmlegal.com}
+      - SMTP_TLS=yes
+      - SMTP_TLS_SECURITY_LEVEL=may
+    volumes:
+      - smtp-spool:/var/spool/postfix
+    networks:
+      praesidium-internal:
+        ipv4_address: 172.28.0.16
+    healthcheck:
+      test: ["CMD", "postfix", "status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  smtp-spool:
+    driver: local
+
+networks:
+  praesidium-internal:
+    name: praesidium-internal
+    external: true

@@ -1,0 +1,17 @@
+{% extends "shell.html" %}
+{% block title %}{{ matter.matter_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/billing">Billing</a>
+<span class="breadcrumb-sep">&rsaquo;</span>
+<a href="/billing/clients/{{ matter.client_id }}">{{ client_name }}</a>
+<span class="breadcrumb-sep">&rsaquo;</span>
+<span class="breadcrumb-current">{{ matter.matter_name }}</span>
+{% endblock %}
+{% block content %}
+<div id="billing-matter-detail-root" style="padding: 16px 20px;"></div>
+<script>
+  window.__MATTER_ID = "{{ matter_id }}";
+  window.__MATTER_DATA = {{ matter | tojson }};
+</script>
+<script type="module" src="/static/js/billing-matter-detail.js"></script>
+{% endblock %}

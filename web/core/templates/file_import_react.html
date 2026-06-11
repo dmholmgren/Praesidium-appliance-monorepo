@@ -1,0 +1,11 @@
+{% extends "shell.html" %}
+{% block title %}File Import — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/tenant-admin/" style="color:var(--muted);text-decoration:none;">Firm Administration</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">File Import</span>
+{% endblock %}
+{% block content %}
+<div id="file-import-root"></div>
+<script type="module" src="/static/js/file-import.js?v=8"></script>
+{% endblock %}

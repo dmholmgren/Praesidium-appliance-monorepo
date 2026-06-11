@@ -1,0 +1,14 @@
+{% extends "shell.html" %}
+{% block title %}Documents — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Documents{% endblock %}
+
+{% block content %}
+<div id="dms-react-root" style="min-height:400px;">
+  <div style="padding:48px; text-align:center; color:var(--muted); font-size:13px;">
+    <div class="spinner" style="margin:0 auto 12px;"></div>
+    Loading Documents…
+  </div>
+</div>
+<script type="module" src="/static/js/dms-home.js"></script>
+<style>@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}</style>
+{% endblock %}

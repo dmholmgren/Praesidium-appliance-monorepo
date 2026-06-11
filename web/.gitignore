@@ -39,3 +39,11 @@ htmlcov/
 # Database dumps
 *.sql
 *.dump
+
+# Checkpoint hardening 2026-06-11
+*.bak*
+*.bak-*
+*.bak.*
+.env*
+!.env*.template
+*~

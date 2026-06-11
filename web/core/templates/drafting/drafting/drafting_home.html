@@ -1,0 +1,497 @@
+{% extends "billing/layout.html" %}
+{% block title %}{{ brand.platform_name if brand else 'Praesidium' }} — Drafting{% endblock %}
+{% block page_title %}Document Drafting{% endblock %}
+
+{% block head_extra %}
+<style>
+  /* ── Layout ─────────────────────────────────────────────────────────── */
+  .drafting-grid {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 20px;
+    max-width: 1200px;
+    min-height: calc(100vh - 200px);
+  }
+  @media (max-width: 900px) {
+    .drafting-grid { grid-template-columns: 1fr; min-height: auto; }
+  }
+  .drafting-sidebar { display: flex; flex-direction: column; gap: 16px; }
+  .drafting-main { display: flex; flex-direction: column; min-height: 0; }
+
+  /* ── Section headers ────────────────────────────────────────────────── */
+  .section-title {
+    font-family: 'Lora', serif; font-size: 15px; font-weight: 500;
+    color: var(--text); margin: 0 0 4px 0;
+  }
+  .section-subtitle { font-size: 11px; color: var(--muted); margin: 0 0 12px 0; }
+
+  /* ── Matter picker ──────────────────────────────────────────────────── */
+  .matter-picker-input {
+    width: 100%; padding: 9px 12px; font-size: 13px;
+    border: 1px solid var(--border); border-radius: 6px;
+    font-family: 'DM Sans', sans-serif; background: var(--surface);
+    color: var(--text); transition: border-color 120ms;
+  }
+  .matter-picker-input:focus {
+    outline: none; border-color: var(--accent, #C8923A);
+    box-shadow: 0 0 0 2px rgba(200, 146, 58, 0.12);
+  }
+  .matter-selected {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: 6px; font-size: 13px;
+  }
+  .matter-selected .matter-label { flex: 1; font-weight: 500; color: var(--text); }
+  .matter-selected .matter-client { font-size: 11px; color: var(--muted); }
+  .matter-clear-btn {
+    background: none; border: none; cursor: pointer; font-size: 14px;
+    color: var(--muted); padding: 2px 6px; border-radius: 4px;
+    transition: background 100ms;
+  }
+  .matter-clear-btn:hover { background: var(--border); color: var(--text); }
+
+  /* ── Exemplar ───────────────────────────────────────────────────────── */
+  .exemplar-search {
+    width: 100%; padding: 7px 10px; font-size: 12px;
+    border: 1px solid var(--border); border-radius: 6px;
+    font-family: 'DM Sans', sans-serif; margin-bottom: 8px;
+  }
+  .exemplar-search:focus { outline: none; border-color: var(--accent, #C8923A); }
+  .exemplar-list { max-height: 200px; overflow-y: auto; }
+  .exemplar-selected-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .exemplar-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 10px; background: #DBEAFE; color: #1E40AF;
+    border-radius: 12px; font-size: 11px; font-weight: 500;
+  }
+  .exemplar-chip button {
+    background: none; border: none; cursor: pointer; font-size: 12px;
+    color: #1E40AF; padding: 0; line-height: 1; opacity: 0.6;
+  }
+  .exemplar-chip button:hover { opacity: 1; }
+
+  /* ── Drop zone ──────────────────────────────────────────────────────── */
+  .goby-drop {
+    border: 2px dashed var(--border); border-radius: 8px;
+    padding: 20px; text-align: center; color: var(--muted); font-size: 12px;
+    transition: border-color 150ms, background 150ms;
+    cursor: pointer; position: relative;
+  }
+  .goby-drop.drag-over {
+    border-color: var(--accent, #C8923A);
+    background: rgba(200, 146, 58, 0.04);
+  }
+  .goby-drop-icon { font-size: 24px; margin-bottom: 6px; opacity: 0.5; }
+  .goby-drop input[type="file"] {
+    position: absolute; inset: 0; opacity: 0; cursor: pointer;
+  }
+  .goby-file-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+
+  /* ── Chat ────────────────────────────────────────────────────────────── */
+  .chat-container { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .chat-history {
+    flex: 1; overflow-y: auto; padding: 16px;
+    display: flex; flex-direction: column; gap: 12px; min-height: 280px;
+  }
+  .chat-empty {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    color: var(--muted); font-size: 13px; text-align: center; padding: 40px 20px;
+  }
+  .chat-empty-icon { font-size: 28px; margin-bottom: 8px; opacity: 0.4; }
+  .chat-msg { display: flex; }
+  .chat-msg-user { justify-content: flex-end; }
+  .chat-msg-system { justify-content: flex-start; }
+  .chat-bubble { max-width: 75%; padding: 10px 14px; font-size: 13px; line-height: 1.5; }
+  .chat-bubble-user {
+    background: var(--primary); color: #fff;
+    border-radius: 12px 12px 2px 12px;
+  }
+  .chat-bubble-system {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px 12px 12px 2px; color: var(--text);
+  }
+  .chat-ts { font-size: 10px; opacity: 0.6; margin-top: 4px; }
+  .chat-input-bar {
+    display: flex; gap: 8px; padding: 12px 16px;
+    border-top: 1px solid var(--border); background: var(--surface);
+  }
+  .chat-input {
+    flex: 1; padding: 9px 12px; font-size: 13px;
+    border: 1px solid var(--border); border-radius: 8px;
+    font-family: 'DM Sans', sans-serif; resize: none;
+    min-height: 38px; max-height: 120px;
+  }
+  .chat-input:focus {
+    outline: none; border-color: var(--accent, #C8923A);
+    box-shadow: 0 0 0 2px rgba(200, 146, 58, 0.12);
+  }
+  .chat-send {
+    padding: 8px 16px; background: var(--primary); color: #fff;
+    border: none; border-radius: 8px; font-size: 13px; font-weight: 500;
+    cursor: pointer; font-family: 'DM Sans', sans-serif;
+    transition: opacity 120ms; white-space: nowrap; align-self: flex-end;
+  }
+  .chat-send:hover { opacity: 0.88; }
+  .chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* ── Doc type select ────────────────────────────────────────────────── */
+  .doc-type-select {
+    width: 100%; padding: 7px 10px; font-size: 12px;
+    border: 1px solid var(--border); border-radius: 6px;
+    font-family: 'DM Sans', sans-serif; color: var(--text);
+    background: var(--surface);
+  }
+  .doc-type-select:focus { outline: none; border-color: var(--accent, #C8923A); }
+</style>
+{% endblock %}
+
+{% block billing_content %}
+
+{# ── Page header ──────────────────────────────────────────────────────────── #}
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+  <div>
+    <h2 style="font-family:'Lora',serif; font-size:20px; font-weight:600;
+               color:var(--text); margin:0 0 4px 0;">Document Drafting</h2>
+    <p style="font-size:12px; color:var(--muted); margin:0;">
+      AI-assisted drafting with matter context, exemplars, and go-by documents
+    </p>
+  </div>
+</div>
+
+{# ── Main grid ────────────────────────────────────────────────────────────── #}
+<div class="drafting-grid">
+
+  {# ════════ LEFT SIDEBAR — Matter picker + Exemplars + Go-bys ════════════ #}
+  <div class="drafting-sidebar">
+
+    {# ── 1. Matter Picker ─────────────────────────────────────────────── #}
+    <div class="card" style="padding:16px;">
+      <h3 class="section-title">Working Matter</h3>
+      <p class="section-subtitle">Select the matter you are drafting for</p>
+
+      <div id="matter-picker-search">
+        <input type="text" id="matter-search-input"
+               class="matter-picker-input"
+               placeholder="Search by name, number, or client…"
+               autocomplete="off"
+               list="matter-search-options"
+               hx-get="/drafting/api/matter-search"
+               hx-trigger="input changed delay:250ms"
+               hx-target="#matter-search-options"
+               hx-swap="innerHTML"
+               hx-include="[name='matter_q']"
+               name="matter_q">
+        <datalist id="matter-search-options"></datalist>
+      </div>
+
+      <div id="matter-selected-card" style="display:none;">
+        <div class="matter-selected">
+          <div style="flex:1;">
+            <div class="matter-label" id="sel-matter-label"></div>
+            <div class="matter-client" id="sel-matter-client"></div>
+          </div>
+          <button type="button" class="matter-clear-btn"
+                  onclick="clearMatter()" title="Change matter">&times;</button>
+        </div>
+      </div>
+
+      <input type="hidden" id="matter-id-value" name="matter_id" value="">
+
+      <div style="margin-top:10px;">
+        <label style="display:block; font-size:11px; color:var(--muted);
+                      text-transform:uppercase; letter-spacing:.05em; margin-bottom:4px;">
+          Document Type
+        </label>
+        <select id="doc-type-select" class="doc-type-select" name="document_type">
+          <option value="">— select —</option>
+          {% for val, label in document_types %}
+          <option value="{{ val }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+
+    {# ── 2. Exemplar Matters ──────────────────────────────────────────── #}
+    <div class="card" style="padding:16px;">
+      <h3 class="section-title">Exemplar Matters</h3>
+      <p class="section-subtitle">
+        Prior matters whose documents should inform this draft
+      </p>
+
+      <div id="exemplar-chips" class="exemplar-selected-chips"></div>
+
+      <input type="text" id="exemplar-search-input"
+             class="exemplar-search"
+             placeholder="Search matters to add as exemplars…"
+             autocomplete="off"
+             hx-get="/drafting/api/exemplar-matters"
+             hx-trigger="input changed delay:300ms"
+             hx-target="#exemplar-results"
+             hx-swap="innerHTML"
+             hx-include="[name='exemplar_q'],[name='exemplar_exclude']"
+             name="exemplar_q">
+      <input type="hidden" name="exemplar_exclude" id="exemplar-exclude" value="">
+
+      <div id="exemplar-results" class="exemplar-list"></div>
+    </div>
+
+    {# ── 3. Go-By Drop Zone ───────────────────────────────────────────── #}
+    <div class="card" style="padding:16px;">
+      <h3 class="section-title">Go-By Documents</h3>
+      <p class="section-subtitle">Upload reference documents to guide the draft</p>
+
+      <div class="goby-drop" id="goby-drop-zone">
+        <div class="goby-drop-icon">&#128206;</div>
+        <div>Drop files here or <span style="color:var(--primary); font-weight:500;">browse</span></div>
+        <div style="font-size:10px; margin-top:4px; color:var(--muted);">
+          PDF, DOCX, TXT — up to 50 MB each
+        </div>
+        <input type="file" id="goby-file-input" multiple
+               accept=".pdf,.doc,.docx,.txt,.rtf,.xls,.xlsx">
+      </div>
+
+      <div id="goby-file-list" class="goby-file-list"></div>
+    </div>
+  </div>
+
+  {# ════════ RIGHT MAIN — Chat interface ═════════════════════════════════ #}
+  <div class="drafting-main">
+    <div class="card" style="padding:0; flex:1; display:flex; flex-direction:column;
+                              min-height:0; overflow:hidden;">
+
+      {# Chat header #}
+      <div style="padding:14px 16px; border-bottom:1px solid var(--border);
+                  display:flex; align-items:center; justify-content:space-between;">
+        <div>
+          <h3 class="section-title" style="margin:0;">Drafting Assistant</h3>
+          <p style="font-size:11px; color:var(--muted); margin:2px 0 0 0;">
+            Describe what you need drafted — the AI will use your matter context,
+            exemplars, and go-bys
+          </p>
+        </div>
+        <span id="chat-status" class="badge badge-green" style="font-size:10px;">Ready</span>
+      </div>
+
+      {# Chat history #}
+      <div class="chat-history" id="chat-history">
+        <div class="chat-empty" id="chat-empty-state">
+          <div>
+            <div class="chat-empty-icon">&#128172;</div>
+            <div style="font-weight:500; margin-bottom:4px;">Start a conversation</div>
+            <div style="font-size:12px;">
+              Select a matter, add exemplars or go-bys, then describe<br>
+              the document you need.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {# Chat input #}
+      <div class="chat-input-bar">
+        <textarea id="chat-input" class="chat-input" rows="1"
+                  placeholder="Describe what you need drafted…"
+                  onkeydown="handleChatKey(event)"></textarea>
+        <button type="button" class="chat-send" id="chat-send-btn"
+                onclick="sendChat()">
+          Send
+        </button>
+      </div>
+    </div>
+
+    {# ── Recent sessions ─────────────────────────────────────────────── #}
+    {% if recent_sessions %}
+    <div class="card" style="padding:14px; margin-top:16px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+        <h3 class="section-title" style="margin:0;">Recent Sessions</h3>
+        <span class="badge badge-gray">{{ recent_sessions | length }}</span>
+      </div>
+      <table class="data-table" style="margin:0;">
+        <thead>
+          <tr><th>Title</th><th>Type</th><th>Matter</th><th>Status</th></tr>
+        </thead>
+        <tbody>
+          {% for s in recent_sessions %}
+          <tr>
+            <td style="font-weight:500;">{{ s.title or 'Untitled' }}</td>
+            <td style="font-size:12px;">{{ (s.document_type or '—') | replace('_', ' ') | title }}</td>
+            <td style="font-size:12px; color:var(--muted);">
+              {{ s.matter_number or '' }} {{ s.matter_name or '—' }}
+            </td>
+            <td>
+              {% if s.status == 'active' %}<span class="badge badge-blue">Active</span>
+              {% elif s.status == 'complete' %}<span class="badge badge-green">Complete</span>
+              {% else %}<span class="badge badge-gray">{{ s.status or '—' }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+// ═════════════════════════════════════════════════════════════════════════
+// Matter Picker
+// ═════════════════════════════════════════════════════════════════════════
+var selectedMatterId = '';
+var selectedMatterLabel = '';
+
+document.getElementById('matter-search-input').addEventListener('input', function(e) {
+  var input = e.target;
+  var opts = document.querySelectorAll('#matter-search-options option');
+  for (var i = 0; i < opts.length; i++) {
+    var optLabel = opts[i].getAttribute('data-label') || opts[i].textContent;
+    if (input.value === optLabel || input.value === opts[i].value) {
+      selectMatter(opts[i].value, optLabel);
+      return;
+    }
+  }
+});
+
+function selectMatter(id, label) {
+  selectedMatterId = id;
+  selectedMatterLabel = label;
+  document.getElementById('matter-id-value').value = id;
+  var parts = label.split(' -- ');
+  document.getElementById('sel-matter-label').textContent = parts[0] || label;
+  document.getElementById('sel-matter-client').textContent = parts[1] || '';
+  document.getElementById('matter-picker-search').style.display = 'none';
+  document.getElementById('matter-selected-card').style.display = 'block';
+  document.getElementById('exemplar-exclude').value = id;
+}
+
+function clearMatter() {
+  selectedMatterId = '';
+  selectedMatterLabel = '';
+  document.getElementById('matter-id-value').value = '';
+  document.getElementById('matter-picker-search').style.display = 'block';
+  document.getElementById('matter-selected-card').style.display = 'none';
+  document.getElementById('matter-search-input').value = '';
+  document.getElementById('exemplar-exclude').value = '';
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Exemplar Matters
+// ═════════════════════════════════════════════════════════════════════════
+var exemplarMatters = {};
+
+function toggleExemplar(checkbox) {
+  var id = checkbox.value;
+  var row = checkbox.closest('label');
+  var nameEl = row ? row.querySelector('[style*="font-weight:500"]') : null;
+  var label = nameEl ? nameEl.textContent.trim() : id.substring(0, 8);
+  if (checkbox.checked) { exemplarMatters[id] = label; }
+  else { delete exemplarMatters[id]; }
+  renderExemplarChips();
+}
+
+function removeExemplar(id) {
+  delete exemplarMatters[id];
+  var cb = document.querySelector('input[name="exemplar_matter_ids"][value="' + id + '"]');
+  if (cb) cb.checked = false;
+  renderExemplarChips();
+}
+
+function renderExemplarChips() {
+  var container = document.getElementById('exemplar-chips');
+  var html = '';
+  for (var id in exemplarMatters) {
+    html += '<span class="exemplar-chip">'
+          + exemplarMatters[id]
+          + ' <button type="button" onclick="removeExemplar(\'' + id + '\')" title="Remove">&times;</button>'
+          + '</span>';
+  }
+  container.innerHTML = html;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Go-By Drop Zone
+// ═════════════════════════════════════════════════════════════════════════
+var dropZone = document.getElementById('goby-drop-zone');
+var fileInput = document.getElementById('goby-file-input');
+var fileList = document.getElementById('goby-file-list');
+
+['dragenter', 'dragover'].forEach(function(evt) {
+  dropZone.addEventListener(evt, function(e) {
+    e.preventDefault(); e.stopPropagation();
+    dropZone.classList.add('drag-over');
+  });
+});
+['dragleave', 'drop'].forEach(function(evt) {
+  dropZone.addEventListener(evt, function(e) {
+    e.preventDefault(); e.stopPropagation();
+    dropZone.classList.remove('drag-over');
+  });
+});
+dropZone.addEventListener('drop', function(e) {
+  if (e.dataTransfer.files.length > 0) uploadGoByFiles(e.dataTransfer.files);
+});
+fileInput.addEventListener('change', function() {
+  if (fileInput.files.length > 0) {
+    uploadGoByFiles(fileInput.files);
+    fileInput.value = '';
+  }
+});
+
+function uploadGoByFiles(files) {
+  var fd = new FormData();
+  for (var i = 0; i < files.length; i++) fd.append('files', files[i]);
+  fetch('/drafting/api/upload-goby', { method: 'POST', body: fd })
+    .then(function(r) { return r.text(); })
+    .then(function(html) { fileList.insertAdjacentHTML('beforeend', html); })
+    .catch(function(err) { console.error('Upload error:', err); });
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// Chat
+// ═════════════════════════════════════════════════════════════════════════
+var chatHistory = document.getElementById('chat-history');
+var chatInput = document.getElementById('chat-input');
+var chatSendBtn = document.getElementById('chat-send-btn');
+var chatEmpty = document.getElementById('chat-empty-state');
+
+function handleChatKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+}
+
+function sendChat() {
+  var msg = chatInput.value.trim();
+  if (!msg) return;
+  if (chatEmpty) chatEmpty.style.display = 'none';
+
+  var fd = new FormData();
+  fd.append('message', msg);
+  fd.append('matter_id', selectedMatterId);
+  fd.append('document_type', document.getElementById('doc-type-select').value);
+  fd.append('exemplar_matter_ids', Object.keys(exemplarMatters).join(','));
+
+  chatInput.value = '';
+  chatInput.style.height = 'auto';
+  chatSendBtn.disabled = true;
+
+  fetch('/drafting/api/chat', { method: 'POST', body: fd })
+    .then(function(r) { return r.text(); })
+    .then(function(html) {
+      chatHistory.insertAdjacentHTML('beforeend', html);
+      chatHistory.scrollTop = chatHistory.scrollHeight;
+      chatSendBtn.disabled = false;
+      chatInput.focus();
+    })
+    .catch(function(err) {
+      console.error('Chat error:', err);
+      chatSendBtn.disabled = false;
+    });
+}
+
+chatInput.addEventListener('input', function() {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 120) + 'px';
+});
+</script>
+{% endblock %}

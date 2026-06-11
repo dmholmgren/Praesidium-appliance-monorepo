@@ -476,7 +476,7 @@ def process_lane(tenant_id, collection_id, lane, redo=False, limit=0, dry_run=Fa
         cur = conn.cursor()
         coll = _resolve_collection(cur, tenant, collection_id)
         root = Path(coll["storage_path"])
-        outdir = str(root / "working" / lane)
+        outdir = str(root / "renditions" / lane)  # durable: emboss/export source
         units = _select_pending(cur, tenant, collection_id, status, limit)
         logger.info("%s lane %s: %d pending unit(s) dry=%s", lane, collection_id, len(units), dry_run)
         for (doc_id, doc_type, native_path, file_hash) in units:
@@ -490,6 +490,11 @@ def process_lane(tenant_id, collection_id, lane, redo=False, limit=0, dry_run=Fa
                         else _ocr_to_pdf(str(abs_path), doc_type, out_pdf))
                 if not made or not os.path.exists(out_pdf):
                     raise RuntimeError("%s produced no pdf" % lane)
+                if not dry_run:
+                    cur.execute(
+                        "UPDATE ediscovery_documents SET rendition_path=%s, "
+                        "rendition_kind=%s WHERE id=CAST(%s AS uuid)",
+                        ("renditions/%s/%s.pdf" % (lane, doc_id), lane, doc_id))
                 result = extract_pdf_with_geometry(out_pdf)
                 dur = int((time.time() - t0) * 1000)
                 if result is None or not (result.canonical_text or "").strip():

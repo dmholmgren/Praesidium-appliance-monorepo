@@ -1,0 +1,149 @@
+{# ── Assign-to-Client modal ──────────────────────────────────────────────
+   Loaded into #assign-client-modal-slot via HTMX.
+   Submitting POSTs to /contacts/{id}/assign-client which returns the
+   _assign_client_response.html partial that closes the modal and
+   refreshes the linked-matters list.
+─────────────────────────────────────────────────────────────────────── #}
+<div id="assign-client-modal" class="card"
+     style="position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+            z-index:1000; max-width:560px; width:92%; max-height:85vh;
+            overflow-y:auto; box-shadow:0 12px 40px rgba(0,0,0,0.25);">
+
+  {# Backdrop #}
+  <div style="position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:-1;"
+       onclick="document.getElementById('assign-client-modal-slot').innerHTML='';"></div>
+
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+    <h3 style="font-family:'Lora',serif; font-size:17px; font-weight:500;
+               color:var(--text); margin:0;">
+      Assign “{{ contact.full_name }}” to a Client
+    </h3>
+    <button type="button"
+            onclick="document.getElementById('assign-client-modal-slot').innerHTML='';"
+            style="background:none; border:none; color:var(--muted); font-size:20px;
+                   cursor:pointer; padding:0; line-height:1;">×</button>
+  </div>
+
+  <form hx-post="/contacts/{{ contact.id }}/assign-client"
+        hx-target="#assign-client-modal-slot"
+        hx-swap="innerHTML">
+
+    {# ── Step 1: Pick or create a client ───────────────────────────────── #}
+    <div style="margin-bottom:18px;">
+      <div style="font-size:11px; color:var(--muted); text-transform:uppercase;
+                  letter-spacing:.05em; margin-bottom:6px;">
+        1. Client
+      </div>
+      <input type="text" list="assign-client-options" name="client_picker"
+             placeholder="Search existing clients (≥2 chars)…"
+             hx-get="/contacts/api/client-search"
+             hx-trigger="input changed delay:250ms"
+             hx-target="#assign-client-options"
+             hx-swap="innerHTML"
+             oninput="syncClientPick(this);"
+             style="width:100%; padding:8px 10px; font-size:13px;
+                    border:1px solid var(--border); border-radius:6px;
+                    font-family:'DM Sans',sans-serif;">
+      <datalist id="assign-client-options"></datalist>
+      <input type="hidden" name="client_id" id="assign-client-id">
+
+      <div style="font-size:11px; color:var(--muted); margin-top:8px;">— or —</div>
+      <input type="text" name="new_client_name"
+             placeholder="Name a new client to create…"
+             oninput="if(this.value){document.getElementById('assign-client-id').value=''; document.querySelector('[name=client_picker]').value='';}"
+             style="width:100%; padding:8px 10px; font-size:13px;
+                    border:1px solid var(--border); border-radius:6px;
+                    font-family:'DM Sans',sans-serif; margin-top:4px;">
+    </div>
+
+    {# ── Step 2: Pick or create a matter ───────────────────────────────── #}
+    <div style="margin-bottom:18px;">
+      <div style="font-size:11px; color:var(--muted); text-transform:uppercase;
+                  letter-spacing:.05em; margin-bottom:6px;">
+        2. Matter
+      </div>
+      <div id="assign-matters-list"
+           style="font-size:12px; color:var(--muted); padding:8px;
+                  background:#F8FAFC; border-radius:6px; margin-bottom:8px;">
+        Pick a client above to see their existing matters.
+      </div>
+
+      <div style="font-size:11px; color:var(--muted); margin:6px 0 4px;">— or create a new matter —</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+        <input type="text" name="new_matter_number"
+               placeholder="Matter number (optional)"
+               style="padding:8px 10px; font-size:13px;
+                      border:1px solid var(--border); border-radius:6px;
+                      font-family:'DM Sans',sans-serif;">
+        <input type="text" name="new_matter_name"
+               placeholder="New matter name"
+               style="padding:8px 10px; font-size:13px;
+                      border:1px solid var(--border); border-radius:6px;
+                      font-family:'DM Sans',sans-serif;">
+      </div>
+    </div>
+
+    {# ── Step 3: Role + primary ─────────────────────────────────────────── #}
+    <div style="display:grid; grid-template-columns:2fr 1fr; gap:12px; margin-bottom:18px;">
+      <div>
+        <div style="font-size:11px; color:var(--muted); text-transform:uppercase;
+                    letter-spacing:.05em; margin-bottom:6px;">3. Role</div>
+        <select name="role"
+                style="width:100%; padding:8px 10px; font-size:13px;
+                       border:1px solid var(--border); border-radius:6px;
+                       font-family:'DM Sans',sans-serif;">
+          {% for role in roles %}
+          <option value="{{ role }}" {% if role == 'client' %}selected{% endif %}>
+            {{ role.replace('_', ' ')|title }}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <div style="font-size:11px; color:var(--muted); text-transform:uppercase;
+                    letter-spacing:.05em; margin-bottom:6px;">Primary</div>
+        <label style="display:flex; align-items:center; gap:6px; padding:8px 10px;
+                      border:1px solid var(--border); border-radius:6px;
+                      font-size:13px; cursor:pointer;">
+          <input type="checkbox" name="is_primary" value="Y" checked> Primary
+        </label>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:8px; justify-content:flex-end;
+                padding-top:12px; border-top:1px solid var(--border);">
+      <button type="button"
+              onclick="document.getElementById('assign-client-modal-slot').innerHTML='';"
+              class="btn-secondary">
+        Cancel
+      </button>
+      <button type="submit" class="btn-primary">
+        Assign
+      </button>
+    </div>
+  </form>
+</div>
+
+<script>
+  // When user picks an option from the client datalist, capture the id and
+  // load that client's matters. Datalist option values are client UUIDs.
+  function syncClientPick(input) {
+    var picked = input.value;
+    var dl = document.getElementById('assign-client-options');
+    var ids = Array.from(dl.options).map(function(o){ return o.value; });
+    if (ids.indexOf(picked) >= 0) {
+      // user picked a real id
+      document.getElementById('assign-client-id').value = picked;
+      // clear the new-client name (mutually exclusive)
+      var newName = document.querySelector('[name=new_client_name]');
+      if (newName) newName.value = '';
+      // load that client's matters
+      htmx.ajax('GET', '/contacts/api/matters-for-client?client_id=' + encodeURIComponent(picked), {
+        target: '#assign-matters-list',
+        swap: 'innerHTML'
+      });
+    } else {
+      document.getElementById('assign-client-id').value = '';
+    }
+  }
+</script>

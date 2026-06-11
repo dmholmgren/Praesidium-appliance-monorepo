@@ -1,0 +1,12 @@
+{% extends "shell.html" %}
+
+{% block title %}User Settings{% endblock %}
+
+{% block breadcrumb %}
+<a href="/">Home</a> &rsaquo; User Settings
+{% endblock %}
+
+{% block content %}
+<div id="react-root"></div>
+<script type="module" src="/static/js/user-settings.js?v=1"></script>
+{% endblock %}

@@ -1,0 +1,16 @@
+{% extends "shell.html" %}
+{% block title %}Document Drafting — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block breadcrumb %}
+<span class="breadcrumb-current">Document Drafting</span>
+{% endblock %}
+
+{% block content %}
+<div id="drafting-react-root" data-page="drafting" style="min-height:400px;">
+  <div style="padding:48px; text-align:center; color:var(--muted); font-size:13px;">
+    Loading Drafting…
+  </div>
+</div>
+<script type="module" src="/static/js/drafting-home.js?v=3"></script>
+<script src="/static/js/onlyoffice-editor.js"></script>
+{% endblock %}

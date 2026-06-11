@@ -1,8 +1,8 @@
-{% extends "base.html" %}
+{% extends "shell.html" %}
 {% block title %}Practice Intelligence — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
 {% block page_title %}Practice Intelligence{% endblock %}
 
-{% block header_right %}
+{% block header_actions %}
 <a href="/dashboard/intake" class="btn-primary" style="font-size:12px;">
   <svg style="width:13px;height:13px;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
@@ -16,7 +16,7 @@
   .pi-tabs {
     display: flex;
     gap: 2px;
-    border-bottom: 2px solid var(--border-color, #e2e8f0);
+    border-bottom: 2px solid var(--border);
     margin-bottom: 16px;
     flex-shrink: 0;
   }
@@ -24,7 +24,7 @@
     padding: 8px 18px;
     font-size: 12px;
     font-weight: 500;
-    color: var(--muted, #64748b);
+    color: var(--muted);
     cursor: pointer;
     border: none;
     background: none;
@@ -35,14 +35,15 @@
     white-space: nowrap;
     text-decoration: none;
     display: inline-block;
+    font-family: inherit;
   }
   .pi-tab:hover {
-    color: var(--text, #1a202c);
-    background: #f8fafc;
+    color: var(--text);
+    background: var(--bg);
   }
   .pi-tab.active {
-    color: var(--primary, #1B2A4A);
-    border-bottom-color: var(--primary, #1B2A4A);
+    color: var(--primary);
+    border-bottom-color: var(--primary);
     font-weight: 600;
   }
   .pi-body {
@@ -76,8 +77,8 @@
   <span>Viewing:</span>
   <select id="attorney-select"
           onchange="switchTab('attorney_view')"
-          style="font-size:12px; padding:4px 8px; border:1px solid var(--border-color,#e2e8f0);
-                 border-radius:5px; background:var(--surface,#fff); color:var(--text);">
+          style="font-size:12px; padding:4px 8px; border:1px solid var(--border);
+                 border-radius:5px; background:var(--surface); color:var(--text); font-family:inherit;">
     {% for a in attorneys %}
     <option value="{{ a.id }}">{{ a.full_name }}</option>
     {% endfor %}
@@ -96,16 +97,13 @@
 </div>
 
 <script>
-// Tab slugs that show the attorney picker
 const ATTORNEY_TABS = ['attorney_view'];
 
 function switchTab(tabSlug) {
-  // Update tab styles
   document.querySelectorAll('.pi-tab').forEach(t => t.classList.remove('active'));
   const activeTab = document.getElementById('tab-' + tabSlug);
   if (activeTab) activeTab.classList.add('active');
 
-  // Show/hide attorney selector
   const sel = document.getElementById('attorney-selector');
   if (sel) {
     if (ATTORNEY_TABS.includes(tabSlug)) {
@@ -115,7 +113,6 @@ function switchTab(tabSlug) {
     }
   }
 
-  // Build scope query string
   let qs = '?tab_slug=' + tabSlug;
   if (tabSlug === 'attorney_view') {
     const attySelect = document.getElementById('attorney-select');
@@ -123,17 +120,14 @@ function switchTab(tabSlug) {
     if (attyId) qs += '&attorney_id=' + attyId;
   }
 
-  // HTMX swap the body
   htmx.ajax('GET', '/layouts/practice_intelligence' + qs, {
     target: '#pi-body',
     swap: 'innerHTML'
   });
 
-  // Persist active tab in sessionStorage
   try { sessionStorage.setItem('pi_active_tab', tabSlug); } catch(e) {}
 }
 
-// Restore last active tab on page load
 document.addEventListener('DOMContentLoaded', function() {
   try {
     const last = sessionStorage.getItem('pi_active_tab');

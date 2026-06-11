@@ -381,7 +381,7 @@ async def start_import(production_id: str, request: Request):
         await session.commit()
 
     redis_conn = Redis.from_url(REDIS_URL)
-    q = Queue("ediscovery_proc", connection=redis_conn)
+    q = Queue("ediscovery", connection=redis_conn)
     job = q.enqueue(
         "jobs.import_production.run",
         production_id,
@@ -516,7 +516,7 @@ async def suggest_field_mapping(production_id: str, request: Request):
             raise HTTPException(status_code=400, detail="No load file uploaded")
 
     redis_conn = Redis.from_url(REDIS_URL)
-    q = Queue("ediscovery_proc", connection=redis_conn)
+    q = Queue("ediscovery", connection=redis_conn)
     job = q.enqueue(
         "jobs.suggest_field_mapping.run",
         production_id,

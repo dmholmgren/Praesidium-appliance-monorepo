@@ -29,6 +29,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import text
 
 from core.db.base import AsyncSessionLocal, TenantSession
+from core.services.nav_context import get_nav_context
 
 logger = logging.getLogger(__name__)
 
@@ -258,8 +259,11 @@ async def dashboard_home(request: Request):
             )
             attorneys = [dict(r._mapping) for r in result.fetchall()]
 
+    # Load dynamic nav for shell.html
+    nav_ctx = await get_nav_context(request)
+
     return templates.TemplateResponse(
-        "dashboard/practice_intelligence.html",
+        "dashboard/practice_intelligence_react.html",
         {
             "request":            request,
             "brand":              brand,
@@ -270,6 +274,7 @@ async def dashboard_home(request: Request):
             "is_partner_or_admin": is_partner_or_admin,
             "attorneys":          attorneys,
             "default_tab":        tabs[0]["tab_slug"] if tabs else "firm_view",
+            **nav_ctx,
         },
     )
 
@@ -536,7 +541,7 @@ async def get_coa_elements(request: Request, matter_id: str, coa_id: int):
                 SELECT id, title, count_number, status, ai_summary
                 FROM causes_of_action
                 WHERE id = :coa_id
-                  AND matter_id = :matter_id::uuid
+                  AND matter_id = CAST(:matter_id AS uuid)
                   AND tenant_id = :tid
             """),
             {"coa_id": coa_id, "matter_id": matter_id, "tid": tenant_id},
@@ -620,3 +625,16 @@ async def generate_status_report(request: Request, matter_id: str):
     from modules.dashboard.services.case_summary import generate_status_report as gen_report
     report = await gen_report(tenant_id, matter_id)
     return {"report": report}
+
+
+
+@router.get("/communications")
+async def communications_center(request: Request):
+    """Communications Center — unified email/SMS/PBX."""
+    brand = get_brand(request)
+    user = getattr(request.state, "current_user", None)
+    nav_ctx = await get_nav_context(request)
+    return templates.TemplateResponse("dashboard/comms_center_react.html", {
+        "request": request, "brand": brand, "current_user": user,
+        "page": "communications", **nav_ctx,
+    })

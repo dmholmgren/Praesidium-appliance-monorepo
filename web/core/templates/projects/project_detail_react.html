@@ -1,0 +1,16 @@
+{% extends "shell.html" %}
+{% block page_title %}{{ project_title }}{% endblock %}
+{% block breadcrumb %}
+<a href="/projects-home" style="color:var(--primary);text-decoration:none">Projects</a>
+{% if matter_name %}
+  <span style="color:var(--muted);margin:0 4px">&rsaquo;</span>
+  <a href="/matters/{{ matter_id }}" style="color:var(--primary);text-decoration:none">{{ matter_name }}</a>
+{% endif %}
+<span style="color:var(--muted);margin:0 4px">&rsaquo;</span>
+<span>{{ project_title }}</span>
+{% endblock %}
+{% block content %}
+<div id="project-detail-root" style="padding:0 16px 32px"></div>
+<script>window.__PROJECT_ID__ = '{{ project_id }}';</script>
+<script type="module" src="/static/js/project-detail.js"></script>
+{% endblock %}

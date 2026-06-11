@@ -102,6 +102,14 @@
     pointer-events: none;
   }
   .drop-overlay.show { display: flex; }
+  .sortable-ghost {
+    opacity: 0.4;
+    background: #eff6ff !important;
+    border: 1px dashed #3b82f6;
+    border-radius: 4px;
+  }
+  .drag-handle:hover { opacity: 0.7 !important; }
+
   .drop-hint-bar {
     position: absolute;
     bottom: 0; left: 0; right: 0;
@@ -194,47 +202,34 @@
   <div class="ws-left" id="ws-left">
     <div class="panel-hdr">Files</div>
 
-    <div style="flex:1; overflow-y:auto; min-height:0;" id="folder-tree">
-
-      {# Native Praesidium folder #}
-      <div class="folder-item {% if native_count > 0 %}active{% endif %}"
-           id="fi-native"
-           onclick="loadFolder('native','','fi-native')">
-        <span>🗂</span>
-        <span class="fi-name" style="flex:1;">Praesidium</span>
-        <span style="font-size:10px; background:#1B2A4A; color:#fff; padding:1px 5px; border-radius:3px;">P</span>
-        <span style="font-size:10px; color:var(--muted);">{{ native_count }}</span>
-      </div>
-
-      {# Legacy linked folders #}
-      {% for f in linked_folders %}
-      <div class="folder-item"
-           id="fi-{{ loop.index }}"
-           data-prefix="{{ f.prefix if f.prefix and f.prefix != 'None' else '' }}"
-           data-diskroot="{{ f.disk_root if f.disk_root else '' }}"
-           data-folderpath="{{ f.folder_path }}"
-           onclick="loadFolder(this.dataset.diskroot ? 'legacy' : 'native', this.dataset.diskroot ? this.dataset.prefix : this.dataset.folderpath, 'fi-{{ loop.index }}')">
-        <span>{% if f.root_label == 'Docsend' %}📮{% else %}📁{% endif %}</span>
-        <div style="flex:1; min-width:0;">
-          <div class="fi-name" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-            {{ f.folder_path.split('/')[-1] }}
-          </div>
-          <div style="font-size:10px; color:var(--muted); margin-top:1px;">
-            <span style="background:{{ '#EDE9FE' if f.root_label == 'Docsend' else '#dbeafe' }};
-                         color:{{ '#5B21B6' if f.root_label == 'Docsend' else '#1d4ed8' }};
-                         padding:0 4px; border-radius:2px; font-size:9px;">{{ f.root_label }}</span>
-            {% if f.file_count %} {{ f.file_count }}{% endif %}
-          </div>
-        </div>
-      </div>
-      {% endfor %}
-
+    <div style="flex:1; overflow-y:auto; min-height:0; position:relative;" id="folder-tree">
+      <div id="folder-tree-list" style="min-height:20px;"></div>
       {% if not linked_folders and native_count == 0 %}
-      <div style="padding:12px; font-size:11px; color:var(--muted); line-height:1.5;">
+      <div id="folder-empty-msg" style="padding:12px; font-size:11px; color:var(--muted); line-height:1.5;">
         No files yet. Upload a document or
         <a href="/tenant-admin/folder-reconciliation" style="color:var(--primary,#1B2A4A);">link legacy folders →</a>
       </div>
       {% endif %}
+    </div>
+
+    {# Context menu for folder actions #}
+    <div id="folder-ctx-menu"
+         style="display:none; position:fixed; z-index:500; background:#fff;
+                border:1px solid var(--border-color,#e2e8f0); border-radius:6px;
+                box-shadow:0 4px 16px rgba(0,0,0,0.12); min-width:160px; padding:4px 0;">
+      <div onclick="ctxRename()" style="padding:6px 14px; font-size:12px; cursor:pointer; display:flex; align-items:center; gap:6px;"
+           onmouseenter="this.style.background='#f1f5f9'" onmouseleave="this.style.background=''">
+        ✏️ Rename
+      </div>
+      <div onclick="ctxAddSub()" style="padding:6px 14px; font-size:12px; cursor:pointer; display:flex; align-items:center; gap:6px;"
+           onmouseenter="this.style.background='#f1f5f9'" onmouseleave="this.style.background=''">
+        ➕ Add Subfolder
+      </div>
+      <div style="height:1px; background:var(--border-color,#e2e8f0); margin:4px 0;"></div>
+      <div onclick="ctxDelete()" style="padding:6px 14px; font-size:12px; cursor:pointer; color:#dc2626; display:flex; align-items:center; gap:6px;"
+           onmouseenter="this.style.background='#fef2f2'" onmouseleave="this.style.background=''">
+        🗑️ Delete Folder
+      </div>
     </div>
 
     {# Search #}
@@ -303,7 +298,7 @@
       </div>
     </div>
     {# Document viewer — hidden until file selected, replaces file list in center #}
-    <div id="doc-viewer" style="display:none; flex:1; overflow-y:auto; min-height:0;">
+    <div id="doc-viewer" style="display:none; flex:1; overflow:auto; min-height:0;">
       <div style="padding:24px; text-align:center; color:var(--muted); font-size:12px;">
         Loading document…
       </div>
@@ -483,6 +478,7 @@
   </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
 <script>
 const MATTER_ID = '{{ matter_id }}';
 const LS_KEY = 'dms_ws_' + MATTER_ID;
@@ -541,6 +537,8 @@ function endResize() {
 
 // ── Folder loading ────────────────────────────────────────────────────────
 let activeFolder = {type: null, prefix: '', elemId: null};
+var _activeDiskPath = null;
+var currentFolderName = 'All files';
 
 function loadFolder(type, prefix, elemId) {
   document.querySelectorAll('.folder-item').forEach(el => el.classList.remove('active'));
@@ -573,8 +571,11 @@ function loadFolder(type, prefix, elemId) {
 function selectDoc(docId, filePath, source) {
   // Show viewer, hide file list
   document.getElementById('folder-contents').style.display = 'none';
-  document.getElementById('doc-viewer').style.display = 'flex';
-  document.getElementById('doc-viewer').style.flexDirection = 'column';
+  const viewer = document.getElementById('doc-viewer');
+  viewer.style.display = 'flex';
+  viewer.style.flexDirection = 'column';
+  viewer.style.flex = '1';
+  viewer.style.minHeight = '0';
   document.getElementById('back-to-files').style.display = 'inline-block';
   document.getElementById('new-folder-btn').style.display = 'none';
   document.getElementById('drop-hint-text').style.display = 'none';
@@ -626,41 +627,65 @@ const center = document.getElementById('ws-center');
 const overlay = document.getElementById('drop-overlay');
 const hintBar = document.getElementById('drop-hint-bar');
 
-center.addEventListener('dragenter', e => {
+center.addEventListener('dragenter', function(e) {
   e.preventDefault();
   dragCounter++;
-  overlay.classList.add('show');
+  hintBar.textContent = _activeDiskPath
+    ? ('Drop to upload to ' + (currentFolderName || 'folder'))
+    : 'Drop to upload';
+  hintBar.style.display = 'block';
 });
-center.addEventListener('dragleave', e => {
+center.addEventListener('dragleave', function(e) {
   dragCounter--;
-  if (dragCounter <= 0) { dragCounter = 0; overlay.classList.remove('show'); }
+  if (dragCounter <= 0) { dragCounter = 0; hintBar.style.display = 'none'; }
 });
-center.addEventListener('dragover', e => { e.preventDefault(); });
-center.addEventListener('drop', e => {
+center.addEventListener('dragover', function(e) { e.preventDefault(); });
+center.addEventListener('drop', function(e) {
   e.preventDefault();
   dragCounter = 0;
-  overlay.classList.remove('show');
-  const files = e.dataTransfer.files;
+  hintBar.style.display = 'none';
+  var files = e.dataTransfer.files;
   if (!files || !files.length) return;
-  handleDroppedFile(files[0]);
+  for (var i = 0; i < files.length; i++) {
+    handleDroppedFile(files[i]);
+  }
 });
 
 async function handleDroppedFile(file) {
-  const isZip = file.name.toLowerCase().endsWith('.zip') ||
-                file.type === 'application/zip' ||
-                file.type === 'application/x-zip-compressed';
+  var isZip = file.name.toLowerCase().endsWith('.zip') ||
+              file.type === 'application/zip' ||
+              file.type === 'application/x-zip-compressed';
+  if (isZip) { await handleZipDrop(file); return; }
 
-  if (isZip) {
-    await handleZipDrop(file);
+  // Disk mode: upload directly, no dialog
+  if (_activeDiskPath) {
+    hintBar.textContent = 'Uploading ' + file.name + '...';
+    hintBar.style.display = 'block';
+    var fd = new FormData();
+    fd.append('file', file);
+    fd.append('disk_path', _activeDiskPath);
+    fd.append('matter_id', MATTER_ID);
+    try {
+      var resp = await fetch('/dms/disk/upload', {method: 'POST', body: fd});
+      if (resp.ok) {
+        var data = await resp.json();
+        hintBar.textContent = '\u2713 ' + data.filename + ' uploaded';
+        setTimeout(function() { hintBar.style.display = 'none'; }, 3000);
+        htmxGet('/dms/matter/' + MATTER_ID + '/disk-folder?path=' + encodeURIComponent(_activeDiskPath), 'folder-contents');
+      } else {
+        hintBar.textContent = 'Upload failed';
+        setTimeout(function() { hintBar.style.display = 'none'; }, 5000);
+      }
+    } catch(e) {
+      hintBar.textContent = 'Upload failed: network error';
+      setTimeout(function() { hintBar.style.display = 'none'; }, 5000);
+    }
     return;
   }
 
-  // Regular file — auto-detect folder from active selection
-  const detectedFolder = detectFolder();
+  // Fallback: use modal
+  var detectedFolder = detectFolder();
   if (detectedFolder !== null) {
-    hintBar.textContent = `Uploading to: ${detectedFolder || 'Praesidium (root)'}`;
-    hintBar.style.display = 'block';
-    setTimeout(() => { hintBar.style.display = 'none'; }, 3000);
     openUploadModalWithFile(file, detectedFolder);
   } else {
     pendingDropFile = file;
@@ -1002,36 +1027,482 @@ async function createFolder() {
 }
 
 function addFolderToTree(folderName) {
-  const tree = document.getElementById('folder-tree');
-  const div = document.createElement('div');
-  div.className = 'folder-item';
-  div.id = 'fi-new-' + Date.now();
-  div.innerHTML = `
-    <span>🗂</span>
-    <div style="flex:1;min-width:0;">
-      <div class="fi-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${folderName}</div>
-      <div style="font-size:10px;color:var(--muted);">
-        <span style="background:#1B2A4A;color:#fff;padding:0 4px;border-radius:2px;font-size:9px;">P</span>
-      </div>
-    </div>`;
-  div.onclick = () => loadFolder('native', folderName, div.id);
-  // Insert after native folder item
-  const nativeEl = document.getElementById('fi-native');
-  if (nativeEl && nativeEl.nextSibling) {
-    tree.insertBefore(div, nativeEl.nextSibling);
-  } else {
-    tree.appendChild(div);
+  // Refresh the full tree from API so new folder appears with correct data
+  loadFolderTree();
+}
+
+// ── Disk-based folder tree rendering ──────────────────────────────────────
+function renderDiskTree(data) {
+  var container = document.getElementById('folder-tree-list');
+  if (!container) return;
+  var html = '';
+  var rootEsc = data.root.replace(/'/g, "\\'");
+
+  // Root folder
+  html += '<div class="folder-item active" id="fi-root"'
+    + ' data-diskpath="' + data.root + '"'
+    + ' onclick="loadDiskFolder(this, \'' + rootEsc + '\')"'
+    + ' ondragover="folderDragOver(event)"'
+    + ' ondragleave="folderDragLeave(event)"'
+    + ' ondrop="folderDrop(event, \'' + rootEsc + '\')"'
+    + ' style="cursor:pointer; font-weight:500;">'
+    + '<span style="font-size:10px; width:14px; text-align:center; flex-shrink:0;">&nbsp;</span>'
+    + '<span>\ud83d\udcc1</span>'
+    + '<div style="flex:1; min-width:0;">'
+    + '  <div class="fi-name">Matter Root</div>'
+    + (data.root_file_count ? '<div style="font-size:10px;color:var(--muted);">' + data.root_file_count + ' files</div>' : '')
+    + '</div></div>';
+
+  function renderNode(node, depth) {
+    var indent = 12 + depth * 16;
+    var hasKids = node.children && node.children.length > 0;
+    var nid = 'fi-d-' + depth + '-' + node.name.replace(/[^a-zA-Z0-9]/g, '_');
+    var pe = node.path.replace(/'/g, "\\'");
+    var h = '<div class="folder-item" id="' + nid + '"'
+      + ' data-expanded="0"'
+      + ' data-diskpath="' + node.path.replace(/"/g, '&quot;') + '"'
+      + ' onclick="loadDiskFolder(this, \'' + pe + '\')"'
+      + ' ondragover="folderDragOver(event)"'
+      + ' ondragleave="folderDragLeave(event)"'
+      + ' ondrop="folderDrop(event, \'' + pe + '\')"'
+      + ' style="cursor:pointer; padding-left:' + indent + 'px;">'
+      + '<span class="disk-chev" style="font-size:10px;width:14px;text-align:center;flex-shrink:0;color:var(--muted);">'
+      + (hasKids ? '\u25b6' : '&nbsp;') + '</span>'
+      + '<span>\ud83d\udcc1</span>'
+      + '<div style="flex:1;min-width:0;">'
+      + '<div class="fi-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+      + node.name
+      + (node.file_count > 0 ? ' <span style="font-size:10px;color:var(--muted);">(' + node.file_count + ')</span>' : '')
+      + '</div></div></div>';
+    if (hasKids) {
+      h += '<div class="tree-kids" id="kids-' + nid + '" style="display:none;">';
+      for (var i = 0; i < node.children.length; i++) h += renderNode(node.children[i], depth + 1);
+      h += '</div>';
+    }
+    return h;
   }
-  div.click();
+
+  for (var i = 0; i < data.tree.length; i++) html += renderNode(data.tree[i], 0);
+  if (!data.tree.length && !data.root_file_count) html += '<div style="padding:12px;font-size:11px;color:var(--muted);">Empty matter folder.</div>';
+
+  container.innerHTML = html;
+  var em = document.getElementById('folder-empty-msg');
+  if (em) em.style.display = 'none';
+  loadDiskFolder(document.getElementById('fi-root'), data.root);
+}
+
+function loadDiskFolder(el, diskPath) {
+  _activeDiskPath = diskPath;
+  var nid = el.id;
+  var kidsDiv = document.getElementById('kids-' + nid);
+  var chev = el.querySelector('.disk-chev');
+  if (kidsDiv) {
+    var exp = el.dataset.expanded === '1';
+    kidsDiv.style.display = exp ? 'none' : 'block';
+    el.dataset.expanded = exp ? '0' : '1';
+    if (chev) chev.innerHTML = exp ? '\u25b6' : '\u25bc';
+  }
+  document.querySelectorAll('.folder-item').forEach(function(e) { e.classList.remove('active'); });
+  el.classList.add('active');
+  var nameEl = el.querySelector('.fi-name');
+  var name = nameEl ? nameEl.textContent.trim().split(' (')[0] : 'Files';
+  document.getElementById('center-title').textContent = name;
+  currentFolderName = name;
+  document.getElementById('doc-viewer').style.display = 'none';
+  document.getElementById('folder-contents').style.display = 'block';
+  document.getElementById('back-to-files').style.display = 'none';
+  document.getElementById('new-folder-btn').style.display = 'inline-block';
+  var dht = document.getElementById('drop-hint-text');
+  if (dht) dht.style.display = 'inline';
+  var fc = document.getElementById('folder-contents');
+  fc.innerHTML = '<div style="padding:16px;font-size:12px;color:var(--muted);">Loading...</div>';
+  htmxGet('/dms/matter/' + MATTER_ID + '/disk-folder?path=' + encodeURIComponent(diskPath), 'folder-contents');
+}
+
+function selectDiskDoc(diskPath) {
+  document.getElementById('folder-contents').style.display = 'none';
+  var v = document.getElementById('doc-viewer');
+  v.style.display = 'flex'; v.style.flexDirection = 'column'; v.style.flex = '1'; v.style.minHeight = '0';
+  document.getElementById('back-to-files').style.display = 'inline-block';
+  document.getElementById('new-folder-btn').style.display = 'none';
+  var dht = document.getElementById('drop-hint-text');
+  if (dht) dht.style.display = 'none';
+  var name = diskPath.split('/').pop();
+  document.getElementById('center-title').textContent = name;
+  var ext = name.indexOf('.') !== -1 ? name.split('.').pop().toLowerCase() : '';
+  var PREV = ['pdf','jpg','jpeg','png','gif','webp','bmp'];
+  var IMGS = ['jpg','jpeg','png','gif','webp','bmp'];
+  var enc = encodeURIComponent(diskPath);
+  var html = '';
+  if (PREV.indexOf(ext) !== -1) {
+    if (IMGS.indexOf(ext) !== -1) {
+      html = '<div style="padding:12px;"><div style="font-size:13px;font-weight:600;margin-bottom:8px;">' + name + '</div>'
+        + '<img src="/dms/disk/stream?path=' + enc + '" style="max-width:100%;max-height:calc(100vh - 280px);border-radius:4px;"></div>';
+    } else {
+      html = '<div style="padding:12px;"><div style="font-size:13px;font-weight:600;margin-bottom:8px;">' + name + '</div>'
+        + '<iframe src="/dms/disk/stream?path=' + enc + '" style="width:100%;height:calc(100vh - 280px);min-height:400px;border:none;border-radius:4px;"></iframe></div>';
+    }
+  } else {
+    html = '<div style="padding:24px;text-align:center;color:var(--muted);"><div style="font-size:48px;margin-bottom:8px;">\ud83d\udcc4</div>'
+      + '<div style="font-size:13px;font-weight:600;margin-bottom:4px;">' + name + '</div>'
+      + '<div style="font-size:12px;">Preview not available for .' + ext + '</div>'
+      + '<a href="/dms/disk/download?path=' + enc + '" download style="display:inline-block;margin-top:12px;padding:6px 16px;background:var(--primary,#1B2A4A);color:#fff;border-radius:5px;font-size:12px;text-decoration:none;">Download</a></div>';
+  }
+  v.innerHTML = html;
+}
+
+// ── Internal drag-to-move ──────────────────────────────────────────────────
+function diskFileDragStart(e) {
+  var tr = e.target.closest('tr');
+  if (!tr) return;
+  var path = tr.getAttribute('data-diskpath');
+  if (!path) return;
+  e.dataTransfer.setData('text/x-disk-path', path);
+  e.dataTransfer.effectAllowed = 'move';
+  tr.style.opacity = '0.4';
+  // Highlight valid drop targets
+  document.querySelectorAll('.folder-item').forEach(function(el) {
+    el.classList.add('drop-target-ready');
+  });
+}
+
+function diskFileDragEnd(e) {
+  var tr = e.target.closest('tr');
+  if (tr) tr.style.opacity = '1';
+  document.querySelectorAll('.folder-item').forEach(function(el) {
+    el.classList.remove('drop-target-ready');
+    el.classList.remove('drop-target-hover');
+  });
+}
+
+function folderDragOver(e) {
+  var diskPath = e.dataTransfer.types.indexOf('text/x-disk-path');
+  if (diskPath === -1) return; // Not our internal drag
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  e.currentTarget.classList.add('drop-target-hover');
+}
+
+function folderDragLeave(e) {
+  e.currentTarget.classList.remove('drop-target-hover');
+}
+
+async function folderDrop(e, destPath) {
+  e.preventDefault();
+  e.currentTarget.classList.remove('drop-target-hover');
+  document.querySelectorAll('.folder-item').forEach(function(el) {
+    el.classList.remove('drop-target-ready');
+  });
+
+  var srcPath = e.dataTransfer.getData('text/x-disk-path');
+  if (!srcPath || !destPath) return;
+  if (srcPath.substring(0, srcPath.lastIndexOf('/')) === destPath) return; // Same folder
+
+  hintBar.textContent = 'Moving ' + srcPath.split('/').pop() + '...';
+  hintBar.style.display = 'block';
+
+  try {
+    var resp = await fetch('/dms/disk/move', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({src_path: srcPath, dest_folder: destPath}),
+    });
+    if (resp.ok) {
+      var data = await resp.json();
+      hintBar.textContent = '\u2713 Moved ' + data.filename;
+      setTimeout(function() { hintBar.style.display = 'none'; }, 3000);
+      // Refresh current folder listing
+      if (_activeDiskPath) {
+        htmxGet('/dms/matter/' + MATTER_ID + '/disk-folder?path=' + encodeURIComponent(_activeDiskPath), 'folder-contents');
+      }
+      // Refresh tree to update file counts
+      loadFolderTree();
+    } else {
+      var err = await resp.text();
+      hintBar.textContent = 'Move failed: ' + err;
+      setTimeout(function() { hintBar.style.display = 'none'; }, 5000);
+    }
+  } catch(ex) {
+    hintBar.textContent = 'Move failed: network error';
+    setTimeout(function() { hintBar.style.display = 'none'; }, 5000);
+  }
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   restoreSizes();
-  // Auto-load first folder
-  const first = document.querySelector('.folder-item');
-  if (first) first.click();
+  loadFolderTree();
 });
+
+// ── Interactive Folder Tree ───────────────────────────────────────────────
+let _folderData = [];
+let _ctxFolderId = null;
+let _ctxFolderEl = null;
+let _sortableInstance = null;
+
+async function loadFolderTree() {
+  try {
+    const resp = await fetch('/dms/matter/' + MATTER_ID + '/folder-tree');
+    const data = await resp.json();
+    if (data.mode === 'disk') {
+      _folderData = [];
+      renderDiskTree(data);
+    } else {
+      _folderData = data.folders || [];
+      renderFolderTree(data.native_count || 0);
+    }
+  } catch(e) {
+    console.error('Failed to load folder tree:', e);
+    document.getElementById('folder-tree-list').innerHTML =
+      '<div style="padding:12px; font-size:11px; color:#dc2626;">Failed to load folders.</div>';
+  }
+}
+
+function renderFolderTree(nativeCount) {
+  const container = document.getElementById('folder-tree-list');
+  if (!container) return;
+
+  let html = '';
+
+  // Render each folder
+  for (const f of _folderData) {
+    const isNative = !f.disk_root;
+    const isPraesidium = f.is_praesidium !== undefined ? f.is_praesidium : isNative;
+    const badge = isNative ? 'P' : (f.root_label === 'Docsend' ? 'Docsend' : 'Clients');
+    const badgeBg = isNative ? '#1B2A4A' : (f.root_label === 'Docsend' ? '#EDE9FE' : '#dbeafe');
+    const badgeColor = isNative ? '#fff' : (f.root_label === 'Docsend' ? '#5B21B6' : '#1d4ed8');
+    const icon = isNative ? '🗂' : (f.root_label === 'Docsend' ? '📮' : '📁');
+    const prefix = f.disk_root ? f.disk_root.replace(/\//g, '\\') + '\\' + f.folder_path.replace(/\//g, '\\') + '\\' : '';
+
+    html += '<div class="folder-item" id="fi-' + f.id + '"'
+      + ' data-folder-id="' + f.id + '"'
+      + ' data-prefix="' + prefix.replace(/"/g, '&quot;') + '"'
+      + ' data-diskroot="' + (f.disk_root || '').replace(/"/g, '&quot;') + '"'
+      + ' data-folderpath="' + (f.folder_path || '').replace(/"/g, '&quot;') + '"'
+      + ' data-native="' + (isPraesidium ? '1' : '0') + '"'
+      + ' onclick="treeClickFolder(this)"'
+      + ' oncontextmenu="treeContextMenu(event, this)"'
+      + ' draggable="false"'
+      + ' style="cursor:pointer;">'
+      + '<span class="drag-handle" style="cursor:grab; opacity:0.3; font-size:10px; padding:0 2px;" title="Drag to reorder">⠿</span>'
+      + '<span>' + icon + '</span>'
+      + '<div style="flex:1; min-width:0;">'
+      + '  <div class="fi-name" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + f.display_name + '</div>'
+      + (f.file_count ? '  <div style="font-size:10px; color:var(--muted); margin-top:1px;">' + f.file_count + '</div>' : '')
+      + '</div>'
+      + '</div>';
+  }
+
+  if (!_folderData.length) {
+    html = '<div style="padding:12px; font-size:11px; color:var(--muted);">No folders yet.</div>';
+  }
+
+  container.innerHTML = html;
+
+  // Hide empty message if we have folders
+  const emptyMsg = document.getElementById('folder-empty-msg');
+  if (emptyMsg) emptyMsg.style.display = _folderData.length ? 'none' : 'block';
+
+  // Init SortableJS
+  if (window.Sortable && _folderData.length > 1) {
+    if (_sortableInstance) _sortableInstance.destroy();
+    _sortableInstance = new Sortable(container, {
+      animation: 150,
+      handle: '.drag-handle',
+      ghostClass: 'sortable-ghost',
+      onEnd: function(evt) {
+        saveFolderOrder();
+      }
+    });
+  }
+
+  // Attach drag-to-folder drop handlers
+  attachFolderDropHandlers();
+
+  // Auto-click first folder
+  const first = container.querySelector('.folder-item');
+  if (first) first.click();
+}
+
+function treeClickFolder(el) {
+  document.querySelectorAll('.folder-item').forEach(e => e.classList.remove('active'));
+  el.classList.add('active');
+
+  const isNative = el.dataset.native === '1';
+  const folderPath = el.dataset.folderpath;
+  const diskRoot = el.dataset.diskroot;
+  const prefix = el.dataset.prefix;
+
+  var isPraesidiumFolder = el.dataset.native === '1';
+  if (isPraesidiumFolder) {
+    loadFolder('native', folderPath, el.id);
+  } else if (diskRoot) {
+    loadFolder('legacy', prefix, el.id);
+  } else {
+    loadFolder('native', folderPath, el.id);
+  }
+}
+
+// ── Context menu ──────────────────────────────────────────────────────────
+function treeContextMenu(e, el) {
+  e.preventDefault();
+  _ctxFolderId = el.dataset.folderId;
+  _ctxFolderEl = el;
+
+  const menu = document.getElementById('folder-ctx-menu');
+  menu.style.display = 'block';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+
+  // Ensure menu doesn't go off screen
+  setTimeout(() => {
+    const rect = menu.getBoundingClientRect();
+    if (rect.right > window.innerWidth) menu.style.left = (window.innerWidth - rect.width - 8) + 'px';
+    if (rect.bottom > window.innerHeight) menu.style.top = (window.innerHeight - rect.height - 8) + 'px';
+  }, 0);
+}
+
+document.addEventListener('click', () => {
+  document.getElementById('folder-ctx-menu').style.display = 'none';
+});
+
+// ── Rename ────────────────────────────────────────────────────────────────
+function ctxRename() {
+  document.getElementById('folder-ctx-menu').style.display = 'none';
+  if (!_ctxFolderEl) return;
+
+  const nameEl = _ctxFolderEl.querySelector('.fi-name');
+  const oldName = nameEl.textContent.trim();
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = oldName;
+  input.style.cssText = 'width:100%; padding:2px 4px; font-size:12px; border:1px solid var(--primary); border-radius:3px; outline:none; box-sizing:border-box;';
+
+  nameEl.textContent = '';
+  nameEl.appendChild(input);
+  input.focus();
+  input.select();
+
+  let committed = false;
+  async function commitRename() {
+    if (committed) return;
+    committed = true;
+    const newName = input.value.trim();
+    if (!newName || newName === oldName) {
+      nameEl.textContent = oldName;
+      return;
+    }
+    nameEl.textContent = newName + '\u2026';
+    try {
+      const resp = await fetch('/dms/matter/' + MATTER_ID + '/folder/rename', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({folder_id: _ctxFolderId, new_name: newName}),
+      });
+      if (resp.ok) {
+        loadFolderTree();
+      } else {
+        const err = await resp.json().catch(() => ({}));
+        alert('Rename failed: ' + (err.detail || 'Unknown error'));
+        nameEl.textContent = oldName;
+      }
+    } catch(e) {
+      alert('Network error renaming folder.');
+      nameEl.textContent = oldName;
+    }
+  }
+
+  input.addEventListener('blur', commitRename);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { committed = true; nameEl.textContent = oldName; }
+  });
+}
+
+// ── Add subfolder ─────────────────────────────────────────────────────────
+function ctxAddSub() {
+  document.getElementById('folder-ctx-menu').style.display = 'none';
+  if (!_ctxFolderEl) return;
+  const parentPath = _ctxFolderEl.dataset.folderpath || '';
+  const subName = prompt('New subfolder name:');
+  if (!subName || !subName.trim()) return;
+  const fullPath = parentPath ? parentPath + '/' + subName.trim() : subName.trim();
+  fetch('/dms/matter/' + MATTER_ID + '/folder/create', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({folder_name: fullPath}),
+  }).then(resp => {
+    if (resp.ok) {
+      loadFolderTree();
+    } else {
+      resp.json().then(d => alert('Failed: ' + (d.detail || 'Unknown'))).catch(() => alert('Failed'));
+    }
+  }).catch(() => alert('Network error creating subfolder.'));
+}
+
+// ── Delete ────────────────────────────────────────────────────────────────
+async function ctxDelete() {
+  document.getElementById('folder-ctx-menu').style.display = 'none';
+  if (!_ctxFolderId || !_ctxFolderEl) return;
+
+  const name = _ctxFolderEl.querySelector('.fi-name').textContent.trim();
+  if (!confirm('Delete folder "' + name + '"? This cannot be undone.')) return;
+
+  try {
+    const resp = await fetch('/dms/matter/' + MATTER_ID + '/folder/delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({folder_id: _ctxFolderId, force: false}),
+    });
+    const data = await resp.json();
+
+    if (resp.ok && data.status === 'deleted') {
+      loadFolderTree();
+      document.getElementById('folder-contents').innerHTML =
+        '<div style="padding:24px; text-align:center; color:var(--muted); font-size:12px;">' +
+        '<div style="font-size:32px; margin-bottom:8px;">\u2705</div>Folder deleted.</div>';
+    } else if (data.status === 'not_empty') {
+      if (confirm(data.message + '\n\nForce delete?')) {
+        const resp2 = await fetch('/dms/matter/' + MATTER_ID + '/folder/delete', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({folder_id: _ctxFolderId, force: true}),
+        });
+        if (resp2.ok) {
+          loadFolderTree();
+        } else {
+          const err2 = await resp2.json().catch(() => ({}));
+          alert('Force delete failed: ' + (err2.detail || 'Unknown'));
+        }
+      }
+    } else {
+      alert('Delete failed: ' + (data.detail || data.message || 'Unknown error'));
+    }
+  } catch(e) {
+    alert('Network error deleting folder.');
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  restoreSizes();
+  loadFolderTree();
+});
+
+function saveFolderOrder() {
+  const items = document.querySelectorAll('#folder-tree-list .folder-item');
+  const ids = Array.from(items).map(el => el.dataset.folderId).filter(Boolean);
+  try {
+    localStorage.setItem('dms_folder_order_' + MATTER_ID, JSON.stringify(ids));
+  } catch(e) {}
+  // Fire-and-forget server notification
+  fetch('/dms/matter/' + MATTER_ID + '/folder/reorder', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({folder_ids: ids}),
+  }).catch(() => {});
+}
 
 // ── Matter widget panel toggle ────────────────────────────────────────────
 function toggleWidgetPanel() {
@@ -1045,5 +1516,90 @@ function toggleWidgetPanel() {
     arrow.style.transform = 'rotate(-90deg)';
   }
 }
+
+// ── Drag files to folder tree ─────────────────────────────────────────────
+// Each file row in center panel gets draggable="true" via the HTMX partials.
+// Here we set up folder tree drop targets.
+let _dragDocId = null;
+let _dragDocSource = null;
+
+function docDragStart(e, docId, source) {
+  _dragDocId = docId;
+  _dragDocSource = source || 'native';
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', docId);
+  // Highlight droppable folders
+  document.querySelectorAll('.folder-item[data-native="1"]').forEach(el => {
+    el.style.outline = '2px dashed #3b82f6';
+    el.style.outlineOffset = '-2px';
+  });
+}
+
+function docDragEnd(e) {
+  _dragDocId = null;
+  _dragDocSource = null;
+  document.querySelectorAll('.folder-item').forEach(el => {
+    el.style.outline = '';
+    el.style.outlineOffset = '';
+    el.style.background = '';
+  });
+}
+
+// Attach drop handlers to folder items after tree renders
+function attachFolderDropHandlers() {
+  document.querySelectorAll('.folder-item[data-native="1"]').forEach(el => {
+    el.addEventListener('dragover', function(e) {
+      if (!_dragDocId) return;
+      if (_dragDocSource !== 'native') return; // Only native docs are movable
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      this.style.background = '#eff6ff';
+    });
+    el.addEventListener('dragleave', function(e) {
+      this.style.background = '';
+    });
+    el.addEventListener('drop', async function(e) {
+      e.preventDefault();
+      this.style.background = '';
+      this.style.outline = '';
+      if (!_dragDocId || _dragDocSource !== 'native') return;
+      const targetFolder = this.dataset.folderpath;
+      const docId = _dragDocId;
+      _dragDocId = null;
+      _dragDocSource = null;
+      // Remove drag highlights
+      document.querySelectorAll('.folder-item').forEach(el2 => {
+        el2.style.outline = '';
+        el2.style.outlineOffset = '';
+      });
+      // Call move endpoint
+      try {
+        const resp = await fetch('/dms/matter/' + MATTER_ID + '/document/move', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({doc_id: docId, target_folder: targetFolder}),
+        });
+        if (resp.ok) {
+          // Refresh current folder view
+          if (activeFolder.elemId) {
+            const el3 = document.getElementById(activeFolder.elemId);
+            if (el3) treeClickFolder(el3);
+          }
+          // Show brief confirmation
+          const hb = document.getElementById('drop-hint-bar');
+          hb.textContent = '✓ Document moved to ' + (targetFolder || 'root');
+          hb.style.display = 'block';
+          setTimeout(() => { hb.style.display = 'none'; }, 3000);
+        } else {
+          const err = await resp.json().catch(() => ({}));
+          alert('Move failed: ' + (err.detail || 'Unknown error'));
+        }
+      } catch(ex) {
+        alert('Network error moving document.');
+      }
+    });
+  });
+}
+
 </script>
 {% endblock %}

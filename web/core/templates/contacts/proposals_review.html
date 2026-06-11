@@ -1,0 +1,281 @@
+{% extends "billing/layout.html" %}
+{% block title %}{{ brand.platform_name if brand else 'Praesidium' }} — Matter Proposals Review{% endblock %}
+{% block page_title %}Matter-Contact Proposal Review{% endblock %}
+
+{% block billing_content %}
+
+{# ── Subtabs ──────────────────────────────────────────────────────────────── #}
+<div class="tab-nav" style="margin-bottom:20px;">
+  <a href="/contacts" class="tab-btn">Contacts</a>
+  <a href="/contacts/dedup-review" class="tab-btn">Dedup</a>
+  <a href="/contacts/proposals-review" class="tab-btn active">Matter Proposals ({{ counts.n_total }})</a>
+</div>
+
+{# ── Stats banner ─────────────────────────────────────────────────────────── #}
+<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px;">
+  <div class="card" style="padding:14px;">
+    <div style="font-size:10px; color:var(--muted); text-transform:uppercase;
+                letter-spacing:.05em; margin-bottom:4px;">Total pending</div>
+    <div style="font-size:22px; font-weight:600; color:var(--text);">{{ counts.n_total }}</div>
+  </div>
+  <div class="card" style="padding:14px; border-color:#86EFAC;">
+    <div style="font-size:10px; color:#166534; text-transform:uppercase;
+                letter-spacing:.05em; margin-bottom:4px;">≥ 1.00 (perfect)</div>
+    <div style="font-size:22px; font-weight:600; color:#166534;">{{ counts.n_perfect }}</div>
+    <div style="font-size:11px; color:var(--muted);">Email-exact matches</div>
+  </div>
+  <div class="card" style="padding:14px; border-color:#93C5FD;">
+    <div style="font-size:10px; color:#1E40AF; text-transform:uppercase;
+                letter-spacing:.05em; margin-bottom:4px;">≥ 0.95 (high)</div>
+    <div style="font-size:22px; font-weight:600; color:#1E40AF;">{{ counts.n_high }}</div>
+    <div style="font-size:11px; color:var(--muted);">Inc. phone-exact</div>
+  </div>
+  <div class="card" style="padding:14px;">
+    <div style="font-size:10px; color:var(--muted); text-transform:uppercase;
+                letter-spacing:.05em; margin-bottom:4px;">≥ 0.85 (strong)</div>
+    <div style="font-size:22px; font-weight:600; color:var(--text);">{{ counts.n_strong }}</div>
+    <div style="font-size:11px; color:var(--muted);">Inc. unique-name</div>
+  </div>
+</div>
+
+{# ── Filter toolbar ───────────────────────────────────────────────────────── #}
+<form method="get" action="/contacts/proposals-review"
+      style="display:flex; align-items:center; gap:8px; margin-bottom:14px; flex-wrap:wrap;">
+  <span style="font-size:11px; color:var(--muted);
+               text-transform:uppercase; letter-spacing:.05em;">Min confidence</span>
+  <select name="min_confidence"
+          style="padding:6px 8px; font-size:12px; border:1px solid var(--border);
+                 border-radius:5px; font-family:'DM Sans',sans-serif;">
+    <option value="0.0"  {% if min_confidence == 0.0 %}selected{% endif %}>All</option>
+    <option value="0.70" {% if min_confidence == 0.70 %}selected{% endif %}>≥ 0.70</option>
+    <option value="0.85" {% if min_confidence == 0.85 %}selected{% endif %}>≥ 0.85</option>
+    <option value="0.95" {% if min_confidence == 0.95 %}selected{% endif %}>≥ 0.95</option>
+    <option value="1.00" {% if min_confidence == 1.00 %}selected{% endif %}>= 1.00</option>
+  </select>
+  <span style="font-size:11px; color:var(--muted); text-transform:uppercase;
+               letter-spacing:.05em; margin-left:8px;">Signal</span>
+  <select name="signal_type"
+          style="padding:6px 8px; font-size:12px; border:1px solid var(--border);
+                 border-radius:5px; font-family:'DM Sans',sans-serif;">
+    <option value="">All signals</option>
+    {% for s in signal_types %}
+    <option value="{{ s }}" {% if signal_type == s %}selected{% endif %}>{{ s }}</option>
+    {% endfor %}
+  </select>
+  <button type="submit" class="btn-secondary" style="font-size:12px; padding:6px 12px;">
+    Filter
+  </button>
+  {% if min_confidence > 0 or signal_type %}
+  <a href="/contacts/proposals-review"
+     style="font-size:11px; color:var(--muted); text-decoration:none;">Clear</a>
+  {% endif %}
+</form>
+
+{# ── Proposals table (wrapped in selectable form) ─────────────────────── #}
+{% if not proposals %}
+<div class="card empty-state" style="padding:60px;">
+  <div style="font-size:32px; margin-bottom:12px;">✓</div>
+  <div style="font-size:14px; color:var(--text);">No matching pending proposals.</div>
+</div>
+{% else %}
+
+<form id="proposals-form" method="post"
+      action="/contacts/proposals-review/approve-selected"
+      onsubmit="return confirmApproveSelected(this);">
+
+  {# ── Action bar ──────────────────────────────────────────────────────── #}
+  <div class="card" style="margin-bottom:12px; padding:12px 16px;
+                            display:flex; align-items:center;
+                            justify-content:space-between; gap:12px;">
+    <div style="display:flex; align-items:center; gap:14px; font-size:13px; color:var(--text);">
+      <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+        <input type="checkbox" id="select-all-pending"
+               onchange="toggleAllPending(this);">
+        Select all on this page
+      </label>
+      <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+        <input type="checkbox" id="select-confirmed"
+               onchange="toggleConfirmed(this);">
+        Select all 1.00 (perfect)
+      </label>
+      <span style="font-size:12px; color:var(--muted);">
+        <span id="selected-count">0</span> selected
+      </span>
+    </div>
+    <button type="submit" id="approve-selected-btn" class="btn-primary"
+            style="background:#166534;" disabled>
+      Approve Selected →
+    </button>
+  </div>
+
+  <div class="card" style="padding:0; overflow:hidden;">
+    <table class="data-table" style="margin:0;">
+      <thead>
+        <tr>
+          <th style="width:36px;"></th>
+          <th>Contact</th>
+          <th>Matter</th>
+          <th>Role</th>
+          <th>Signal</th>
+          <th>Confidence</th>
+          <th>Notes</th>
+          <th style="text-align:right;">Single</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in proposals %}
+        <tr data-confidence="{{ p.confidence }}" data-perfect="{{ '1' if p.confidence|float >= 1.0 else '0' }}">
+          <td>
+            <input type="checkbox" name="proposal_id" value="{{ p.proposal_id }}"
+                   class="proposal-check" onchange="updateSelectedCount();">
+          </td>
+          <td>
+            <a href="/contacts/{{ p.contact_id }}" target="_blank"
+               style="color:var(--text); text-decoration:none; font-weight:500;">
+              {{ p.contact_name }}
+            </a>
+            <div style="font-size:11px; color:var(--muted);">
+              {{ p.contact_email or p.contact_phone or '—' }}
+              {% if p.contact_company %} · {{ p.contact_company }}{% endif %}
+            </div>
+          </td>
+          <td>
+            <div style="font-weight:500;">{{ p.matter_number }} {{ p.matter_name }}</div>
+            {% if p.client_name %}
+            <div style="font-size:11px; color:var(--muted);">{{ p.client_name }}</div>
+            {% endif %}
+          </td>
+          <td>
+            <span class="badge badge-gray">{{ p.proposed_role or '—' }}</span>
+            {% if p.proposed_is_primary == 'Y' %}
+            <span class="badge badge-green" style="margin-left:4px;">primary</span>
+            {% endif %}
+          </td>
+          <td>
+            <span class="badge
+              {% if 'email' in p.signal_type %}badge-green
+              {% elif 'phone' in p.signal_type %}badge-blue
+              {% elif 'name' in p.signal_type %}badge-yellow
+              {% else %}badge-gray{% endif %}">
+              {{ p.signal_type }}
+            </span>
+            {% if p.signal_count|int > 1 %}
+            <span style="color:var(--muted); font-size:11px; margin-left:4px;">×{{ p.signal_count }}</span>
+            {% endif %}
+          </td>
+          <td style="font-family:ui-monospace,monospace;
+                     {% if p.confidence >= 1.0 %}color:#166534;
+                     {% elif p.confidence >= 0.95 %}color:#1E40AF;
+                     {% elif p.confidence >= 0.85 %}color:var(--text);
+                     {% else %}color:var(--muted);{% endif %}">
+            {{ "%.2f"|format(p.confidence|float) }}
+          </td>
+          <td style="font-size:11px; color:var(--muted); max-width:280px;
+                     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+              title="{{ p.notes }}">
+            {{ p.notes }}
+          </td>
+          <td style="text-align:right; white-space:nowrap;">
+            {# Single-action buttons go via separate forms (escape from the
+               checkbox form) so they don't carry the proposal_id checkboxes
+               with them. We use formaction + formmethod on the buttons
+               but they STILL submit this form. To truly escape, we use
+               <a> with onclick to an inline form-builder that POSTs once.
+            #}
+            <button type="button"
+                    onclick="postSingle('/contacts/proposals-review/{{ p.proposal_id }}/approve');"
+                    style="font-size:12px; color:#166534; background:none;
+                           border:none; cursor:pointer; padding:0;
+                           font-family:'DM Sans',sans-serif;">
+              Approve
+            </button>
+            <span style="color:var(--muted); margin:0 6px;">·</span>
+            <button type="button"
+                    onclick="postSingle('/contacts/proposals-review/{{ p.proposal_id }}/reject');"
+                    style="font-size:12px; color:#991B1B; background:none;
+                           border:none; cursor:pointer; padding:0;
+                           font-family:'DM Sans',sans-serif;">
+              Reject
+            </button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div style="font-size:11px; color:var(--muted); margin-top:10px;">
+    Showing {{ proposals | length }} of {{ counts.n_total }} pending proposals
+    {% if proposals | length >= 500 %} (limit reached){% endif %}
+  </div>
+</form>
+
+<script>
+  function $checks() {
+    return Array.from(document.querySelectorAll('.proposal-check'));
+  }
+
+  function updateSelectedCount() {
+    var n = $checks().filter(function(c){ return c.checked; }).length;
+    document.getElementById('selected-count').textContent = n;
+    var btn = document.getElementById('approve-selected-btn');
+    btn.disabled = n === 0;
+    btn.style.opacity = n === 0 ? '0.5' : '1';
+    // Sync the master checkboxes' visual state
+    var allChecked = $checks().length > 0 && $checks().every(function(c){ return c.checked; });
+    document.getElementById('select-all-pending').checked = allChecked;
+  }
+
+  function toggleAllPending(master) {
+    $checks().forEach(function(c){ c.checked = master.checked; });
+    // If master flipped on, untoggle the other master to avoid implying both states
+    if (master.checked) {
+      document.getElementById('select-confirmed').checked = false;
+    }
+    updateSelectedCount();
+  }
+
+  function toggleConfirmed(master) {
+    // Check only rows whose data-perfect="1"
+    var rows = Array.from(document.querySelectorAll('tr[data-perfect]'));
+    rows.forEach(function(row) {
+      var cb = row.querySelector('.proposal-check');
+      if (!cb) return;
+      if (master.checked && row.getAttribute('data-perfect') === '1') {
+        cb.checked = true;
+      } else if (!master.checked && row.getAttribute('data-perfect') === '1') {
+        cb.checked = false;
+      }
+    });
+    if (master.checked) {
+      document.getElementById('select-all-pending').checked = false;
+    }
+    updateSelectedCount();
+  }
+
+  function confirmApproveSelected(form) {
+    var n = $checks().filter(function(c){ return c.checked; }).length;
+    if (n === 0) return false;
+    return confirm('Approve ' + n + ' selected proposal' + (n === 1 ? '' : 's') +
+                   '? This creates ' + n + ' matter_contacts row' + (n === 1 ? '' : 's') +
+                   ' and cannot be undone via the UI.');
+  }
+
+  // Single-action button helper — builds an inline form, submits it,
+  // bypassing the checkbox form entirely
+  function postSingle(url) {
+    var f = document.createElement('form');
+    f.method = 'post';
+    f.action = url;
+    f.style.display = 'none';
+    document.body.appendChild(f);
+    f.submit();
+  }
+
+  // Initial count
+  updateSelectedCount();
+</script>
+
+{% endif %}
+
+{% endblock %}

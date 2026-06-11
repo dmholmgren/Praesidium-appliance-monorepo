@@ -774,6 +774,107 @@ async def push_to_time_entries(
     )
 
 
+
+@router.get("/{session_id}/search-matters")
+async def search_matters_for_reassign(
+    request: Request,
+    session_id: str,
+    q: str = "",
+    tenant_id: Optional[str] = None,
+):
+    """HTMX typeahead: search matters for inline reassignment."""
+    sess = await _require_admin(request)
+    tid = (tenant_id or sess["tenant_id"]).strip()
+    if not q or len(q) < 2:
+        return JSONResponse({"matters": []})
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(
+            text("""
+                SELECT m.id::text, m.matter_name, m.matter_number,
+                       c.client_name
+                FROM matters m
+                LEFT JOIN clients c ON c.id = m.client_id
+                  AND trim(c.tenant_id) = trim(m.tenant_id)
+                WHERE trim(m.tenant_id) = trim(:tid)
+                  AND m.status = 'active'
+                  AND (
+                    m.matter_name ILIKE :q
+                    OR m.matter_number ILIKE :q
+                    OR c.client_name ILIKE :q
+                  )
+                ORDER BY
+                  CASE WHEN LOWER(m.matter_name) LIKE LOWER(:eq) THEN 0
+                       WHEN LOWER(c.client_name) LIKE LOWER(:eq) THEN 1
+                       ELSE 2 END,
+                  m.matter_name
+                LIMIT 15
+            """),
+            {"tid": tid, "q": f"%{q}%", "eq": f"{q}%"},
+        )
+        matters = [{"id": r["id"], "name": r["matter_name"],
+                     "number": r["matter_number"] or "",
+                     "client": r["client_name"] or ""}
+                    for r in rows.mappings().fetchall()]
+    return JSONResponse({"matters": matters})
+
+
+@router.post("/{session_id}/reassign/{draft_id}")
+async def reassign_draft_matter(
+    request: Request,
+    session_id: str,
+    draft_id: str,
+):
+    """AJAX: reassign a draft to a different matter without full edit modal."""
+    sess = await _require_admin(request)
+    body = await request.json()
+    matter_id = body.get("matter_id")
+    matter_name = body.get("matter_name")
+    tid = (body.get("tenant_id") or sess["tenant_id"]).strip()
+
+    async with AsyncSessionLocal() as db:
+        await db.execute(
+            text("""
+                UPDATE timesheet_drafts
+                SET matter_id = CAST(:mid AS uuid),
+                    matter_name = :mname,
+                    ai_confidence = GREATEST(ai_confidence, 0.95),
+                    reviewed_at = NOW(),
+                    reviewed_by = :uid
+                WHERE id = :did AND session_id = :sid
+            """),
+            {"mid": matter_id if matter_id else None,
+             "mname": matter_name,
+             "uid": sess["user_id"],
+             "did": draft_id, "sid": session_id},
+        )
+        await db.commit()
+    return JSONResponse({"status": "ok", "draft_id": draft_id,
+                          "matter_id": matter_id, "matter_name": matter_name})
+
+
+
+@router.post("/{session_id}/inline-edit/{draft_id}")
+async def inline_edit_draft(request: Request, session_id: str, draft_id: str):
+    """AJAX: inline edit hours and/or description."""
+    sess = await _require_admin(request)
+    body = await request.json()
+    updates, params = [], {"did": draft_id, "sid": session_id, "uid": sess["user_id"]}
+    if "hours" in body:
+        h = math.ceil(float(body["hours"]) * 4) / 4
+        updates.append("hours = :hours")
+        params["hours"] = h
+    if "description" in body:
+        updates.append("description = :desc")
+        params["desc"] = body["description"]
+    if not updates:
+        return JSONResponse({"status": "no_changes"})
+    updates += ["reviewed_at = NOW()", "reviewed_by = :uid"]
+    async with AsyncSessionLocal() as db:
+        await db.execute(text(f"UPDATE timesheet_drafts SET {', '.join(updates)} WHERE id = :did AND session_id = :sid"), params)
+        await db.commit()
+    return JSONResponse({"status": "ok", "draft_id": draft_id, "hours": params.get("hours"), "description": params.get("desc")})
+
+
 @router.get("/{session_id}/status")
 async def timesheet_status(
     request: Request,

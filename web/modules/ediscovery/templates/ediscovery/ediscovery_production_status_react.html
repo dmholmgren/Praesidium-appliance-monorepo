@@ -1,0 +1,6 @@
+{% extends "shell.html" %}
+{% block title %}Production Status — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block content %}
+<div id="ediscovery-production-status-root"></div>
+<script type="module" src="/static/js/ediscovery-production-status.js?v=1"></script>
+{% endblock %}

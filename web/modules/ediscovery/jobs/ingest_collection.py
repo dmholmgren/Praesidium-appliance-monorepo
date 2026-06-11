@@ -32,10 +32,66 @@ from modules.ediscovery.models.collections import (
     EdiscoveryCollection, CollectionStatus, SourceType,
 )
 from modules.ediscovery.models.documents import EdiscoveryDocument
-from modules.ediscovery.services.text_extraction import extract_text, extract_email_metadata
+from modules.ediscovery.services.text_extraction import extract_text, extract_email_metadata, extract_email_attachments
 from modules.ediscovery.services.embedding import generate_embedding
+from modules.ediscovery.services.normalization import normalize as normalize_text
+from modules.ediscovery.jobs.split_zip_reassemble import detect_split_zip, reassemble_split_zip
+from modules.ediscovery.jobs.folder_decompose import scan_folder_source, build_child_specs
 
 logger = logging.getLogger(__name__)
+# ── Real-time progress logging ──────────────────────────────────────────
+def _parse_database_url():
+    """Extract psycopg2 connection kwargs from DATABASE_URL."""
+    from urllib.parse import urlparse
+    raw = os.environ.get("DATABASE_URL", "")
+    # Strip SQLAlchemy dialect prefix if present
+    for prefix in ("postgresql+asyncpg://", "postgresql+psycopg2://", "postgresql://"):
+        if raw.startswith(prefix):
+            raw = "postgresql://" + raw[len(prefix):]
+            break
+    parsed = urlparse(raw)
+    return {
+        "dbname":   parsed.path.lstrip("/") or "praesidium",
+        "user":     parsed.username or "praesidium",
+        "password": parsed.password or "",
+        "host":     parsed.hostname or "172.28.0.1",
+        "port":     str(parsed.port or 5432),
+    }
+
+
+def log_progress(tenant_id, collection_id, message, level="info"):
+    """Write a progress entry to ediscovery_ingestion_log for live UI polling."""
+    try:
+        import psycopg2
+        conn = psycopg2.connect(**_parse_database_url())
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO ediscovery_ingestion_log (tenant_id, collection_id, level, message) "
+                "VALUES (%s, %s::uuid, %s, %s)",
+                (tenant_id, str(collection_id), level, message[:2000])
+            )
+        conn.close()
+    except Exception as e:
+        logger.warning("log_progress failed: %s", e)
+
+
+def setup_job_logger(log_path, job_name="ingestion"):
+    """Create a file logger that writes to a per-job log file."""
+    os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    job_logger = logging.getLogger(f"praesidium.job.{job_name}")
+    job_logger.setLevel(logging.DEBUG)
+    # Remove existing handlers to avoid duplicates on re-run
+    job_logger.handlers = []
+    fh = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+    fh.setLevel(logging.DEBUG)
+    fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    job_logger.addHandler(fh)
+    # Also propagate to root logger so docker logs still works
+    job_logger.propagate = True
+    return job_logger
+
+
 
 # File extensions we know how to process
 SUPPORTED_EXTENSIONS = {
@@ -48,14 +104,255 @@ ARCHIVE_EXTENSIONS = {".zip", ".tar", ".tar.gz", ".tgz", ".7z", ".rar", ".pst"}
 
 EMAIL_EXTENSIONS = {".msg", ".eml"}
 
+def extract_pst_to_eml(pst_path: str, output_dir: str) -> list[str]:
+    """
+    Extract a PST file using pffexport (forensic-grade, from pff-tools).
+
+    pffexport flags:
+      -f text   = plain text output (not HTML/RTF)
+      -m all    = allocated items + orphan + recovered
+      -l log    = audit log — chain of custody artifact
+      -t target = output directory basename
+
+    No timeout — large PSTs (4-7GB) can take 3-4 hours.
+    Audit log is preserved alongside extracted items for defensibility.
+
+    Falls back to readpst if pffexport is not installed.
+
+    Returns list of absolute paths to extracted files.
+    """
+    import subprocess
+
+    os.makedirs(output_dir, exist_ok=True)
+    pst_basename = Path(pst_path).stem
+
+    # pffexport creates <target>.export/ directory
+    pst_output = os.path.join(output_dir, pst_basename)
+    audit_log = os.path.join(output_dir, f"{pst_basename}_pffexport_audit.log")
+
+    try:
+        result = subprocess.run(
+            [
+                "pffexport",
+                "-f", "text",       # plain text output
+                "-m", "all",        # allocated + orphan + recovered
+                "-l", audit_log,    # audit log = chain of custody
+                "-t", pst_output,   # target directory basename
+                pst_path,
+            ],
+            capture_output=True,
+            text=True,
+            # No timeout — large PSTs need hours, not minutes
+        )
+
+        if result.returncode != 0:
+            logger.error(
+                "pffexport failed for %s (rc=%d): stderr=%s stdout=%s",
+                pst_path, result.returncode,
+                result.stderr[:500], result.stdout[:500],
+            )
+            # Fall back to readpst
+            return _extract_pst_readpst_fallback(pst_path, output_dir)
+        else:
+            logger.info(
+                "pffexport completed for %s: %s",
+                pst_path, result.stdout.strip()[:200] if result.stdout else "OK",
+            )
+
+    except FileNotFoundError:
+        logger.warning(
+            "pffexport not found — falling back to readpst for %s", pst_path,
+        )
+        return _extract_pst_readpst_fallback(pst_path, output_dir)
+
+    # Parse audit log for item counts (defensibility)
+    if os.path.exists(audit_log):
+        try:
+            with open(audit_log, "r", encoding="utf-8", errors="replace") as f:
+                log_lines = f.readlines()
+            item_count = sum(1 for l in log_lines if "Exporting" in l or "exported" in l.lower())
+            error_count = sum(1 for l in log_lines if "error" in l.lower() or "unable" in l.lower())
+            logger.info(
+                "PST %s audit: %d log lines, ~%d items exported, %d errors/warnings",
+                pst_basename, len(log_lines), item_count, error_count,
+            )
+        except Exception as e:
+            logger.warning("Could not parse pffexport audit log: %s", e)
+
+    # Collect all extracted files from .export directory
+    # pffexport creates: <target>.export/, <target>.orphans/, <target>.recovered/
+    extracted = []
+    for suffix in (".export", ".orphans", ".recovered"):
+        scan_dir = pst_output + suffix
+        if os.path.isdir(scan_dir):
+            for root, dirs, files in os.walk(scan_dir):
+                for fname in files:
+                    abs_path = os.path.join(root, fname)
+                    # Skip ItemValues.txt debug dumps and zero-byte files
+                    if fname == "ItemValues.txt":
+                        continue
+                    if os.path.getsize(abs_path) == 0:
+                        continue
+                    extracted.append(abs_path)
+
+    logger.info(
+        "PST %s: pffexport extracted %d files to %s",
+        os.path.basename(pst_path), len(extracted), pst_output,
+    )
+    return extracted
+
+
+def _extract_pst_readpst_fallback(pst_path: str, output_dir: str) -> list[str]:
+    """Fallback PST extraction using readpst (no audit log, has timeout issues)."""
+    import subprocess
+
+    pst_basename = Path(pst_path).stem
+    pst_output = os.path.join(output_dir, pst_basename + "_readpst")
+    os.makedirs(pst_output, exist_ok=True)
+
+    try:
+        result = subprocess.run(
+            ["readpst", "-e", "-o", pst_output, pst_path],
+            capture_output=True,
+            text=True,
+            timeout=14400,  # 4 hour timeout (was 1h, caused truncation)
+        )
+        if result.returncode != 0:
+            logger.error("readpst fallback failed for %s (rc=%d): %s",
+                         pst_path, result.returncode, result.stderr)
+        else:
+            logger.info("readpst fallback extracted %s: %s",
+                        pst_path, result.stdout.strip()[:200] if result.stdout else "OK")
+    except FileNotFoundError:
+        logger.error("Neither pffexport nor readpst found. PST %s skipped.", pst_path)
+        return []
+    except subprocess.TimeoutExpired:
+        logger.error("readpst fallback timed out on %s (>4h)", pst_path)
+        return []
+
+    extracted = []
+    for root, dirs, files in os.walk(pst_output):
+        for fname in files:
+            extracted.append(os.path.join(root, fname))
+
+    logger.info("PST %s (readpst fallback): extracted %d files", pst_basename, len(extracted))
+    return extracted
+
+
+def expand_pst_files(files_to_process: list[str], unpacked_path: str) -> list[str]:
+    """
+    Scan files_to_process for .pst files, extract them via readpst,
+    and return a new list with PSTs replaced by their extracted children.
+    Non-PST files pass through unchanged.
+    """
+    expanded = []
+    for fpath in files_to_process:
+        if Path(fpath).suffix.lower() == ".pst":
+            logger.info("Expanding PST: %s", fpath)
+            extracted = extract_pst_to_eml(fpath, unpacked_path)
+            if extracted:
+                expanded.extend(extracted)
+                logger.info(
+                    "PST %s expanded to %d files",
+                    os.path.basename(fpath), len(extracted),
+                )
+            else:
+                logger.warning(
+                    "PST %s: no files extracted, keeping in list",
+                    os.path.basename(fpath),
+                )
+                expanded.append(fpath)
+        else:
+            expanded.append(fpath)
+    return expanded
+
+
+
+
+# -- intake throughput tuning ------------------------------------------------
+INGEST_HASH_WORKERS = max(1, int(os.environ.get("INGEST_HASH_WORKERS", "12")))
+INGEST_EXTRACT_WORKERS = max(1, int(os.environ.get("INGEST_EXTRACT_WORKERS", "8")))
+# Intake is hash + stat + insert; text extraction, normalization and
+# embeddings belong to the parallel DAG stages. INGEST_INLINE_TEXT=1
+# restores the old inline behavior for collections run without the DAG.
+INGEST_INLINE_TEXT = os.environ.get("INGEST_INLINE_TEXT", "0") == "1"
+
+_HASH_CACHE: dict = {}
+
+
+def _hash_one(path: str):
+    try:
+        s = hashlib.sha256()
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1048576), b""):
+                s.update(chunk)
+        return s.hexdigest()
+    except Exception:
+        return None
+
+
+def prehash_files(paths, workers: int = 0) -> int:
+    """Fill the sha256 cache in parallel ahead of the ingest loops.
+    Hashing 788K files / 250 GB serially inside the per-doc loop was a
+    dominant intake cost; this front-loads it across a process pool."""
+    import concurrent.futures as _cf
+    import multiprocessing as _mp
+    todo = [p for p in paths if p not in _HASH_CACHE]
+    if not todo:
+        return 0
+    w = workers or INGEST_HASH_WORKERS
+    ctx = _mp.get_context("spawn")
+    n = 0
+    with _cf.ProcessPoolExecutor(max_workers=w, mp_context=ctx) as ex:
+        for p, h in zip(todo, ex.map(_hash_one, todo, chunksize=64)):
+            if h:
+                _HASH_CACHE[p] = h
+                n += 1
+    return n
+
+
+def _extract_zip_parallel(archive_path: str, unpacked_path: str) -> list:
+    """Threaded ZIP extraction (INGEST_EXTRACT_WORKERS, default 8).
+    zlib inflation releases the GIL, so threads scale to the I/O ceiling;
+    each thread owns its own ZipFile handle. Directories are pre-created
+    to avoid extract-time races."""
+    import concurrent.futures as _cf
+    with zipfile.ZipFile(archive_path, "r") as zf:
+        names = [n for n in zf.namelist() if not n.endswith("/")]
+    dirs = {os.path.dirname(n) for n in names}
+    for d in sorted(dirs):
+        if d:
+            os.makedirs(os.path.join(unpacked_path, d), exist_ok=True)
+
+    def _worker(shard):
+        out = []
+        with zipfile.ZipFile(archive_path, "r") as z:
+            for n in shard:
+                z.extract(n, unpacked_path)
+                out.append(os.path.join(unpacked_path, n))
+        return out
+
+    w = INGEST_EXTRACT_WORKERS
+    shards = [names[i::w] for i in range(w)]
+    files = []
+    with _cf.ThreadPoolExecutor(max_workers=w) as ex:
+        for res in ex.map(_worker, shards):
+            files.extend(res)
+    return files
+
 
 def compute_sha256(file_path: str) -> str:
-    """Compute SHA-256 hash of a file."""
+    """Compute SHA-256 hash of a file (consults the prehash cache first)."""
+    cached = _HASH_CACHE.get(file_path)
+    if cached:
+        return cached
     sha256 = hashlib.sha256()
     with open(file_path, "rb") as f:
         for chunk in iter(lambda: f.read(65536), b""):
             sha256.update(chunk)
-    return sha256.hexdigest()
+    h = sha256.hexdigest()
+    _HASH_CACHE[file_path] = h
+    return h
 
 
 def create_collection_directories(storage_path: str) -> None:
@@ -105,25 +402,65 @@ def preserve_archive(
     Copy original archive to as_received/, extract to unpacked/.
     Returns (archive_hash, list_of_extracted_file_paths).
     """
-    # Copy archive to as_received
+    # Copy archive to as_received (skip if already there)
     archive_name = os.path.basename(archive_path)
     preserved_archive = os.path.join(as_received_path, archive_name)
-    shutil.copy2(archive_path, preserved_archive)
-    archive_hash = compute_sha256(preserved_archive)
+    if os.path.realpath(archive_path) != os.path.realpath(preserved_archive):
+        shutil.copy2(archive_path, preserved_archive)
 
     # Extract based on type
     extracted_files = []
     ext = Path(archive_path).suffix.lower()
 
     if ext == ".zip":
-        with zipfile.ZipFile(archive_path, "r") as zf:
-            zf.extractall(unpacked_path)
-            extracted_files = [
-                os.path.join(unpacked_path, name)
-                for name in zf.namelist()
-                if not name.endswith("/")
-            ]
-    elif ext in (".tar", ".tgz") or archive_path.endswith(".tar.gz"):
+        # Resume-aware extraction: a sidecar manifest records the archive
+        # signature, its sha256, and the extracted relpaths. A verified hit
+        # skips both re-extraction and the full archive re-hash on requeue.
+        import json as _json
+        manifest_path = os.path.join(
+            os.path.dirname(unpacked_path.rstrip("/")),
+            ".extract-manifest-" + archive_name + ".json")
+        try:
+            _st = os.stat(preserved_archive)
+            sig = {"size": _st.st_size, "mtime": int(_st.st_mtime)}
+        except OSError:
+            sig = None
+        cached = None
+        if sig is not None:
+            try:
+                with open(manifest_path) as _mf:
+                    cached = _json.load(_mf)
+            except Exception:
+                cached = None
+        if (cached and cached.get("sig") == sig
+                and cached.get("files") and cached.get("archive_hash")):
+            files = [os.path.join(unpacked_path, f) for f in cached["files"]]
+            probe = files[:100] + files[-100:]
+            if all(os.path.exists(p) for p in probe):
+                _HASH_CACHE[preserved_archive] = cached["archive_hash"]
+                logger.info(
+                    "Extraction resume: manifest verified for %s (%d files); "
+                    "skipping re-extract and archive re-hash",
+                    archive_name, len(files))
+                return cached["archive_hash"], files
+            logger.info("Extraction manifest stale for %s; re-extracting",
+                        archive_name)
+        archive_hash = compute_sha256(preserved_archive)
+        extracted_files = _extract_zip_parallel(archive_path, unpacked_path)
+        try:
+            with open(manifest_path, "w") as _mf:
+                _json.dump({
+                    "sig": sig,
+                    "archive_hash": archive_hash,
+                    "files": [os.path.relpath(p, unpacked_path)
+                              for p in extracted_files],
+                }, _mf)
+        except Exception as _me:
+            logger.warning("extract manifest write failed (non-blocking): %s", _me)
+        return archive_hash, extracted_files
+
+    archive_hash = compute_sha256(preserved_archive)
+    if ext in (".tar", ".tgz") or archive_path.endswith(".tar.gz"):
         with tarfile.open(archive_path, "r:*") as tf:
             tf.extractall(unpacked_path)
             extracted_files = [
@@ -229,6 +566,32 @@ def _normalise_dat_path(raw: str) -> str:
     return "originals/unpacked/" + p.lstrip('/')
 
 
+
+def _parse_csv_load_file(csv_path: str) -> list[dict]:
+    """
+    Parse a Concordance CSV load file (e.g. Volume001.csv).
+    Returns list of dicts keyed by header field names — same format as parse_dat_file().
+    Handles UTF-8 with BOM and Windows-1252 encodings.
+    """
+    import csv as _csv
+    rows = []
+    for enc in ("utf-8-sig", "windows-1252", "utf-8"):
+        try:
+            with open(csv_path, encoding=enc, errors="replace", newline="") as f:
+                reader = _csv.DictReader(f)
+                for row in reader:
+                    # Strip whitespace from keys and values
+                    cleaned = {k.strip(): (v.strip() if v else "") for k, v in row.items() if k}
+                    if cleaned:
+                        rows.append(cleaned)
+            break
+        except Exception:
+            continue
+
+    logger.info("CSV load file parsed: %d rows from %s", len(rows), csv_path)
+    return rows
+
+
 def build_dat_document_map(collection_storage_path: str) -> dict:
     """
     Scan a collection's unpacked directory for a .dat load file.
@@ -242,34 +605,53 @@ def build_dat_document_map(collection_storage_path: str) -> dict:
     """
     import glob
 
-    # Find .dat file anywhere under originals/unpacked/
-    pattern = os.path.join(collection_storage_path, "originals", "unpacked", "**", "*.dat")
-    dat_files = glob.glob(pattern, recursive=True)
-    if not dat_files:
+    # Find .dat or .csv load file anywhere under originals/unpacked/
+    pattern_dat = os.path.join(collection_storage_path, "originals", "unpacked", "**", "*.dat")
+    pattern_csv = os.path.join(collection_storage_path, "originals", "unpacked", "**", "*.csv")
+    dat_files = glob.glob(pattern_dat, recursive=True)
+    csv_files = glob.glob(pattern_csv, recursive=True)
+
+    load_file_path = None
+    load_file_format = None
+
+    if dat_files:
+        load_file_path = dat_files[0]
+        load_file_format = "dat"
+    elif csv_files:
+        load_file_path = csv_files[0]
+        load_file_format = "csv"
+    else:
         return {}
 
-    dat_path = dat_files[0]  # Use first found — should only be one per production
-    logger.info("DAT-aware ingest: found load file %s", dat_path)
+    logger.info("Load-file-aware ingest: found %s load file %s", load_file_format, load_file_path)
 
-    rows = parse_dat_file(dat_path)
+    if load_file_format == "dat":
+        rows = parse_dat_file(load_file_path)
+    else:
+        rows = _parse_csv_load_file(load_file_path)
+
     if not rows:
-        logger.warning("DAT parse returned no rows: %s", dat_path)
+        logger.warning("Load file parse returned no rows: %s", load_file_path)
         return {}
 
     # Detect field names — DAT headers vary by producing party
     # Common aliases for each logical field
     BATES_KEYS    = ["Production::Begin Bates", "Begin Bates", "BegBates", "BEGBATES",
-                     "Beg Prod", "Begin Production"]
+                     "Beg Prod", "Begin Production",
+                     "BEGDOC#", "DOCID"]
     TEXT_KEYS     = ["Text Precedence", "TEXT_PATH", "Extracted Text Path",
-                     "ExtractedTextPath", "TextPath"]
+                     "ExtractedTextPath", "TextPath", "TEXTLINK"]
     NATIVE_KEYS   = ["FILE_PATH", "Native File Path", "NativeFilePath",
-                     "NATIVE_PATH", "Natives"]
-    SUBJECT_KEYS  = ["Subject", "Email Subject", "SUBJECT"]
-    FROM_KEYS     = ["From", "Email From", "FROM"]
+                     "NATIVE_PATH", "Natives", "DOCLINK"]
+    SUBJECT_KEYS  = ["Subject", "Email Subject", "SUBJECT", "ESUBJECT"]
+    FROM_KEYS     = ["From", "Email From", "FROM", "EAUTHOR"]
     TO_KEYS       = ["To", "Email To", "TO"]
     DATE_KEYS     = ["Sent Date/Time", "Date Sent", "Date Created",
-                     "Last Modified Date/Time", "DOCDATE"]
+                     "Last Modified Date/Time", "DOCDATE", "DATECREATED", "DATESENT"]
     CUSTODIAN_KEYS = ["All Custodians", "Custodian", "CUSTODIAN"]
+    NUMPAGES_KEYS  = ["NUMPAGES", "Page Count", "PageCount"]
+    MD5_KEYS       = ["MD5 Hash", "MD5", "MD5HASH", "HASHMD5"]
+    FILENAME_KEYS  = ["File Name", "FILENAME", "FileName"]
 
     def _get(row: dict, keys: list) -> str:
         for k in keys:
@@ -285,7 +667,7 @@ def build_dat_document_map(collection_storage_path: str) -> dict:
 
         doc_map[bates] = {
             "bates_begin":   bates,
-            "bates_end":     _get(row, ["Production::End Bates", "End Bates", "EndBates"]) or bates,
+            "bates_end":     _get(row, ["Production::End Bates", "End Bates", "EndBates", "ENDDOC#"]) or bates,
             "image_path":    "",   # filled from OPT file or IMAGES/ scan
             "text_path":     _normalise_dat_path(_get(row, TEXT_KEYS)),
             "native_path":   _normalise_dat_path(_get(row, NATIVE_KEYS)),
@@ -295,11 +677,18 @@ def build_dat_document_map(collection_storage_path: str) -> dict:
             "doc_date_str":  _get(row, DATE_KEYS),
             "custodian":     _get(row, CUSTODIAN_KEYS),
             "confidentiality": _get(row, ["Confidentiality", "CONFIDENTIALITY"]),
-            "md5_hash":      _get(row, ["MD5 Hash", "MD5", "MD5HASH"]),
-            "file_name":     _get(row, ["File Name", "FILENAME", "FileName"]),
+            "md5_hash":      _get(row, MD5_KEYS),
+            "file_name":     _get(row, FILENAME_KEYS),
+            "num_pages":     _get(row, NUMPAGES_KEYS),
+            "native_link":   _get(row, ["DOCLINK", "Native File Path", "NativeFilePath", "NATIVE_PATH"]),
+            "text_link":     _get(row, ["TEXTLINK", "Extracted Text Path", "ExtractedTextPath", "TEXT_PATH"]),
         }
 
-    # Now scan IMAGES/ to fill image_path for each Bates
+    # Now scan IMAGES/ to fill image_path for each Bates.
+    # O(1) per file via a single uppercased index. (The previous version
+    # rebuilt an uppercased list of EVERY Bates record per image file and
+    # then scanned it again -- O(files x bates), days of CPU at 788K files.)
+    upper_idx = {b.upper(): b for b in doc_map}
     images_dir = os.path.join(collection_storage_path, "originals", "unpacked")
     for root, dirs, files in os.walk(images_dir):
         # Only look in IMAGES directories
@@ -307,15 +696,14 @@ def build_dat_document_map(collection_storage_path: str) -> dict:
             continue
         for fname in files:
             stem = Path(fname).stem.upper()
-            if stem in [b.upper() for b in doc_map]:
-                # Match by Bates stem
-                matched_bates = next(
-                    (b for b in doc_map if b.upper() == stem), None
-                )
-                if matched_bates:
-                    abs_path = os.path.join(root, fname)
-                    rel_path = os.path.relpath(abs_path, collection_storage_path)
-                    doc_map[matched_bates]["image_path"] = rel_path
+            matched_bates = upper_idx.get(stem)
+            if matched_bates is None and "_" in stem:
+                # multi-page image convention: BATES_0001.tif
+                matched_bates = upper_idx.get(stem.rsplit("_", 1)[0])
+            if matched_bates:
+                abs_path = os.path.join(root, fname)
+                rel_path = os.path.relpath(abs_path, collection_storage_path)
+                doc_map[matched_bates]["image_path"] = rel_path
 
     logger.info("DAT-aware ingest: mapped %d documents from load file", len(doc_map))
     return doc_map
@@ -367,6 +755,87 @@ def match_dms_document(
     return None
 
 
+def _apply_normalization(session, tenant_id, doc_id, extracted_text, doc_type, email_meta):
+    """
+    Run normalization on extracted_text and write results to DB.
+    Sets: normalized_text, normalized_metadata, detected_language,
+          text_source, ocr_status, translation_status.
+    Inserts email_segments rows for emails.
+    Returns the normalize() result dict.
+    """
+    import json as _json
+    import uuid as _uuid
+    from sqlalchemy import text as _sa_text
+
+    if not extracted_text:
+        # Still set provenance columns even with no text
+        session.execute(_sa_text("""
+            UPDATE ediscovery_documents
+            SET text_source = 'extract',
+                ocr_status = CASE WHEN doc_type IN ('pdf', 'image') THEN 'queued' ELSE 'not_needed' END
+            WHERE id = CAST(:did AS uuid)
+        """), {"did": str(doc_id)})
+        return None
+
+    try:
+        norm_result = normalize_text(extracted_text, doc_type, email_meta or {})
+    except Exception as e:
+        logger.warning("normalize() failed for doc %s: %s", doc_id, e)
+        return None
+
+    normalized_text = norm_result.get("normalized_text")
+    normalized_metadata = norm_result.get("normalized_metadata") or {}
+    segments = norm_result.get("segments") or []
+
+    detected_lang = normalized_metadata.get("detected_language", "en")
+    translation_status = "not_needed" if detected_lang == "en" else "queued"
+    ocr_status = "skipped_has_text" if extracted_text else "queued"
+    if doc_type not in ("pdf", "image"):
+        ocr_status = "not_needed"
+
+    session.execute(_sa_text("""
+        UPDATE ediscovery_documents
+        SET normalized_text = :norm_text,
+            normalized_metadata = CAST(:norm_meta AS jsonb),
+            detected_language = :lang,
+            text_source = 'extract',
+            ocr_status = :ocr_status,
+            translation_status = :trans_status
+        WHERE id = CAST(:did AS uuid)
+    """), {
+        "norm_text": normalized_text,
+        "norm_meta": _json.dumps(normalized_metadata),
+        "lang": detected_lang,
+        "ocr_status": ocr_status,
+        "trans_status": translation_status,
+        "did": str(doc_id),
+    })
+
+    # Insert email segments
+    for seg in segments:
+        seg_id = str(_uuid.uuid4())
+        session.execute(_sa_text("""
+            INSERT INTO email_segments
+                (id, tenant_id, document_id, segment_index, author,
+                 sent_date, normalized_hash, content, is_top, created_at)
+            VALUES
+                (CAST(:sid AS uuid), :tid, CAST(:did AS uuid), :idx, :author,
+                 CAST(:sent AS timestamptz), :nhash, :content, :is_top, now())
+        """), {
+            "sid": seg_id,
+            "tid": tenant_id,
+            "did": str(doc_id),
+            "idx": seg.get("segment_index", 0),
+            "author": (seg.get("author") or "")[:255],
+            "sent": seg.get("sent_date"),
+            "nhash": (seg.get("normalized_hash") or "")[:64],
+            "content": seg.get("content"),
+            "is_top": seg.get("is_top", False),
+        })
+
+    return norm_result
+
+
 def ingest_ediscovery_collection(
     tenant_id: str,
     collection_id: int,
@@ -393,8 +862,120 @@ def ingest_ediscovery_collection(
             EdiscoveryCollection.tenant_id == tenant_id,
         ).one()
 
-        collection.status = CollectionStatus.processing
+        # Set up per-job file logger
+        log_path = os.path.join(collection.storage_path, "ingestion.log")
+        jlog = setup_job_logger(log_path, f"ingest-{collection_id}")
+        jlog.info("=" * 60)
+        jlog.info("INGESTION JOB STARTED")
+        jlog.info("Collection: %s (id=%s)", collection.collection_name or collection.name, collection_id)
+        jlog.info("Source: %s", collection.dms_source_path or collection.storage_path)
+        jlog.info("Storage: %s", collection.storage_path)
+        jlog.info("=" * 60)
+
+        collection.status = "processing"
         session.commit()
+
+        # ── Folder decomposition ────────────────────────────────────
+        # If the source is a directory with multiple archives/subfolders,
+        # automatically create child collections and enqueue them.
+        # The parent becomes a tracker that rolls up child progress.
+        raw_source = collection.dms_source_path or ""
+        source_paths_check = [p.strip() for p in raw_source.split(",") if p.strip()]
+
+        if (len(source_paths_check) == 1
+            and os.path.isdir(source_paths_check[0])
+            and collection.source_type in ("opposing_production", "client_documents",
+                                            "third_party_subpoena", "internal_collection")):
+
+            scan = scan_folder_source(source_paths_check[0])
+            jlog.info("Folder scan: %s — %d archives, %d subfolders, %d loose files, %s total",
+                       scan["reason"], len(scan["archives"]), len(scan["subfolders"]),
+                       len(scan["loose_files"]),
+                       f"{scan['total_size_bytes'] / (1024**3):.1f}GB")
+            log_progress(tenant_id, collection_id,
+                         f"Scanned source folder: {scan['total_file_count']} files, "
+                         f"{scan['total_size_bytes'] / (1024**3):.1f}GB — {scan['reason']}")
+
+            if scan["should_decompose"]:
+                child_specs = build_child_specs(scan, collection.collection_name or collection.name)
+                jlog.info("Decomposing into %d child collections", len(child_specs))
+                log_progress(tenant_id, collection_id,
+                             f"Decomposing into {len(child_specs)} sub-collections")
+
+                # Create child collections and enqueue each
+                import uuid as _uuid_mod
+                from redis import Redis
+                from rq import Queue
+                REDIS_URL = os.environ.get("REDIS_URL", "redis://10.10.60.12:6379/0")
+                redis_conn = Redis.from_url(REDIS_URL)
+                q = Queue("ediscovery", connection=redis_conn)
+
+                child_ids = []
+                ediscovery_root = os.environ.get("EDISCOVERY_STORAGE_ROOT", "/mnt/ediscovery")
+
+                for spec in child_specs:
+                    child_id = str(_uuid_mod.uuid4())
+                    child_storage = os.path.join(
+                        ediscovery_root, tenant_id, str(collection.matter_id),
+                        spec["name"].replace(" ", "_").replace("/", "_")[:100],
+                    )
+                    from sqlalchemy import text as _sa_text
+                    session.execute(_sa_text("""
+                        INSERT INTO ediscovery_collections
+                            (id, tenant_id, matter_id, collection_name, name,
+                             storage_path, source_type, source_party,
+                             dms_source_path, status, parent_collection_id,
+                             received_by)
+                        VALUES
+                            (CAST(:cid AS uuid), :tid, CAST(:mid AS uuid), :cname, :cname,
+                             :spath, :stype, :sparty,
+                             :dms_path, 'collecting', CAST(:parent_id AS uuid),
+                             :uid)
+                    """), {
+                        "cid": child_id,
+                        "tid": tenant_id,
+                        "mid": str(collection.matter_id),
+                        "cname": spec["name"][:255],
+                        "spath": child_storage,
+                        "stype": collection.source_type,
+                        "sparty": collection.source_party,
+                        "dms_path": spec["source_path"],
+                        "parent_id": str(collection_id),
+                        "uid": user_id,
+                    })
+                    child_ids.append(child_id)
+
+                    jlog.info("  Created child: %s → %s", spec["name"], spec["source_desc"])
+                    log_progress(tenant_id, collection_id,
+                                 f"Created sub-collection: {spec['name']}")
+
+                session.commit()
+
+                # Enqueue child ingest jobs
+                for cid in child_ids:
+                    q.enqueue(
+                        "modules.ediscovery.jobs.ingest_collection.ingest_ediscovery_collection",
+                        tenant_id, cid, user_id,
+                        job_timeout="24h",
+                    )
+
+                # Enqueue rollup monitor job
+                q.enqueue(
+                    "modules.ediscovery.jobs.ingest_collection.rollup_parent_collection",
+                    tenant_id, str(collection_id), child_ids,
+                    job_timeout="48h",
+                )
+
+                jlog.info("Decomposition complete — %d child jobs enqueued", len(child_ids))
+                log_progress(tenant_id, collection_id,
+                             f"Decomposition complete — {len(child_ids)} sub-collections queued for processing",
+                             "success")
+
+                # Parent stays in 'processing' — rollup job will set it to review_ready
+                # when all children are done.
+                return {"status": "decomposed", "children": len(child_ids)}
+
+        # ── Normal ingestion (no decomposition needed) ──────────────        log_progress(tenant_id, collection_id, "Ingestion started — scanning source paths")
 
         storage_service = get_storage_service(tenant_id)
 
@@ -407,7 +988,7 @@ def ingest_ediscovery_collection(
         # Step 2: Get files into originals/unpacked/ based on source type
         files_to_process = []
 
-        if collection.source_type == SourceType.client_collection_dms:
+        if collection.source_type == "client_collection_dms":
             # Copy from DMS file share to eDiscovery originals
             if not collection.dms_source_path:
                 raise ValueError("dms_source_path required for client_collection_dms")
@@ -423,32 +1004,99 @@ def ingest_ediscovery_collection(
             )
 
         elif collection.source_type in (
-            SourceType.opposing_production,
-            SourceType.third_party_subpoena,
+            "opposing_production",
+            "third_party_subpoena",
+            "client_documents",
         ):
             # Preserve original archive, then extract
-            source_path = collection.dms_source_path or collection.storage_path
-            # Use direct filesystem walk -- no storage_service needed
-            source_path = collection.dms_source_path or collection.storage_path
-            for root, dirs, files in os.walk(source_path):
-                if "working" in root:
-                    continue
-                for fname in files:
-                    src_abs = os.path.join(root, fname)
-                    ext = Path(src_abs).suffix.lower()
+            raw_source = collection.dms_source_path or collection.storage_path
+            # Support comma-separated paths (individual file selection from UI)
+            source_paths = [p.strip() for p in raw_source.split(",") if p.strip()]
+
+            def _process_source_entry(entry_path):
+                """Process a single file or directory entry."""
+                if os.path.isfile(entry_path):
+                    # Individual file — process directly
+                    ext = Path(entry_path).suffix.lower()
                     if ext in ARCHIVE_EXTENSIONS:
                         archive_hash, extracted = preserve_archive(
-                            src_abs, originals_as_received, originals_unpacked,
+                            entry_path, originals_as_received, originals_unpacked,
                         )
                         collection.original_hash = archive_hash
-                        collection.original_file_name = os.path.basename(src_abs)
+                        collection.original_file_name = os.path.basename(entry_path)
                         files_to_process.extend(extracted)
-                    elif ext not in {".dat",".opt",".lfp",".log",".csv"}:
-                        dst = os.path.join(originals_unpacked, os.path.basename(src_abs))
-                        if src_abs != dst:
+                        logger.info("Processed archive %s: %d files extracted",
+                                    os.path.basename(entry_path), len(extracted))
+                        log_progress(tenant_id, collection_id, f"Extracted {os.path.basename(entry_path)}: {len(extracted)} files")
+                    elif ext not in {".dat", ".opt", ".lfp", ".log", ".csv"}:
+                        dst = os.path.join(originals_unpacked, os.path.basename(entry_path))
+                        if entry_path != dst:
                             os.makedirs(os.path.dirname(dst), exist_ok=True)
-                            shutil.copy2(src_abs, dst)
+                            shutil.copy2(entry_path, dst)
                         files_to_process.append(dst)
+                elif os.path.isdir(entry_path):
+                    # Directory — walk it
+                    for root, dirs, files in os.walk(entry_path):
+                        if "working" in root or "unpacked" in root or "productions" in root:
+                            continue
+                        for fname in files:
+                            src_abs = os.path.join(root, fname)
+                            ext = Path(src_abs).suffix.lower()
+                            if ext in ARCHIVE_EXTENSIONS:
+                                archive_hash, extracted = preserve_archive(
+                                    src_abs, originals_as_received, originals_unpacked,
+                                )
+                                collection.original_hash = archive_hash
+                                collection.original_file_name = os.path.basename(src_abs)
+                                files_to_process.extend(extracted)
+                            elif ext not in {".dat", ".opt", ".lfp", ".log", ".csv"}:
+                                dst = os.path.join(originals_unpacked, os.path.basename(src_abs))
+                                if src_abs != dst:
+                                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                                    shutil.copy2(src_abs, dst)
+                                files_to_process.append(dst)
+                else:
+                    logger.warning("Source path not found: %s", entry_path)
+
+            # ── Split ZIP detection ──────────────────────────────────
+            # Relativity exports can be split across multiple ZIP segments
+            # (e.g., Production.001.zip, .002.zip, .003.zip). Detect this
+            # pattern and reassemble before extraction.
+            is_split, split_base, split_segments = detect_split_zip(source_paths)
+            if is_split:
+                jlog.info("Detected split Relativity ZIP: %s (%d segments)", split_base, len(split_segments))
+                log_progress(tenant_id, collection_id,
+                             f"Detected split ZIP: {split_base} ({len(split_segments)} segments) — reassembling")
+                try:
+                    reassembled_path = reassemble_split_zip(
+                        split_segments, split_base, originals_as_received,
+                        jlog=jlog, log_progress_fn=log_progress,
+                        tenant_id=tenant_id, collection_id=str(collection_id),
+                    )
+                    # Replace source_paths with the single reassembled ZIP
+                    source_paths = [reassembled_path]
+                    jlog.info("Split ZIP reassembled — proceeding with single archive: %s", reassembled_path)
+                except Exception as rze:
+                    jlog.error("Split ZIP reassembly failed: %s", rze)
+                    log_progress(tenant_id, collection_id,
+                                 f"Split ZIP reassembly FAILED: {rze}", "error")
+                    raise
+
+            for sp in source_paths:
+                jlog.info("Processing source entry: %s", sp)
+                _process_source_entry(sp)
+
+            logger.info("Total files after source processing: %d", len(files_to_process))
+            log_progress(tenant_id, collection_id, f"Source scan complete: {len(files_to_process)} files found")
+            try:
+                import time as _t
+                _t0 = _t.time()
+                _n = prehash_files(files_to_process)
+                log_progress(tenant_id, collection_id,
+                             f"Pre-hashed {_n} files in {int(_t.time() - _t0)}s "
+                             f"({INGEST_HASH_WORKERS} workers)")
+            except Exception as _ph:
+                logger.warning("prehash failed; falling back to serial hashing: %s", _ph)
 
             # DAT-aware ingest — if a load file is present, build structured
             # document records (one per Bates) with image/text/native paths
@@ -507,6 +1155,33 @@ def ingest_ediscovery_collection(
                             except Exception as te:
                                 logger.warning("DAT record %s: text read error: %s", bates, te)
 
+                        # ── Normalize extracted text for DAT record ──
+                        import json as _json_dat
+                        _norm_text_dat = None
+                        _norm_meta_dat = None
+                        _det_lang_dat = None
+                        _trans_status_dat = 'not_needed'
+                        _ocr_status_dat = 'not_needed'
+                        if extracted_text:
+                            try:
+                                _dat_email_meta = {}
+                                if rec.get("email_from"):
+                                    _dat_email_meta["from"] = rec["email_from"]
+                                if rec.get("email_to"):
+                                    _dat_email_meta["to"] = rec["email_to"]
+                                if rec.get("subject"):
+                                    _dat_email_meta["subject"] = rec["subject"]
+                                _nr = normalize_text(extracted_text, doc_type, _dat_email_meta)
+                                _norm_text_dat = _nr.get("normalized_text")
+                                _nm = _nr.get("normalized_metadata") or {}
+                                _norm_meta_dat = _json_dat.dumps(_nm)
+                                _det_lang_dat = _nm.get("detected_language", "en")
+                                _trans_status_dat = "not_needed" if _det_lang_dat == "en" else "queued"
+                                if doc_type in ("pdf", "image"):
+                                    _ocr_status_dat = "skipped_has_text"
+                            except Exception as _ne:
+                                logger.warning("DAT normalize failed for %s: %s", bates, _ne)
+
                         from sqlalchemy import text as _text
                         session.execute(_text("""
                             INSERT INTO ediscovery_documents (
@@ -515,6 +1190,8 @@ def ingest_ediscovery_collection(
                                 file_size, file_hash, mime_type, doc_type,
                                 extracted_text, bates_begin, bates_end, custodian,
                                 doc_date, email_from, email_to, email_subject,
+                                normalized_text, normalized_metadata, detected_language,
+                                text_source, ocr_status, translation_status,
                                 review_status, is_duplicate, ingested_at, created_at
                             ) VALUES (
                                 :tenant_id, CAST(:collection_id AS uuid), :file_path, :original_path,
@@ -522,6 +1199,8 @@ def ingest_ediscovery_collection(
                                 :file_size, :file_hash, :mime_type, :doc_type,
                                 :extracted_text, :bates_begin, :bates_end, :custodian,
                                 :doc_date, :email_from, :email_to, :email_subject,
+                                :norm_text, CAST(:norm_meta AS jsonb), :det_lang,
+                                'extract', :ocr_status, :trans_status,
                                 'unreviewed', false, now(), now()
                             )
                         """), {
@@ -545,6 +1224,11 @@ def ingest_ediscovery_collection(
                             "email_from":     rec.get("email_from"),
                             "email_to":       rec.get("email_to"),
                             "email_subject":  rec.get("subject"),
+                            "norm_text":      _norm_text_dat,
+                            "norm_meta":      _norm_meta_dat,
+                            "det_lang":       _det_lang_dat,
+                            "ocr_status":     _ocr_status_dat,
+                            "trans_status":   _trans_status_dat,
                         })
                         stats["processed"] = stats.get("processed", 0) + 1
 
@@ -620,9 +1304,21 @@ def ingest_ediscovery_collection(
                         shutil.copy2(src_abs, dst)
                     files_to_process.append(dst)
 
-        stats["total"] = len(files_to_process)
-        collection.total_docs = len(files_to_process)
-        session.commit()
+
+        # ── PST expansion: explode PST files into individual EMLs ──────────
+        # Must run AFTER all source types populate files_to_process and
+        # BEFORE the per-file processing loop. readpst extracts individual
+        # emails that the existing .eml handler processes normally.
+        if any(Path(f).suffix.lower() == '.pst' for f in files_to_process):
+            originals_unpacked = collection.originals_unpacked_path()
+            files_to_process = expand_pst_files(files_to_process, originals_unpacked)
+            logger.info("Post-PST expansion: %d files to process", len(files_to_process))
+        log_progress(tenant_id, collection_id, f"PST expansion complete: {len(files_to_process)} files total")
+
+        if files_to_process:
+            stats["total"] = len(files_to_process)
+            collection.total_docs = len(files_to_process)
+            session.commit()
 
         # Build hash set for dedup within this collection
         existing_hashes = set(
@@ -674,7 +1370,7 @@ def ingest_ediscovery_collection(
                         mime_type=mime,
                         doc_type=doc_type,
                         is_duplicate=True,
-                        dupe_of_id=original.id if original else None,
+                        dupe_of_id=None,  # schema mismatch: dupe_of_id is bigint, id is uuid
                     )
                     session.add(doc)
                     stats["duplicates"] += 1
@@ -682,8 +1378,13 @@ def ingest_ediscovery_collection(
 
                 existing_hashes.add(file_hash)
 
-                # Extract text
-                extracted_text, page_count = extract_text(abs_path, doc_type)
+                # Extract text -- deferred to the parallel enrich stage
+                # unless explicitly restored (INGEST_INLINE_TEXT=1). Deferring
+                # also skips inline normalization and per-doc embedding calls.
+                if INGEST_INLINE_TEXT:
+                    extracted_text, page_count = extract_text(abs_path, doc_type)
+                else:
+                    extracted_text, page_count = "", None
 
                 # Write extracted text to working directory
                 working_text_path = None
@@ -709,7 +1410,7 @@ def ingest_ediscovery_collection(
 
                 # Try DMS cross-reference
                 dms_doc_id = None
-                if collection.source_type == SourceType.client_collection_dms:
+                if collection.source_type == "client_collection_dms":
                     dms_doc_id = match_dms_document(
                         session, tenant_id, abs_path, file_hash,
                     )
@@ -809,6 +1510,18 @@ def ingest_ediscovery_collection(
                         "UPDATE ediscovery_documents SET native_path = :np "
                         "WHERE id = :did"
                     ), {"np": native_path_rel, "did": doc.id})
+
+                # ── Normalization: clean text + segments + language detect ──
+                if extracted_text and doc.id:
+                    try:
+                        _apply_normalization(
+                            session, tenant_id, doc.id,
+                            extracted_text, doc_type, email_meta,
+                        )
+                    except Exception as norm_err:
+                        logger.warning("Normalization failed for doc %s (non-blocking): %s",
+                                       doc.id, norm_err)
+
                 stats["processed"] += 1
 
                 # Mark transcript for drift hook — fired after final commit
@@ -833,6 +1546,7 @@ def ingest_ediscovery_collection(
                     "Collection %d: processed %d/%d",
                     collection_id, idx + 1, stats["total"],
                 )
+                log_progress(tenant_id, collection_id, f"Processed {idx+1}/{stats['total']} files ({stats.get('duplicates',0)} dupes, {stats.get('errors',0)} errors)")
 
         # Final commit — all doc.id values are now flushed
         session.commit()
@@ -845,7 +1559,9 @@ def ingest_ediscovery_collection(
 
         # Step 5: Update collection stats
         collection.processed_docs = stats["processed"] + stats["duplicates"]
-        collection.status = CollectionStatus.review_ready
+        collection.document_count = stats["processed"] + stats["duplicates"]
+        collection.status = "review_ready"
+        log_progress(tenant_id, collection_id, f"Ingestion complete: {stats['processed']} processed, {stats['duplicates']} duplicates, {stats['errors']} errors (normalization wired in)", "success")
         session.commit()
 
         # Step 6: Fire drift detection hooks for transcripts ingested this run.
@@ -923,7 +1639,7 @@ def ingest_ediscovery_collection(
                     "processed": stats["processed"],
                     "duplicates": stats["duplicates"],
                     "errors": stats["errors"],
-                    "source_type": collection.source_type.value,
+                    "source_type": collection.source_type,
                     "transcripts_drift_triggered": len(transcript_doc_ids),
                     "issue_map_triggered": len(issue_map_trigger_doc_types) > 0,
                 },
@@ -933,6 +1649,7 @@ def ingest_ediscovery_collection(
 
     except Exception as e:
         logger.error("ingest_ediscovery_collection failed: %s", e, exc_info=True)
+        log_progress(tenant_id, collection_id, f"FATAL: {str(e)[:500]}", "error")
         try: session.rollback()
         except Exception: pass
         raise
@@ -940,6 +1657,132 @@ def ingest_ediscovery_collection(
         try: session.close()
         except Exception: pass
     logger.info(
-        "Ingestion complete for collection %d: %s", collection_id, stats,
+        "Ingestion complete for collection %s: %s", collection_id, stats,
     )
+    try:
+        jlog.info("=" * 60)
+        jlog.info("INGESTION COMPLETE")
+        jlog.info("Total: %d, Processed: %d, Duplicates: %d, Errors: %d", stats['total'], stats['processed'], stats['duplicates'], stats['errors'])
+        jlog.info("=" * 60)
+        # Close file handler
+        for h in jlog.handlers[:]:
+            h.close()
+            jlog.removeHandler(h)
+    except Exception:
+        pass
     return stats
+
+
+def rollup_parent_collection(tenant_id: str, parent_collection_id: str, child_ids: list[str]) -> dict:
+    """
+    Monitor child collections and update parent stats when all are done.
+    Runs as an RQ job, polls every 30 seconds.
+    """
+    import time
+    from sqlalchemy import text as _sa_text
+
+    session = get_session_factory()()
+    max_wait = 48 * 3600  # 48 hours
+    poll_interval = 30
+    elapsed = 0
+
+    try:
+        while elapsed < max_wait:
+            # Check child statuses
+            result = session.execute(_sa_text("""
+                SELECT status, COUNT(*) AS cnt,
+                       COALESCE(SUM(total_docs), 0) AS total,
+                       COALESCE(SUM(processed_docs), 0) AS processed,
+                       COALESCE(SUM(reviewed_docs), 0) AS reviewed
+                FROM ediscovery_collections
+                WHERE parent_collection_id = CAST(:pid AS uuid)
+                  AND tenant_id = :tid
+                GROUP BY status
+            """), {"pid": parent_collection_id, "tid": tenant_id})
+
+            status_counts = {}
+            total_docs = 0
+            processed_docs = 0
+            reviewed_docs = 0
+            for row in result:
+                status_counts[row[0]] = row[1]
+                total_docs += row[2]
+                processed_docs += row[3]
+                reviewed_docs += row[4]
+
+            # Update parent stats
+            session.execute(_sa_text("""
+                UPDATE ediscovery_collections
+                SET total_docs = :total, processed_docs = :processed,
+                    reviewed_docs = :reviewed, updated_at = now()
+                WHERE id = CAST(:pid AS uuid) AND tenant_id = :tid
+            """), {
+                "total": total_docs, "processed": processed_docs,
+                "reviewed": reviewed_docs,
+                "pid": parent_collection_id, "tid": tenant_id,
+            })
+            session.commit()
+
+            # Check if all children are terminal
+            total_children = sum(status_counts.values())
+            terminal = status_counts.get("review_ready", 0) + status_counts.get("failed", 0)
+
+            if terminal >= total_children and total_children > 0:
+                # All done — set parent status
+                if status_counts.get("failed", 0) > 0 and status_counts.get("review_ready", 0) == 0:
+                    final_status = "failed"
+                elif status_counts.get("failed", 0) > 0:
+                    final_status = "review_ready"  # partial success
+                else:
+                    final_status = "review_ready"
+
+                session.execute(_sa_text("""
+                    UPDATE ediscovery_collections
+                    SET status = :status, updated_at = now()
+                    WHERE id = CAST(:pid AS uuid) AND tenant_id = :tid
+                """), {"status": final_status, "pid": parent_collection_id, "tid": tenant_id})
+                session.commit()
+
+                log_progress(
+                    tenant_id, parent_collection_id,
+                    f"All {total_children} sub-collections complete. "
+                    f"{status_counts.get('review_ready', 0)} succeeded, "
+                    f"{status_counts.get('failed', 0)} failed. "
+                    f"Total: {total_docs} docs, {processed_docs} processed.",
+                    "success",
+                )
+                return {
+                    "status": final_status,
+                    "children": total_children,
+                    "total_docs": total_docs,
+                    "processed_docs": processed_docs,
+                }
+
+            # Log progress
+            log_progress(
+                tenant_id, parent_collection_id,
+                f"Waiting on sub-collections: {status_counts}. "
+                f"{processed_docs}/{total_docs} docs processed.",
+            )
+
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+
+        # Timed out
+        session.execute(_sa_text("""
+            UPDATE ediscovery_collections
+            SET status = 'failed', updated_at = now()
+            WHERE id = CAST(:pid AS uuid) AND tenant_id = :tid
+        """), {"pid": parent_collection_id, "tid": tenant_id})
+        session.commit()
+        log_progress(tenant_id, parent_collection_id,
+                     "Rollup timed out after 48 hours", "error")
+        return {"status": "timeout"}
+
+    except Exception as e:
+        logger.error("Rollup failed for parent %s: %s", parent_collection_id, e)
+        log_progress(tenant_id, parent_collection_id,
+                     f"Rollup error: {e}", "error")
+        raise
+    finally:
+        session.close()

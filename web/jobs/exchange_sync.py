@@ -62,8 +62,26 @@ def _get_credentials(conn, tenant_id: str) -> dict:
         SELECT key_type, encrypted_key FROM credentials_vault
         WHERE trim(tenant_id) = trim(%s) AND provider = 'exchange'
     """, (tenant_id,))
-    result = {r['key_type']: r['encrypted_key'] for r in cur.fetchall()}
+    raw = {r['key_type']: r['encrypted_key'] for r in cur.fetchall()}
     cur.close()
+
+    import base64
+    from cryptography.fernet import Fernet
+    secret = os.environ.get("SECRET_KEY", "changeme-32-bytes-exactly!!!!!!!")
+    key_bytes = (secret[:32]).encode().ljust(32, b"0")
+    fernet_key = base64.urlsafe_b64encode(key_bytes)
+    f = Fernet(fernet_key)
+
+    result = {}
+    for k, v in raw.items():
+        if v and v.startswith("gAAAAA"):
+            try:
+                result[k] = f.decrypt(v.encode()).decode()
+            except Exception as e:
+                logger.warning("Failed to decrypt exchange cred %s: %s", k, e)
+                result[k] = v
+        else:
+            result[k] = v
     return result
 
 
@@ -131,7 +149,7 @@ def _sync_mailbox_email(conn, tenant_id: str, account, entity: dict,
         messages = inbox.filter(
             datetime_received__gte=since
         ).only(
-            'message_id', 'internet_message_id', 'subject',
+            'message_id', 'subject',
             'sender', 'to_recipients', 'cc_recipients',
             'datetime_received', 'text_body', 'has_attachments',
             'attachments'
@@ -182,7 +200,7 @@ def _sync_mailbox_email(conn, tenant_id: str, account, entity: dict,
                 """, (
                     tenant_id,
                     str(msg.message_id or ''),
-                    str(msg.internet_message_id or ''),
+                    str(msg.message_id or ''),
                     msg.subject or '(No Subject)',
                     from_email,
                     from_display,

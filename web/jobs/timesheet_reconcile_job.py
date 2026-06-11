@@ -181,18 +181,26 @@ async def load_exchange_email(tenant_id, user_id, date_from, date_to, db):
 
 
 async def load_manictime(tenant_id, user_id, date_from, date_to, db):
-    from sqlalchemy import text
+    """
+    Fetch ManicTime activity data via NTLM-authenticated Server API.
+    Reads entities (not activities) from the v2023+ API response format.
+    Uses service account impersonation — one account accesses all timelines.
+    """
+    from sqlalchemy import text as _text
+    import os, base64, json, uuid
+    from datetime import datetime, timedelta
+
     row = await db.execute(
-        text("""
-            SELECT ci.config, cv.encrypted_key
-            FROM connector_instances ci
+        _text("""
+            SELECT tc.config, cv.encrypted_key
+            FROM tenant_connectors tc
             LEFT JOIN credentials_vault cv
-                ON cv.tenant_id = ci.tenant_id
+                ON trim(cv.tenant_id) = trim(tc.tenant_id)
                 AND cv.provider = 'manictime'
                 AND cv.key_type = 'api_key'
-            WHERE trim(ci.tenant_id) = trim(:tid)
-              AND ci.connector_type = 'manictime'
-              AND ci.is_enabled = true
+            WHERE trim(tc.tenant_id) = trim(:tid)
+              AND tc.connector = 'manictime'
+              AND tc.is_active = true
             LIMIT 1
         """),
         {"tid": tenant_id},
@@ -203,99 +211,239 @@ async def load_manictime(tenant_id, user_id, date_from, date_to, db):
         return []
 
     config = config_row["config"] or {}
-    base_url = config.get("base_url", "").rstrip("/")
+    if isinstance(config, str):
+        config = json.loads(config)
+    server_url = (config.get("server_url") or config.get("base_url", "")).rstrip("/")
     username = config.get("username", "")
+
     password = ""
     encrypted = config_row["encrypted_key"]
     if encrypted:
         try:
-            from core.services.vault import decrypt_key
-            password = decrypt_key(encrypted)
+            from cryptography.fernet import Fernet
+            secret = os.environ.get("SECRET_KEY", "changeme-32-bytes-exactly!!!!!!!")
+            key_bytes = (secret[:32]).encode().ljust(32, b"0")
+            fernet_key = base64.urlsafe_b64encode(key_bytes)
+            f = Fernet(fernet_key)
+            password = f.decrypt(encrypted.encode()).decode()
         except Exception as exc:
             log.error("ManicTime decrypt failed: %s", exc)
             return []
 
-    if not base_url or not username:
-        log.warning("ManicTime missing base_url or username")
+    if not server_url or not username:
+        log.warning("ManicTime missing server_url or username")
         return []
 
     events = []
     try:
-        import httpx
-        from httpx import BasicAuth
-        auth = BasicAuth(username, password)
-        headers = {"Accept": "application/vnd.manictime.v3+json"}
+        import requests as _requests
+        import urllib3
+        urllib3.disable_warnings()
+        from requests_ntlm import HttpNtlmAuth
 
-        async with httpx.AsyncClient(
-            base_url=base_url, auth=auth, headers=headers,
-            timeout=60.0, verify=False,
-        ) as client:
-            tl_resp = await client.get("/api/timelines")
-            tl_resp.raise_for_status()
-            timelines = tl_resp.json().get("timelines", [])
+        domain = config.get("domain", "HJMMLEGAL")
+        auth = HttpNtlmAuth(f"{domain}\\{username}", password)
 
-            for tl in timelines:
-                tl_id = tl.get("timelineId") or tl.get("timelineKey")
-                tl_type_obj = tl.get("timelineType") or tl.get("schema") or {}
-                tl_type = tl_type_obj.get("typeName", "") if isinstance(tl_type_obj, dict) else ""
-                if not any(k in tl_type for k in ("ComputerUsage", "Application", "Tags")):
+        tl_resp = _requests.get(
+            f"{server_url}/api/timelines",
+            auth=auth, verify=False, timeout=30,
+        )
+        tl_resp.raise_for_status()
+        timelines = tl_resp.json().get("timelines", [])
+        log.info("ManicTime: %d timelines found", len(timelines))
+
+        for tl in timelines:
+            tl_key = tl.get("timelineKey")
+            schema_name = (tl.get("schema") or {}).get("name", "")
+
+            if not any(s in schema_name for s in ("Applications", "Documents")):
+                continue
+
+            act_resp = _requests.get(
+                f"{server_url}/api/timelines/{tl_key}/activities",
+                params={
+                    "fromTime": date_from.isoformat(),
+                    "toTime": (date_to + timedelta(days=1)).isoformat(),
+                },
+                auth=auth, verify=False, timeout=30,
+            )
+            if act_resp.status_code != 200:
+                log.warning("ManicTime timeline %s returned %d", tl_key, act_resp.status_code)
+                continue
+
+            data = act_resp.json()
+            all_entities = data.get("entities", [])
+
+            groups = {}
+            for ent in all_entities:
+                if ent.get("entityType") == "group":
+                    gid = ent.get("entityId")
+                    gname = (ent.get("values") or {}).get("name", "")
+                    groups[gid] = gname
+
+            activities = [e for e in all_entities if e.get("entityType") == "activity"]
+
+            for act in activities:
+                values = act.get("values") or {}
+                display_name = values.get("name", "")
+                group_id = values.get("groupId")
+                group_name = groups.get(group_id, "")
+                time_interval = values.get("timeInterval") or {}
+                start_str = time_interval.get("start", "")
+                duration_secs = time_interval.get("duration", 0)
+
+                combined = (display_name + group_name).lower()
+                if any(s in combined for s in ("idle", "away", "locked", "sleep", "session lock")):
                     continue
 
-                act_resp = await client.get(
-                    f"/api/timelines/{tl_id}/activities",
-                    params={"fromTime": date_from.isoformat(),
-                            "toTime": (date_to + timedelta(days=1)).isoformat()},
-                )
-                if act_resp.status_code != 200:
+                if duration_secs < 30:
                     continue
 
-                data = act_resp.json()
-                groups = {g.get("groupId"): g.get("displayName", "")
-                          for g in data.get("groups", []) if isinstance(g, dict)}
+                try:
+                    start_dt = datetime.fromisoformat(start_str)
+                except (ValueError, TypeError):
+                    continue
 
-                for act in data.get("activities", []):
-                    display = act.get("displayName", "")
-                    group_name = groups.get(act.get("groupId"), "")
-                    if any(s in (display + group_name).lower()
-                           for s in ("idle", "away", "locked", "sleep")):
-                        continue
-                    try:
-                        start_dt = datetime.fromisoformat(
-                            (act.get("startTime") or act.get("startUtc", "")).replace("Z", "+00:00"))
-                        end_dt = datetime.fromisoformat(
-                            (act.get("endTime") or act.get("endUtc", "")).replace("Z", "+00:00"))
-                    except (ValueError, TypeError):
-                        continue
-                    raw_min = max(0, (end_dt - start_dt).total_seconds() / 60)
-                    if raw_min < 1:
-                        continue
-                    app_name = display if "Application" in tl_type else group_name
-                    doc_title = display if "Application" not in tl_type else None
-                    events.append(CandidateEvent(
-                        source="manictime", event_date=start_dt.date(),
-                        start_time=start_dt, end_time=end_dt, raw_minutes=raw_min,
-                        counterparty_name=None, counterparty_email=None,
-                        counterparty_phone=None, subject=None, body_preview=None,
-                        app_name=app_name, doc_title=doc_title,
-                        source_id=act.get("activityId", str(uuid.uuid4())),
-                        source_detail=json.dumps({
-                            "timeline_type": tl_type, "timeline_id": tl_id,
-                            "group": group_name,
-                            "device": (tl.get("clientEnvironment") or {}).get("deviceName"),
-                        }),
-                        raw_data=json.dumps(act),
-                    ))
+                end_dt = start_dt + timedelta(seconds=duration_secs)
+                raw_min = max(0, duration_secs / 60)
+
+                if "Applications" in schema_name:
+                    app_name = group_name or display_name
+                    doc_title = display_name if group_name else None
+                else:
+                    app_name = group_name
+                    doc_title = display_name
+
+                events.append(CandidateEvent(
+                    source="manictime",
+                    event_date=start_dt.date(),
+                    start_time=start_dt,
+                    end_time=end_dt,
+                    raw_minutes=raw_min,
+                    counterparty_name=None,
+                    counterparty_email=None,
+                    counterparty_phone=None,
+                    subject=None,
+                    body_preview=None,
+                    app_name=app_name,
+                    doc_title=doc_title,
+                    source_id=str(act.get("entityId", uuid.uuid4())),
+                    source_detail=json.dumps({
+                        "timeline_type": schema_name,
+                        "timeline_key": tl_key,
+                        "group": group_name,
+                        "duration_seconds": duration_secs,
+                        "device": tl.get("deviceDisplayName"),
+                        "owner": (tl.get("owner") or {}).get("username"),
+                    }),
+                    raw_data=json.dumps(values, default=str),
+                ))
+
+            log.info("ManicTime: %s - %d activities from %d entities",
+                     schema_name, len(activities), len(all_entities))
+
     except Exception as exc:
         log.error("ManicTime API error: %s", exc, exc_info=True)
 
-    log.info("ManicTime: %d events for %s–%s", len(events), date_from, date_to)
+    log.info("ManicTime: %d total events for %s-%s", len(events), date_from, date_to)
     return events
 
 
 def parse_phone_csv(content: str) -> list[CandidateEvent]:
-    """Parse carrier CSV. Auto-detect columns. DROP CALLS UNDER 2 MINUTES."""
+    """Parse carrier CSV. Supports T-Mobile Usage Detail Report and generic formats.
+    DROP CALLS UNDER 2 MINUTES."""
     events = []
-    reader = csv.DictReader(io.StringIO(content))
+
+    lines = content.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+    # ── T-Mobile Usage Detail Report detection ──
+    # T-Mobile has metadata rows before the CSV header.
+    # Header row contains "Subscriber Number" and "Duration".
+    header_idx = None
+    for i, line in enumerate(lines):
+        if "Subscriber Number" in line and "Duration" in line:
+            header_idx = i
+            break
+
+    if header_idx is not None:
+        # T-Mobile format
+        import csv
+        reader = csv.DictReader(lines[header_idx:])
+        for row in reader:
+            try:
+                date_str = (row.get("Date") or "").strip()
+                call_type = (row.get("Type") or "").strip()
+                party = (row.get("Party") or "").strip()
+                duration_str = (row.get("Duration") or "0").strip()
+                direction = (row.get("Direction") or "").strip()
+                subscriber = (row.get("Line Identifier1 Value") or "").strip()
+
+                if not date_str:
+                    continue
+
+                # Only process Talk (calls), skip Text and Data
+                if call_type != "Talk":
+                    continue
+
+                # Parse duration (minutes)
+                try:
+                    minutes = float(duration_str)
+                except (ValueError, TypeError):
+                    minutes = 0
+
+                # DROP CALLS UNDER 2 MINUTES
+                if minutes < 2.0:
+                    continue
+
+                # Parse date
+                parsed_date = None
+                for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M",
+                            "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+                    try:
+                        parsed_date = datetime.strptime(date_str[:19], fmt)
+                        break
+                    except ValueError:
+                        continue
+                if not parsed_date:
+                    continue
+
+                # Normalize phone number
+                phone = _normalize_phone(party)
+                dir_label = "Incoming" if direction == "I" else "Outgoing"
+                call_type_detail = (row.get("Call Type 1") or "").strip()
+                desc = f"Phone call ({dir_label}): {party}"
+                if call_type_detail:
+                    desc += f" [{call_type_detail}]"
+
+                events.append(CandidateEvent(
+                    source="phone_csv",
+                    event_date=parsed_date.date(),
+                    start_time=parsed_date,
+                    end_time=parsed_date + timedelta(minutes=minutes) if minutes else None,
+                    raw_minutes=minutes,
+                    counterparty_name=None,
+                    counterparty_phone=phone,
+                    counterparty_email=None,
+                    subject=desc,
+                    body_preview=f"{dir_label} call, {int(minutes)} min, subscriber: {subscriber}",
+                    app_name=None, doc_title=None,
+                    source_id=f"tmobile_{parsed_date.isoformat()}_{party}",
+                    source_detail=json.dumps({
+                        "raw_number": party, "raw_duration": duration_str,
+                        "direction": direction, "call_type": call_type_detail,
+                        "subscriber": subscriber, "carrier": "tmobile",
+                    }),
+                    raw_data=json.dumps(dict(row)),
+                ))
+            except Exception:
+                continue
+
+        log.info("T-Mobile CSV: %d call events (after 2-min filter)", len(events))
+        return events
+
+    # ── Generic carrier CSV fallback (original logic) ──
+    import csv as _csv
+    reader = _csv.DictReader(io.StringIO(content))
     if not reader.fieldnames:
         return events
     date_col = next((h for h in reader.fieldnames
@@ -339,11 +487,8 @@ def parse_phone_csv(content: str) -> list[CandidateEvent]:
                     minutes = val / 60 if val > 300 else val
                 except ValueError:
                     pass
-
-            # === DROP CALLS UNDER 2 MINUTES ===
             if minutes < 2.0:
                 continue
-
             number = (row.get(num_col) or "").strip() if num_col else ""
             events.append(CandidateEvent(
                 source="phone_csv", event_date=parsed_date.date(),
@@ -365,22 +510,103 @@ def parse_phone_csv(content: str) -> list[CandidateEvent]:
 
 
 def parse_imazing_csv(content: str) -> list[CandidateEvent]:
-    """Parse iMazing CSV export. Group by counterparty+date into threads."""
+    """Parse iMazing CSV export. Supports Chat Session format.
+    Group by counterparty+date into threads. Minimum 5 min per thread."""
     events = []
-    reader = csv.DictReader(io.StringIO(content))
+    import csv as _csv
+
+    reader = _csv.DictReader(io.StringIO(content))
     if not reader.fieldnames:
         return events
-    hmap = {h.lower().strip(): h for h in reader.fieldnames}
-    ts_col = hmap.get("timestamp") or hmap.get("date")
-    from_col = hmap.get("from") or hmap.get("from name")
-    from_name_col = hmap.get("from name")
-    to_col = hmap.get("to") or hmap.get("to name")
-    to_name_col = hmap.get("to name")
-    msg_col = hmap.get("message") or hmap.get("text")
-    date_col = hmap.get("date")
-    time_col = hmap.get("time")
 
-    threads: dict[str, dict] = {}
+    hmap = {h.strip(): h for h in reader.fieldnames}
+
+    # Detect iMazing Chat Session format
+    is_chat_format = "Chat Session" in hmap and "Message Date" in hmap
+
+    if is_chat_format:
+        threads: dict[str, dict] = {}
+        for row in reader:
+            try:
+                session = (row.get("Chat Session") or "").strip()
+                msg_date = (row.get("Message Date") or "").strip()
+                msg_type = (row.get("Type") or "").strip()
+                text = (row.get("Text") or "").strip()
+                sender = (row.get("Sender Name") or "").strip()
+
+                if not session or not msg_date:
+                    continue
+
+                # Skip short-code / marketing messages
+                if session.isdigit() and len(session) <= 6:
+                    continue
+
+                parsed_ts = None
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M",
+                            "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %I:%M:%S %p"):
+                    try:
+                        parsed_ts = datetime.strptime(msg_date[:19], fmt)
+                        break
+                    except ValueError:
+                        continue
+                if not parsed_ts:
+                    continue
+
+                # Extract phone from session name if present
+                cp_phone = ""
+                cp_name = session
+                phone_match = re.search(r"\+?1?(\d{10})", session.replace("-","").replace(" ",""))
+                if phone_match:
+                    cp_phone = phone_match.group(1)
+                    if session.startswith("+") or session.replace("-","").replace("+","").isdigit():
+                        cp_name = ""
+
+                tkey = f"{session}|{parsed_ts.date().isoformat()}"
+                if tkey not in threads:
+                    threads[tkey] = {
+                        "cp_phone": cp_phone, "cp_name": cp_name,
+                        "event_date": parsed_ts.date(),
+                        "first_ts": parsed_ts, "last_ts": parsed_ts,
+                        "msg_count": 0, "messages": [],
+                    }
+                th = threads[tkey]
+                th["msg_count"] += 1
+                th["first_ts"] = min(th["first_ts"], parsed_ts)
+                th["last_ts"] = max(th["last_ts"], parsed_ts)
+                if text and len(th["messages"]) < 5:
+                    th["messages"].append(text[:200])
+            except Exception:
+                continue
+
+        for key, t in threads.items():
+            span_min = max(5, (t["last_ts"] - t["first_ts"]).total_seconds() / 60)
+            cp_display = t["cp_name"] or t["cp_phone"] or "Unknown"
+            events.append(CandidateEvent(
+                source="imazing_csv", event_date=t["event_date"],
+                start_time=t["first_ts"], end_time=t["last_ts"],
+                raw_minutes=span_min, counterparty_name=t["cp_name"],
+                counterparty_phone=t["cp_phone"], counterparty_email=None,
+                subject=f"Text thread: {cp_display} ({t['msg_count']} msgs)",
+                body_preview="; ".join(t["messages"][:3])[:300],
+                app_name=None, doc_title=None,
+                source_id=f"imazing_{key}",
+                source_detail=json.dumps({"message_count": t["msg_count"],
+                                          "span_minutes": round(span_min, 1)}),
+                raw_data=None,
+            ))
+        log.info("iMazing Chat CSV: %d thread events from %d threads", len(events), len(threads))
+        return events
+
+    # ── Legacy iMazing format fallback ──
+    hmap_lower = {h.lower().strip(): h for h in reader.fieldnames}
+    ts_col = hmap_lower.get("timestamp") or hmap_lower.get("date")
+    from_col = hmap_lower.get("from") or hmap_lower.get("from name")
+    to_col = hmap_lower.get("to") or hmap_lower.get("to name")
+    msg_col = hmap_lower.get("message") or hmap_lower.get("text")
+    date_col = hmap_lower.get("date")
+    time_col = hmap_lower.get("time")
+
+    threads2: dict[str, dict] = {}
     for row in reader:
         try:
             ts_raw = ""
@@ -394,8 +620,7 @@ def parse_imazing_csv(content: str) -> list[CandidateEvent]:
                 continue
             parsed_ts = None
             for fmt in ("%Y-%m-%d %H:%M:%S", "%m/%d/%Y %H:%M:%S",
-                        "%m/%d/%Y %I:%M:%S %p", "%Y-%m-%d %H:%M",
-                        "%m/%d/%Y %H:%M", "%m/%d/%Y %I:%M %p"):
+                        "%m/%d/%Y %I:%M:%S %p", "%Y-%m-%d %H:%M"):
                 try:
                     parsed_ts = datetime.strptime(ts_raw[:19], fmt)
                     break
@@ -404,25 +629,23 @@ def parse_imazing_csv(content: str) -> list[CandidateEvent]:
             if not parsed_ts:
                 continue
             from_val = (row.get(from_col) or "").strip() if from_col else ""
-            from_name = (row.get(from_name_col) or "").strip() if from_name_col else ""
             to_val = (row.get(to_col) or "").strip() if to_col else ""
-            to_name = (row.get(to_name_col) or "").strip() if to_name_col else ""
             message = (row.get(msg_col) or "").strip() if msg_col else ""
-            if from_name.lower() in ("me", ""):
+            if from_val.lower() in ("me", ""):
                 cp_phone = _normalize_phone(to_val)
-                cp_name = to_name or to_val
+                cp_name = to_val
             else:
                 cp_phone = _normalize_phone(from_val)
-                cp_name = from_name or from_val
+                cp_name = from_val
             tkey = f"{cp_phone or cp_name}|{parsed_ts.date().isoformat()}"
-            if tkey not in threads:
-                threads[tkey] = {
+            if tkey not in threads2:
+                threads2[tkey] = {
                     "cp_phone": cp_phone, "cp_name": cp_name,
                     "event_date": parsed_ts.date(),
                     "first_ts": parsed_ts, "last_ts": parsed_ts,
                     "msg_count": 0, "messages": [],
                 }
-            th = threads[tkey]
+            th = threads2[tkey]
             th["msg_count"] += 1
             th["first_ts"] = min(th["first_ts"], parsed_ts)
             th["last_ts"] = max(th["last_ts"], parsed_ts)
@@ -431,7 +654,7 @@ def parse_imazing_csv(content: str) -> list[CandidateEvent]:
         except Exception:
             continue
 
-    for key, t in threads.items():
+    for key, t in threads2.items():
         span_min = max(5, (t["last_ts"] - t["first_ts"]).total_seconds() / 60)
         events.append(CandidateEvent(
             source="imazing_csv", event_date=t["event_date"],
@@ -541,6 +764,8 @@ class RuleLadder:
         self.matter_numbers: dict[str, str] = {}
         self.keyword_index: dict[str, str] = {}
         self.ts_matter_map: dict[str, str] = {}
+        self.folder_path_index: dict[str, str] = {}  # folder_name_lower -> matter_id
+        self.client_rates: dict[str, float] = {}  # client_id -> most recent rate
 
     # Skip generic email domains that match everything
     _SKIP_DOMAINS = frozenset({
@@ -617,11 +842,68 @@ class RuleLadder:
             if nn2:
                 self.ts_matter_map[nn2.lower()] = str(r["matter_id"])
 
+        # Folder paths for ManicTime file-path matching
+        result = await db.execute(
+            text("""
+                SELECT m.id, m.folder_path, m.client_id, c.client_name
+                FROM matters m
+                LEFT JOIN clients c ON c.id = m.client_id
+                WHERE trim(m.tenant_id) = trim(:tid)
+                  AND m.folder_path IS NOT NULL AND m.folder_path != ''
+            """),
+            {"tid": tenant_id},
+        )
+        for r in result.mappings().fetchall():
+            fp = r["folder_path"] or ""
+            # Index by last path segment (the folder name)
+            parts = [p for p in fp.replace("\\", "/").replace("\\", "/").split("/") if p.strip()]
+            if parts:
+                folder_name = parts[-1].strip().lower()
+                self.folder_path_index[folder_name] = str(r["id"])
+                # Also index client\folder pattern
+                if len(parts) >= 2:
+                    client_folder = (parts[-2].strip() + "/" + parts[-1].strip()).lower()
+                    self.folder_path_index[client_folder] = str(r["id"])
+
+        # Also index dms_folder_matches
+        result = await db.execute(
+            text("""
+                SELECT matter_id, folder_path, best_disk_path
+                FROM dms_folder_matches
+                WHERE trim(tenant_id) = trim(:tid) AND status = 'accepted'
+            """),
+            {"tid": tenant_id},
+        )
+        for r in result.mappings().fetchall():
+            for p in [r["folder_path"], r["best_disk_path"]]:
+                if not p:
+                    continue
+                parts = [s for s in p.replace("\\", "/").replace("\\", "/").split("/") if s.strip()]
+                if parts:
+                    self.folder_path_index[parts[-1].strip().lower()] = str(r["matter_id"])
+
+        # Client rates (most recent rate per client)
+        result = await db.execute(
+            text("""
+                SELECT DISTINCT ON (m.client_id) m.client_id, te.rate
+                FROM time_entries te
+                JOIN matters m ON m.id = te.matter_id
+                WHERE trim(te.tenant_id) = trim(:tid)
+                  AND te.rate > 0 AND te.rate IS NOT NULL
+                ORDER BY m.client_id, te.date DESC
+            """),
+            {"tid": tenant_id},
+        )
+        for r in result.mappings().fetchall():
+            if r["client_id"]:
+                self.client_rates[str(r["client_id"])] = float(r["rate"])
+
         log.info("Rule ladder: %d phones, %d emails, %d domains, "
-                 "%d matters, %d keywords, %d ts_maps",
+                 "%d matters, %d keywords, %d ts_maps, %d folder_paths, %d client_rates",
                  len(self.phone_index), len(self.email_index),
                  len(self.domain_index), len(self.matter_names),
-                 len(self.keyword_index), len(self.ts_matter_map))
+                 len(self.keyword_index), len(self.ts_matter_map),
+                 len(self.folder_path_index), len(self.client_rates))
 
     def match(self, event: CandidateEvent) -> tuple[Optional[str], float, str]:
         detail = {}
@@ -672,11 +954,39 @@ class RuleLadder:
                         return m[0][1], 0.70, f"domain:{d}"
                     return m[0][1], 0.55, f"domain_multi:{d}:{len(m)}"
 
-        # Keywords
+        # ManicTime file path matching (V:\Client\Folder\file.docx)
+        # This is HIGH confidence — the file lives in the matter's folder
+        doc_title = event.doc_title or ""
+        app_name = event.app_name or ""
+        combined_path = doc_title + " " + app_name
+        path_match = re.search(r'[A-Z]:\\([^\\]+)\\([^\\]+)', combined_path)
+        if not path_match:
+            path_match = re.search(r'[A-Z]:\\([^\\]+)\\([^\\]+)',
+                                   event.subject or "")
+        if path_match:
+            client_seg = path_match.group(1).strip().lower()
+            folder_seg = path_match.group(2).strip().lower()
+            # Try exact folder name
+            if folder_seg in self.folder_path_index:
+                mid = self.folder_path_index[folder_seg]
+                return mid, 0.92, f"file_path_folder:{folder_seg}"
+            # Try client/folder combo
+            combo = f"{client_seg}/{folder_seg}"
+            if combo in self.folder_path_index:
+                mid = self.folder_path_index[combo]
+                return mid, 0.92, f"file_path_combo:{combo}"
+            # Fuzzy: check if folder_seg is substring of any indexed folder
+            for idx_folder, mid in self.folder_path_index.items():
+                if len(folder_seg) >= 4 and folder_seg in idx_folder:
+                    return mid, 0.85, f"file_path_fuzzy:{folder_seg}~{idx_folder}"
+                if len(idx_folder) >= 4 and idx_folder in folder_seg:
+                    return mid, 0.85, f"file_path_fuzzy:{idx_folder}~{folder_seg}"
+
+        # Keywords — matter number must be 3+ chars to avoid false positives
         text_lower = event.searchable_text
         if text_lower:
             for mnum_lower, mid in self.ts_matter_map.items():
-                if mnum_lower in text_lower:
+                if len(mnum_lower) >= 3 and mnum_lower in text_lower:
                     return mid, 0.80, f"keyword_matter_num:{mnum_lower}"
             best_mid, best_score = None, 0
             for mid, mname in self.matter_names.items():
@@ -698,7 +1008,7 @@ class RuleLadder:
 # ── Aggregation ───────────────────────────────────────────────────────────────
 
 _SOURCE_MAP = {
-    "exchange_calendar": "manual", "exchange_email": "manual",
+    "exchange_calendar": "exchange_calendar", "exchange_email": "exchange_email",
     "manictime": "manictime", "phone_csv": "phone_csv",
     "imazing_csv": "phone_csv", "ai_api_calls": "ai_api_calls",
     "timeslips": "timeslips", "excel": "excel",
@@ -706,14 +1016,81 @@ _SOURCE_MAP = {
 
 
 def aggregate_events(events, matches, billing_increment=0.25):
+    """Aggregate events into draft time entries.
+
+    AGGREGATION RULES:
+    - manictime: aggregate by (date, matter, source) — many small app events
+    - phone_csv, imazing_csv: aggregate by (date, matter, source) — call/text threads
+    - exchange_email: NO aggregation — each email is its own draft
+    - exchange_calendar: NO aggregation — each meeting is its own draft
+    - ai_api_calls: aggregate by (date, matter, source) — token batches
+    - timeslips: skip (reference only)
+    """
+    # Sources that should NOT be aggregated — each event = one draft
+    NO_AGGREGATE = frozenset({"exchange_email", "exchange_calendar"})
+
     buckets: dict[tuple, list] = {}
+    solo_items = []  # (event, matter_id, confidence, reason) for non-aggregated sources
+
     for event, (matter_id, confidence, reason) in zip(events, matches):
         if event.source == "timeslips":
             continue  # reference only
-        key = (event.event_date, matter_id or "__unmatched__", event.source)
-        buckets.setdefault(key, []).append((event, matter_id, confidence, reason))
+
+        if event.source in NO_AGGREGATE:
+            solo_items.append((event, matter_id, confidence, reason))
+        else:
+            key = (event.event_date, matter_id or "__unmatched__", event.source)
+            buckets.setdefault(key, []).append((event, matter_id, confidence, reason))
 
     drafts = []
+
+    # Solo items — one draft per event
+    for ev, matter_id, confidence, reason in solo_items:
+        raw_min = ev.raw_minutes or 0
+        # Calendar events get actual duration; emails get 0.25h minimum
+        if ev.source == "exchange_calendar" and raw_min > 0:
+            inc_min = billing_increment * 60
+            total_min = math.ceil(raw_min / inc_min) * inc_min
+        elif ev.source == "exchange_email":
+            total_min = billing_increment * 60  # 0.25h per email
+        else:
+            total_min = max(billing_increment * 60, raw_min)
+        hours = Decimal(str(round(total_min / 60, 4)))
+
+        desc = ev.subject or ""
+        if not desc and ev.app_name:
+            desc = ev.app_name
+            if ev.doc_title:
+                desc += f": {ev.doc_title[:80]}"
+        if not desc:
+            desc = f"{ev.source} activity"
+
+        # Clean email narratives: "Correspondence re: {subject}"
+        if ev.source == "exchange_email" and desc:
+            # Strip RE:/FW:/FWD: prefixes
+            clean_subj = re.sub(r'^(RE|FW|FWD|Fw|Re|Fwd):\s*(\[EXTERNAL\]\s*)?', '', desc).strip()
+            clean_subj = re.sub(r'^(RE|FW|FWD|Fw|Re|Fwd):\s*', '', clean_subj).strip()
+            if clean_subj:
+                desc = f"Correspondence re: {clean_subj[:80]}"
+            else:
+                desc = "Correspondence"
+
+        drafts.append({
+            "entry_date": ev.event_date, "matter_id": matter_id,
+            "matter_name": None, "hours": hours,
+            "description": desc[:500],
+            "source": _SOURCE_MAP.get(ev.source, "manual"),
+            "ai_confidence": confidence,
+            "source_detail": json.dumps({
+                "event_count": 1,
+                "total_raw_minutes": raw_min,
+                "match_reasons": [reason] if reason != "unmatched" else [],
+                "source_ids": [ev.source_id] if ev.source_id else [],
+            }),
+            "status": "pending",
+        })
+
+    # Aggregated buckets — same as before
     for (edate, mid_key, source), items in buckets.items():
         matter_id = None if mid_key == "__unmatched__" else mid_key
         total_min = sum(ev.raw_minutes or 0 for ev, _, _, _ in items)
@@ -751,6 +1128,7 @@ def aggregate_events(events, matches, billing_increment=0.25):
             }),
             "status": "pending",
         })
+
     drafts.sort(key=lambda d: (d["entry_date"], -(d["ai_confidence"] or 0)))
     return drafts
 
@@ -855,6 +1233,21 @@ async def _run_async(session_id, tenant_id, user_id, user_name,
         if d["matter_id"] and d["matter_id"] in ladder.matter_names:
             d["matter_name"] = ladder.matter_names[d["matter_id"]]
 
+    # Dedup drafts — ManicTime generates duplicate source_ids
+    seen_keys = set()
+    deduped_drafts = []
+    for d in drafts:
+        detail = json.loads(d.get("source_detail", "{}"))
+        source_ids = tuple(sorted(detail.get("source_ids", [])))
+        key = (d["entry_date"], d["matter_id"], d["source"], source_ids)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            deduped_drafts.append(d)
+    if len(deduped_drafts) < len(drafts):
+        log.info("Dedup: %d -> %d drafts (removed %d duplicates)",
+                 len(drafts), len(deduped_drafts), len(drafts) - len(deduped_drafts))
+    drafts = deduped_drafts
+
     # Write drafts — NO AUDIT TRAIL
     async with AsyncSessionLocal() as db:
         draft_count = 0
@@ -890,6 +1283,24 @@ async def _run_async(session_id, tenant_id, user_id, user_name,
             except Exception as exc:
                 log.warning("Draft write failed: %s", exc)
 
+        # === M9 AI Reconciliation integration (Component 5) ===
+        # Pass 1 (classifier) + Pass 2 (matcher). Non-fatal: any failure
+        # leaves rule-ladder drafts intact and the session still completes.
+        ai_stats = {"ai_passes_enabled": False}
+        try:
+            from jobs.ai_reconcile_integration import run_ai_passes
+            ai_stats = await run_ai_passes(
+                tenant_id=tenant_id,
+                session_id=session_id,
+                user_id=user_id,
+                ladder_matter_names=ladder.matter_names,
+            )
+            log.info("AI passes complete: %s", ai_stats)
+        except Exception as _ai_exc:
+            log.exception("AI integration failed (non-fatal): %s", _ai_exc)
+            ai_stats = {"ai_passes_enabled": False,
+                        "error": f"{type(_ai_exc).__name__}: {_ai_exc}"}
+
         await db.execute(
             text("""
                 UPDATE timesheet_sessions
@@ -899,7 +1310,10 @@ async def _run_async(session_id, tenant_id, user_id, user_name,
                 WHERE id = :sid
             """),
             {"dc": draft_count,
-             "src": json.dumps(list(set(sources_used))),
+             "src": json.dumps({
+                 "sources": list(set(sources_used)),
+                 "ai_stats": ai_stats,
+             }),
              "sid": session_id},
         )
         await db.commit()

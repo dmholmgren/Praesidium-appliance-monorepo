@@ -1,0 +1,11 @@
+{% extends "shell.html" %}
+{% block title %}Email Reconciliation — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/reconciliation">Reconciliation</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">Email</span>
+{% endblock %}
+{% block content %}
+<div id="recon-email-root"></div>
+<script type="module" src="/static/js/recon-email.js"></script>
+{% endblock %}

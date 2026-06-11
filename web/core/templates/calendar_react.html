@@ -1,0 +1,11 @@
+{% extends "shell.html" %}
+{% block title %}Calendar — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/dashboard">Home</a>
+<span class="breadcrumb-sep">&#8250;</span>
+<span class="breadcrumb-current">Calendar</span>
+{% endblock %}
+{% block content %}
+<div id="calendar-react-root"></div>
+<script type="module" src="/static/js/calendar-page.js?v=2"></script>
+{% endblock %}

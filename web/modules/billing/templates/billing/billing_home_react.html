@@ -1,0 +1,9 @@
+{% extends "shell.html" %}
+{% block title %}{{ brand.platform_name if brand else 'Praesidium' }} — Billing{% endblock %}
+{% block breadcrumb %}
+<span class="breadcrumb-current">Billing</span>
+{% endblock %}
+{% block content %}
+<div id="billing-react-root" style="height: calc(100vh - var(--header-h) - 48px); overflow: hidden;"></div>
+<script type="module" src="/static/js/billing-home.js"></script>
+{% endblock %}

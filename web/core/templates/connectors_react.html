@@ -1,0 +1,11 @@
+{% extends "shell.html" %}
+{% block title %}Connectors — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/tenant-admin/" style="color:var(--muted);text-decoration:none;">Firm Administration</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">Connectors</span>
+{% endblock %}
+{% block content %}
+<div id="connectors-root"></div>
+<script type="module" src="/static/js/connectors.js?v=1"></script>
+{% endblock %}

@@ -1,14 +1,16 @@
 """
 modules/connectors/timeslips_ingest_service.py
 Praesidium — Timeslips Ingest Service
-Full implementation of the /api/connectors/timeslips/ingest endpoint.
 
-Replaces the M10 C2 stub in router.py.
+v2.1 — Fixed dedup: upsert on (tenant_id, source_id, source_slip_id) instead of
+content_hash. content_hash was unreliable because narrative encoding differs between
+the Windows agent and server-side sync. source_slip_id (Firebird RECORDID) is the
+true natural key and never changes.
 
-Processes batched payloads from ts_sync_agent.py (v2.0):
+Processes batched payloads from ts_sync_agent.py (v2.0) or timeslips_sync.py (server-side):
   - Validates X-Connector-Key against credentials_vault
   - Upserts ts_clients, ts_timekeepers on initial batch
-  - Inserts ts_slips with SHA-256 content-hash dedup
+  - Upserts ts_slips on (tenant_id, source_id, source_slip_id)
   - Upserts ts_invoices, ts_payments
   - Logs each run to billing_import_log
   - Returns counts for agent confirmation
@@ -82,13 +84,12 @@ async def validate_timeslips_key(tenant_id: str, api_key: str) -> bool:
     return False
 
 
-# ── Content hash (dedup key) ───────────────────────────────────────────────────
+# ── Content hash (kept for backward compat — no longer used as dedup key) ──────
 
 def _slip_hash(tenant_id: str, slip: dict) -> str:
     """
-    SHA-256 dedup hash matching ts_sync_agent.py dedup architecture:
-    SHA256(tenant_id + source_slip_id + client_id + tk_id + date + hours + narrative)
-    Normalized: lowercase narrative, 4-decimal hours.
+    SHA-256 content hash. Retained for the content_hash column (audit trail)
+    but no longer the dedup key — source_slip_id is used instead.
     """
     narrative = (slip.get("description") or "").lower().strip()
     hours     = f"{float(slip.get('hours') or 0):.4f}"
@@ -155,7 +156,7 @@ async def _upsert_clients(session, tenant_id: str, clients: list) -> int:
                     "ts_address":    str(c.get("address1") or "") or None,
                     "ts_email":      str(c.get("email") or "") or None,
                     "ts_phone":      str(c.get("phone1") or "") or None,
-                    "ts_raw":        json.dumps(c),
+                    "ts_raw":        json.dumps(c, default=str),
                     "client_code":   c.get("client_code"),
                     "matter_code":   c.get("matter_code"),
                     "addr1":         c.get("address1"),
@@ -177,7 +178,7 @@ async def _upsert_clients(session, tenant_id: str, clients: list) -> int:
                     "paralegal":     str(c.get("paralegal") or "") or None,
                     "associate":     str(c.get("associate") or "") or None,
                     "est_billings":  float(c.get("est_billings") or 0),
-                    "raw_data":      json.dumps(c),
+                    "raw_data":      json.dumps(c, default=str),
                 }
             )
             count += 1
@@ -218,11 +219,11 @@ async def _upsert_timekeepers(session, tenant_id: str, timekeepers: list) -> int
                     "ts_tk_id":    str(tk.get("ts_tk_id") or ""),
                     "ts_name":     str(tk.get("fullname") or "") or None,
                     "ts_initials": str(tk.get("initials") or "") or None,
-                    "ts_raw":      json.dumps(tk),
+                    "ts_raw":      json.dumps(tk, default=str),
                     "initials":    str(tk.get("initials") or "") or None,
                     "email":       str(tk.get("email") or "") or None,
                     "title_level": str(tk.get("title_level") or "") or None,
-                    "raw_data":    json.dumps(tk),
+                    "raw_data":    json.dumps(tk, default=str),
                 }
             )
             count += 1
@@ -232,8 +233,13 @@ async def _upsert_timekeepers(session, tenant_id: str, timekeepers: list) -> int
 
 
 async def _insert_slips(session, tenant_id: str, source_id: str, slips: list) -> dict:
+    """
+    Upsert slips keyed on (tenant_id, source_id, source_slip_id).
+    On conflict, update mutable fields (billed status, value, invoice linkage)
+    so delta syncs keep the mirror current.
+    """
     new_count    = 0
-    dedup_count  = 0
+    update_count = 0
     error_count  = 0
 
     for slip in slips:
@@ -264,7 +270,22 @@ async def _insert_slips(session, tenant_id: str, source_id: str, slips: list) ->
                         :invoice_id, :invoice_num, :post_period,
                         :orig_slip_id, :narrative, :raw
                     )
-                    ON CONFLICT (tenant_id, source_id, content_hash) DO NOTHING
+                    ON CONFLICT (tenant_id, source_id, source_slip_id)
+                    DO UPDATE SET
+                        content_hash  = EXCLUDED.content_hash,
+                        hours         = EXCLUDED.hours,
+                        value         = EXCLUDED.value,
+                        billed_value  = EXCLUDED.billed_value,
+                        wip_value     = EXCLUDED.wip_value,
+                        billed        = EXCLUDED.billed,
+                        bill_status   = EXCLUDED.bill_status,
+                        on_hold       = EXCLUDED.on_hold,
+                        invoice_id    = EXCLUDED.invoice_id,
+                        invoice_num   = EXCLUDED.invoice_num,
+                        narrative     = EXCLUDED.narrative,
+                        raw_data      = EXCLUDED.raw_data,
+                        imported_at   = now()
+                    WHERE ts_slips.content_hash != EXCLUDED.content_hash
                 """),
                 {
                     "tid":          tenant_id,
@@ -295,18 +316,18 @@ async def _insert_slips(session, tenant_id: str, source_id: str, slips: list) ->
                     "post_period":  str(slip.get("post_period") or "") or None,
                     "orig_slip_id": str(slip.get("orig_slip_id") or "") or None,
                     "narrative":    slip.get("description") or "",
-                    "raw":          json.dumps(slip),
+                    "raw":          json.dumps(slip, default=str),
                 }
             )
-            if result.rowcount == 0:
-                dedup_count += 1
-            else:
+            if result.rowcount == 1:
                 new_count += 1
+            else:
+                update_count += 1
         except Exception as e:
             error_count += 1
-            logger.warning(f"[ts_ingest] slip insert error (id={slip.get('slip_id')}): {e}")
+            logger.warning(f"[ts_ingest] slip upsert error (id={slip.get('slip_id')}): {e}")
 
-    return {"new": new_count, "deduped": dedup_count, "errors": error_count}
+    return {"new": new_count, "deduped": update_count, "errors": error_count}
 
 
 async def _upsert_invoices(session, tenant_id: str, source_id: str, invoices: list) -> int:
@@ -349,7 +370,7 @@ async def _upsert_invoices(session, tenant_id: str, source_id: str, invoices: li
                     "status":     inv.get("invoice_status"),
                     "slip_start": _parse_date(inv.get("slip_start")),
                     "slip_end":   _parse_date(inv.get("slip_end")),
-                    "raw":        json.dumps(inv),
+                    "raw":        json.dumps(inv, default=str),
                 }
             )
             count += 1
@@ -390,7 +411,7 @@ async def _upsert_payments(session, tenant_id: str, source_id: str, payments: li
                     "inv_num":      pmt.get("invoice_num"),
                     "inv_id":       str(pmt.get("invoice_id") or "") or None,
                     "post_period":  str(pmt.get("post_period") or "") or None,
-                    "raw":          json.dumps(pmt),
+                    "raw":          json.dumps(pmt, default=str),
                 }
             )
             count += 1
@@ -506,7 +527,7 @@ async def process_timeslips_ingest(tenant_id: str, body: dict) -> dict:
 
     logger.info(
         f"[ts_ingest] batch {batch_index+1}/{batch_count} — "
-        f"slips: +{slip_result['new']} new, {slip_result['deduped']} deduped, "
+        f"slips: +{slip_result['new']} new, {slip_result['deduped']} updated, "
         f"{slip_result['errors']} errors | "
         f"clients: {clients_count} | timekeepers: {timekeepers_count} | "
         f"invoices: {invoices_count} | payments: {payments_count}"

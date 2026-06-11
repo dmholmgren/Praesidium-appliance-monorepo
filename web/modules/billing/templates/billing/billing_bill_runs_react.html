@@ -1,0 +1,11 @@
+{% extends "shell.html" %}
+{% block title %}{{ brand.platform_name if brand else 'Praesidium' }} — Bill Runs{% endblock %}
+{% block breadcrumb %}
+<a href="/billing">Billing</a>
+<span class="breadcrumb-sep">&rsaquo;</span>
+<span class="breadcrumb-current">Bill Runs</span>
+{% endblock %}
+{% block content %}
+<div id="billing-bill-runs-root" style="padding: 16px 20px;"></div>
+<script type="module" src="/static/js/billing-bill-runs.js"></script>
+{% endblock %}

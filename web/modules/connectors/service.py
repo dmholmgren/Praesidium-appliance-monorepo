@@ -25,6 +25,38 @@ from modules.connectors.base import ConnectorStatus, get_connector_meta
 logger = logging.getLogger(__name__)
 
 
+
+# ---------------------------------------------------------------------------
+# credentials_vault crypto — Fernet keyed off SECRET_KEY
+# ---------------------------------------------------------------------------
+
+import base64 as _vault_base64
+import os as _vault_os
+
+
+def _vault_get_fernet():
+    from cryptography.fernet import Fernet
+    secret = _vault_os.environ.get("SECRET_KEY", "changeme-32-bytes-exactly!!!!!!!")
+    key_bytes = (secret[:32]).encode().ljust(32, b"0")
+    return Fernet(_vault_base64.urlsafe_b64encode(key_bytes))
+
+
+def _vault_encrypt(plaintext):
+    if plaintext is None:
+        return ""
+    return _vault_get_fernet().encrypt(str(plaintext).encode()).decode()
+
+
+def _vault_decrypt(stored):
+    if not stored:
+        return ""
+    try:
+        return _vault_get_fernet().decrypt(stored.encode()).decode()
+    except Exception:
+        logger.info("_vault_decrypt: row appears to be plaintext (pre-encryption fix)")
+        return stored
+
+
 class ConnectorService:
     """
     All connector operations go through this service.
@@ -370,9 +402,10 @@ class ConnectorService:
             )
             row = result.first()
             if row:
-                return row[0]
+                return _vault_decrypt(row[0])
 
             api_key = secrets.token_urlsafe(32)
+            encrypted = _vault_encrypt(api_key)
             await session.execute(
                 text("""
                     INSERT INTO credentials_vault (id, tenant_id, provider, key_type, encrypted_key)
@@ -380,15 +413,16 @@ class ConnectorService:
                     ON CONFLICT (tenant_id, provider, key_type)
                     DO UPDATE SET encrypted_key = EXCLUDED.encrypted_key
                 """),
-                {"tid": tid, "provider": provider, "val": api_key}
+                {"tid": tid, "provider": provider, "val": encrypted}
             )
             await session.commit()
             return api_key
 
     @staticmethod
     async def save_credential(tenant_id: str, provider: str, key_type: str, value: str):
-        """Store a credential in credentials_vault."""
+        """Store a credential in credentials_vault, Fernet-encrypted."""
         tid = tenant_id.strip()
+        encrypted = _vault_encrypt(value)
         async with AsyncSessionLocal() as session:
             await session.execute(
                 text("""
@@ -397,13 +431,14 @@ class ConnectorService:
                     ON CONFLICT (tenant_id, provider, key_type)
                     DO UPDATE SET encrypted_key = EXCLUDED.encrypted_key
                 """),
-                {"tid": tid, "provider": provider, "key_type": key_type, "val": value}
+                {"tid": tid, "provider": provider, "key_type": key_type, "val": encrypted}
             )
             await session.commit()
 
     @staticmethod
     async def get_credential(tenant_id: str, provider: str, key_type: str) -> Optional[str]:
-        """Retrieve a credential from credentials_vault."""
+        """Retrieve a credential from credentials_vault. Decrypts via Fernet
+        with plaintext fallback for legacy rows."""
         tid = tenant_id.strip()
         async with AsyncSessionLocal() as session:
             result = await session.execute(
@@ -415,7 +450,9 @@ class ConnectorService:
                 {"tid": tid, "provider": provider, "key_type": key_type}
             )
             row = result.first()
-        return row[0] if row else None
+        if not row:
+            return None
+        return _vault_decrypt(row[0])
 
     # ── Sync log ───────────────────────────────────────────────────────────────
 
@@ -427,7 +464,7 @@ class ConnectorService:
             await session.execute(
                 text("""
                     INSERT INTO connector_sync_log (id, tenant_id, connector_type, started_at, triggered_by)
-                    VALUES (:id::uuid, :tid, :ctype, NOW(), :triggered_by)
+                    VALUES (CAST(:id AS uuid), :tid, :ctype, NOW(), :triggered_by)
                 """),
                 {"id": log_id, "tid": tid, "ctype": connector_type, "triggered_by": triggered_by}
             )
@@ -448,7 +485,7 @@ class ConnectorService:
                     UPDATE connector_sync_log SET
                         completed_at = NOW(), records_processed = :rp,
                         records_skipped = :rs, error_count = :ec, last_error = :err
-                    WHERE id = :id::uuid
+                    WHERE id = CAST(:id AS uuid)
                 """),
                 {"id": log_id, "rp": records_processed, "rs": records_skipped, "ec": error_count, "err": last_error}
             )
@@ -501,7 +538,7 @@ class ConnectorService:
                 text("""
                     INSERT INTO connector_csv_imports
                         (id, tenant_id, connector_type, filename, row_count, imported_by, status, error_detail)
-                    VALUES (:id::uuid, :tid, :ctype, :fn, :rc, :uid, :status, :err)
+                    VALUES (CAST(:id AS uuid), :tid, :ctype, :fn, :rc, :uid, :status, :err)
                 """),
                 {"id": import_id, "tid": tid, "ctype": connector_type, "fn": filename,
                  "rc": row_count, "uid": imported_by, "status": status, "err": error_detail}

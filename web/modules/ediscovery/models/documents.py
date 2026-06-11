@@ -7,6 +7,7 @@ from sqlalchemy import (
     Enum, DECIMAL, JSON, ForeignKey, Index, func,
 )
 from sqlalchemy.dialects.mysql import BIGINT
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import relationship
 from core.db.base import Base
 
@@ -46,10 +47,10 @@ class EdiscoveryDocument(Base):
     """
     __tablename__ = "ediscovery_documents"
 
-    id = Column(BIGINT(unsigned=True), primary_key=True, autoincrement=True)
+    id = Column(PG_UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
     tenant_id = Column(String(36), nullable=False)
     collection_id = Column(
-        BIGINT(unsigned=True),
+        PG_UUID(as_uuid=True),
         ForeignKey("ediscovery_collections.id"),
         nullable=False,
     )
@@ -104,18 +105,18 @@ class EdiscoveryDocument(Base):
     relevance_score = Column(DECIMAL(5, 4))  # 0.0000 to 1.0000
     relevance_breakdown = Column(JSON)  # per-element scores
     review_tier = Column(
-        Enum(ReviewTier),
+        String(50),
         nullable=False,
-        default=ReviewTier.unscored,
+        default="unscored",
     )
     review_status = Column(
-        Enum(ReviewStatus),
+        String(50),
         nullable=False,
-        default=ReviewStatus.unreviewed,
+        default="unreviewed",
     )
     coding = Column(JSON)  # responsive, privileged, issue tags, confidentiality
     coding_notes = Column(Text)
-    reviewed_by = Column(BIGINT(unsigned=True), ForeignKey("users.id"))
+    reviewed_by = Column(PG_UUID(as_uuid=True), ForeignKey("users.id"))
     reviewed_at = Column(DateTime())
 
     # --- Production ---

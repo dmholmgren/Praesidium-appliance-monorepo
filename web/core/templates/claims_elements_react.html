@@ -1,0 +1,14 @@
+{% extends "shell.html" %}
+{% block title %}Claims & Elements — {{ matter_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/matters" style="color:var(--muted);text-decoration:none;">Matters</a>
+<span class="breadcrumb-sep">/</span>
+<a href="/matters/{{ matter_id }}" style="color:var(--muted);text-decoration:none;">{{ matter_name }}</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">Claims & Elements</span>
+{% endblock %}
+{% block content %}
+<div id="react-root" style="margin: -24px; height: calc(100vh - 120px);"></div>
+<script>window.__MATTER_ID__ = '{{ matter_id }}';</script>
+<script type="module" src="/static/js/claims-elements.js?v=1"></script>
+{% endblock %}

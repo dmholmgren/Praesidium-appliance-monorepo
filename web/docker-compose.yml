@@ -6,6 +6,11 @@ services:
     dns:
       - 10.10.10.1
       - 8.8.8.8
+    networks:
+      praesidium-internal:
+        ipv4_address: 172.28.0.5
+      praesidium-edge:
+        ipv4_address: 172.28.1.3
     build:
       context: .
       dockerfile: Dockerfile
@@ -22,7 +27,7 @@ services:
       - /mnt/docsend:/mnt/docsend:ro
       - /mnt/praesidium:/mnt/praesidium:rw
       - /mnt/ediscovery:/mnt/ediscovery:rw
-      - /opt/praesidium:/app
+      - /opt/praesidium-web:/app
     command: ["python", "startup.py"]
 
   nginx:
@@ -37,3 +42,25 @@ services:
       - "80:80"
     depends_on:
       - web
+  scraper:
+    build:
+      context: /datapool/opt/praesidium-scraper
+      dockerfile: Dockerfile
+    container_name: praesidium-scraper
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://praesidium:hS8_3bJg6NImUwFpFVJ4@172.28.0.1:5432/praesidium
+      - POLL_INTERVAL=30
+      - LOG_LEVEL=INFO
+    networks:
+      praesidium-internal: {}
+    volumes:
+      - /datapool/opt/praesidium-scraper:/app
+      - /tmp:/tmp/scraper-debug
+
+networks:
+  praesidium-internal:
+    external: true
+  praesidium-edge:
+    external: true
+

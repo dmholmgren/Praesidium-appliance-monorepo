@@ -1,0 +1,33 @@
+{% extends "shell.html" %}
+{% block title %}{{ project_title }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block breadcrumb %}
+<a href="/dms/" style="color:var(--muted);text-decoration:none;">Docs</a>
+<span style="margin:0 4px;">›</span>
+<a href="/dms/matter/{{ matter_id }}" style="color:var(--muted);text-decoration:none;">{{ client_name }} › {{ matter_name }} #{{ matter_number }}</a>
+<span style="margin:0 4px;">›</span>
+<span class="breadcrumb-current">{{ project_title }}</span>
+{% endblock %}
+
+{% block header_actions %}
+<a href="/dms/matter/{{ matter_id }}" style="padding:5px 12px;font-size:11px;border:1px solid var(--border);border-radius:5px;text-decoration:none;color:var(--text);background:var(--surface);">Back to Matter</a>
+<a href="/drafting/" style="padding:5px 12px;font-size:11px;border:1px solid var(--border);border-radius:5px;text-decoration:none;color:var(--text);background:var(--surface);">Drafting</a>
+{% endblock %}
+
+{% block content %}
+<div id="project-react-root"
+     data-project-id="{{ project_id }}"
+     data-matter-id="{{ matter_id }}"
+     data-matter-name="{{ matter_name }}"
+     data-matter-number="{{ matter_number }}"
+     data-client-name="{{ client_name }}"
+     data-template-type="{{ template_type }}"
+     style="min-height:400px;">
+  <div style="padding:48px; text-align:center; color:var(--muted); font-size:13px;">
+    Loading Project Workspace…
+  </div>
+</div>
+<script>window.__MATTER_ID__ = "{{ matter_id }}";</script>
+<script src="/static/js/onlyoffice-editor.js"></script>
+<script type="module" src="/static/js/project-workspace.js?v=3"></script>
+{% endblock %}

@@ -3,19 +3,25 @@ Auth Routes — Login/Logout endpoints.
 POST /auth/login — authenticates via the tenant's configured auth adapter.
 GET /auth/logout — clears session cookie and redirects to login.
 
-For HJMM: authenticates against Active Directory via LDAPS (COMP 16).
-Auth adapter selected from tenant config (AUTH_ADAPTER env var).
+REFACTORED: Auth adapter resolution now reads tenant_connectors for active
+auth_* connector, then resolves config from tenant_connectors.config +
+credentials_vault. Falls back to tenants.auth_adapter → env vars for
+backward compatibility with production systems not yet migrated.
+
+Multi-tenant: each tenant can have a different auth connector (LDAP, Azure,
+Okta, local) configured entirely in the DB. No .env changes required.
 """
 
 import os
 import logging
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Request, Form
 from fastapi.responses import RedirectResponse, HTMLResponse
 from fastapi.templating import Jinja2Templates
 
-from core.db.base import get_session_factory, TenantSession
+from core.db.base import AsyncSessionLocal
 from core.models.user import User
 from core.audit import write_audit
 from sqlalchemy import text as sa_text
@@ -27,6 +33,169 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "praesidium_session")
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Tenant auth config resolver — the multi-tenant refactor core
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def resolve_tenant_auth(tenant_id: str) -> dict:
+    """
+    Resolve auth adapter type and full config for a tenant.
+
+    Resolution order:
+      1. tenant_connectors — look for an active auth_* connector row
+      2. tenants.auth_adapter column — legacy single-tenant path
+      3. AUTH_ADAPTER env var — backward compat fallback
+
+    Returns:
+      {
+          "adapter": "ldaps" | "azure" | "local" | ...,
+          "config": { ... merged config from tenant_connectors.config },
+          "credentials": { key_type: value, ... from credentials_vault },
+          "source": "tenant_connectors" | "tenants_table" | "env"
+      }
+    """
+    tid = (tenant_id or "").strip()
+    if not tid:
+        return {"adapter": "local", "config": {}, "credentials": {}, "source": "default"}
+
+    # ── 1. Check tenant_connectors for an active auth_* connector ──────────
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                sa_text("""
+                    SELECT connector, connector_type, config, status
+                    FROM tenant_connectors
+                    WHERE TRIM(tenant_id) = :tid
+                      AND connector LIKE 'auth_%'
+                      AND is_active = true
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """),
+                {"tid": tid}
+            )
+            row = result.mappings().first()
+
+            if row:
+                connector_type = row["connector"]  # e.g. 'auth_ldap'
+                config = row["config"] if isinstance(row["config"], dict) else {}
+
+                # Map connector type → adapter name
+                adapter_map = {
+                    "auth_ldap":  "ldaps",
+                    "auth_azure": "azure",
+                    "auth_okta":  "okta",
+                    "auth_local": "local",
+                }
+                adapter = adapter_map.get(connector_type, "local")
+
+                # Resolve credentials from vault
+                credentials = await _resolve_credentials(tid, connector_type)
+
+                logger.info(f"[auth] Tenant {tid} → {adapter} via tenant_connectors ({connector_type})")
+                return {
+                    "adapter":     adapter,
+                    "config":      config,
+                    "credentials": credentials,
+                    "source":      "tenant_connectors",
+                }
+    except Exception as e:
+        logger.warning(f"[auth] tenant_connectors lookup failed for {tid}: {e}")
+
+    # ── 2. Fall back to tenants.auth_adapter column ────────────────────────
+    try:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                sa_text("SELECT auth_adapter FROM tenants WHERE TRIM(id) = :tid LIMIT 1"),
+                {"tid": tid}
+            )
+            row = result.first()
+            if row and row[0] and row[0].strip() not in ("", "local"):
+                adapter = row[0].strip()
+                logger.info(f"[auth] Tenant {tid} → {adapter} via tenants.auth_adapter")
+                return {
+                    "adapter":     adapter,
+                    "config":      {},
+                    "credentials": {},
+                    "source":      "tenants_table",
+                }
+    except Exception as e:
+        logger.warning(f"[auth] tenants table lookup failed: {e}")
+
+    # ── 3. Fall back to AUTH_ADAPTER env var ────────────────────────────────
+    env_adapter = os.environ.get("AUTH_ADAPTER", "local").strip()
+    if env_adapter and env_adapter != "local":
+        logger.info(f"[auth] Tenant {tid} → {env_adapter} via AUTH_ADAPTER env")
+        return {"adapter": env_adapter, "config": {}, "credentials": {}, "source": "env"}
+
+    return {"adapter": "local", "config": {}, "credentials": {}, "source": "default"}
+
+
+async def _resolve_credentials(tenant_id: str, connector_type: str) -> dict:
+    """
+    Load credentials from credentials_vault for a connector.
+
+    The registry_router stores credentials with:
+      provider = connector_type (e.g. 'auth_ldap')
+      key_type = field_name (e.g. 'bind_password')
+
+    We also check the legacy provider names (e.g. 'ldap') for backward
+    compat with manually-seeded credentials.
+
+    Returns dict of { key_type: encrypted_key } pairs.
+    """
+    # Check both the connector_type name and the short legacy name
+    legacy_map = {
+        "auth_ldap":  "ldap",
+        "auth_azure": "azure_ad",
+        "auth_okta":  "okta",
+    }
+    providers_to_check = [connector_type]
+    if connector_type in legacy_map:
+        providers_to_check.append(legacy_map[connector_type])
+
+    try:
+        async with AsyncSessionLocal() as session:
+            placeholders = " OR ".join([f"provider = :p{i}" for i in range(len(providers_to_check))])
+            params = {"tid": tenant_id.strip()}
+            for i, p in enumerate(providers_to_check):
+                params[f"p{i}"] = p
+
+            result = await session.execute(
+                sa_text(f"""
+                    SELECT key_type, encrypted_key, provider
+                    FROM credentials_vault
+                    WHERE TRIM(tenant_id) = :tid
+                      AND ({placeholders})
+                """),
+                params
+            )
+            rows = result.mappings().all()
+            # Decrypt Fernet-encrypted values before returning
+            decrypted = {}
+            for row in rows:
+                val = row["encrypted_key"]
+                if val and val.startswith("gAAAAA"):
+                    try:
+                        from cryptography.fernet import Fernet
+                        import base64
+                        secret = os.environ.get("SECRET_KEY", "changeme-32-bytes-exactly!!!!!!!")
+                        key_bytes = (secret[:32]).encode().ljust(32, b"0")
+                        fernet_key = base64.urlsafe_b64encode(key_bytes)
+                        f = Fernet(fernet_key)
+                        val = f.decrypt(val.encode()).decode()
+                    except Exception as e:
+                        logger.warning(f"[auth] Failed to decrypt {row['key_type']}: {e}")
+                decrypted[row["key_type"]] = val
+            return decrypted
+    except Exception as e:
+        logger.warning(f"[auth] credentials_vault lookup failed ({connector_type}): {e}")
+        return {}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Login / Logout routes
+# ═══════════════════════════════════════════════════════════════════════════
+
 @router.post("/login")
 async def login(
     request: Request,
@@ -36,32 +205,74 @@ async def login(
     """
     Handle login form submission.
     1. Resolve tenant from request
-    2. Authenticate via configured adapter (LDAPS, Azure AD, etc.)
-    3. Find or create user in local DB
-    4. Set session cookie
-    5. Redirect to DMS home
+    2. Resolve auth adapter + config from DB (multi-tenant aware)
+    3. Authenticate via resolved adapter
+    4. Find or create user in local DB
+    5. Set session cookie
+    6. Redirect to DMS home
     """
     tenant_id = getattr(request.state, "tenant_id", None)
     if not tenant_id:
         return _login_error(request, "Unable to resolve tenant. Check your domain.")
 
-    # Get the auth adapter from tenant DB record (not env var)
-    auth_adapter = await _get_tenant_auth_adapter(tenant_id)
+    # ── Per-user adapter override (BREAK-GLASS) ──────────────────────────
+    # Check the user record FIRST. If their auth_provider='local', honor
+    # that regardless of the tenant-level adapter. This keeps local
+    # break-glass accounts (e.g. praesidium_admin) authenticatable even
+    # when the tenant has LDAP/Azure active. Match by username OR email.
+    user_adapter_override = None
+    try:
+        async with AsyncSessionLocal() as session:
+            ur = await session.execute(
+                sa_text("""
+                    SELECT auth_provider FROM users
+                    WHERE TRIM(tenant_id) = :tid
+                      AND (username = :u OR email = :u)
+                      AND is_active = TRUE
+                    LIMIT 1
+                """),
+                {"tid": tenant_id.strip(), "u": username}
+            )
+            row = ur.first()
+            if row and row[0] == "local":
+                user_adapter_override = "local"
+                logger.info(
+                    f"[auth] Per-user override: {username}@{tenant_id} "
+                    f"-> local (auth_provider='local' on user record)"
+                )
+    except Exception as e:
+        logger.warning(f"[auth] per-user adapter check failed: {e}")
+        # Fall through to tenant-level adapter
 
-    if auth_adapter in ("ldaps", "ldap"):
-        result = await _authenticate_ldaps(username, password, tenant_id)
-    elif auth_adapter in ("azure", "azure_ad"):
-        result = await _authenticate_azure(username, password, tenant_id)
+    if user_adapter_override == "local":
+        auth_info = {"adapter": "local", "config": {}, "credentials": {}, "source": "user_record"}
+        adapter = "local"
     else:
-        # Default: local auth (covers 'local' and any unknown adapter)
+        # Resolve auth config from DB (tenant-level)
+        auth_info = await resolve_tenant_auth(tenant_id)
+        adapter = auth_info["adapter"]
+
+    if adapter in ("ldaps", "ldap"):
+        result = await _authenticate_ldaps(
+            username, password, tenant_id,
+            config=auth_info["config"],
+            credentials=auth_info["credentials"],
+        )
+    elif adapter in ("azure", "azure_ad"):
+        result = await _authenticate_azure(
+            username, password, tenant_id,
+            config=auth_info["config"],
+            credentials=auth_info["credentials"],
+        )
+    else:
         result = await _authenticate_local(username, password, tenant_id)
 
     if not result["success"]:
-        logger.warning(f"Login failed for {username}@{tenant_id}: {result.get('error', 'unknown')}")
+        logger.warning(f"Login failed for {username}@{tenant_id} [{adapter}]: {result.get('error', 'unknown')}")
         return _login_error(request, result.get("error", "Invalid credentials"))
+
     # Find or create user in local DB
     try:
-        from core.db.base import AsyncSessionLocal
         from sqlalchemy import select
         async with AsyncSessionLocal() as session:
             stmt = select(User).where(
@@ -79,7 +290,7 @@ async def login(
                     role="staff",
                     is_active=True,
                     is_timekeeper=False,
-                    auth_provider=auth_adapter,
+                    auth_provider=adapter,
                     external_id=result.get("external_id", ""),
                     created_at=datetime.utcnow(),
                     updated_at=datetime.utcnow(),
@@ -94,8 +305,6 @@ async def login(
         logger.error(f"Database error during login for {username}: {e}")
         return _login_error(request, "Authentication succeeded but session creation failed.")
 
-    # Set session cookie and redirect
-    # The middleware reads this cookie and loads the user by ID
     response = RedirectResponse(url="/dms/", status_code=302)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
@@ -103,10 +312,10 @@ async def login(
         httponly=True,
         secure=request.url.scheme == "https",
         samesite="lax",
-        max_age=86400,  # 24 hours
+        max_age=86400,
     )
 
-    logger.info(f"Login successful: {username} (user_id={user_id}) tenant={tenant_id}")
+    logger.info(f"Login successful: {username} (user_id={user_id}) tenant={tenant_id} adapter={adapter}")
     return response
 
 
@@ -118,13 +327,18 @@ async def logout(request: Request):
     return response
 
 
-# ── Auth Adapter Calls ─────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# Auth adapter calls — now accept resolved config + credentials
+# ═══════════════════════════════════════════════════════════════════════════
 
-async def _authenticate_ldaps(username: str, password: str, tenant_id: str) -> dict:
+async def _authenticate_ldaps(
+    username: str, password: str, tenant_id: str,
+    config: dict = None, credentials: dict = None,
+) -> dict:
     """Authenticate against Active Directory via LDAPS."""
     try:
         from modules.auth.adapters.auth_adapters import LDAPSAuthAdapter
-        adapter = LDAPSAuthAdapter()
+        adapter = LDAPSAuthAdapter(config=config, credentials=credentials)
         result = await adapter.authenticate(username, password, tenant_id)
         return {
             "success": result.success,
@@ -139,11 +353,14 @@ async def _authenticate_ldaps(username: str, password: str, tenant_id: str) -> d
         return {"success": False, "error": f"LDAP connection failed: {str(e)}"}
 
 
-async def _authenticate_azure(username: str, password: str, tenant_id: str) -> dict:
+async def _authenticate_azure(
+    username: str, password: str, tenant_id: str,
+    config: dict = None, credentials: dict = None,
+) -> dict:
     """Authenticate via Azure AD / Entra ID."""
     try:
         from modules.auth.adapters.auth_adapters import AzureADAuthAdapter
-        adapter = AzureADAuthAdapter()
+        adapter = AzureADAuthAdapter(config=config, credentials=credentials)
         result = await adapter.authenticate(username, password, tenant_id)
         return {
             "success": result.success,
@@ -166,11 +383,9 @@ async def _authenticate_local(username: str, password: str, tenant_id: str) -> d
     """
     try:
         import bcrypt as _bcrypt
-        from core.db.base import AsyncSessionLocal
         from sqlalchemy import text
 
         async with AsyncSessionLocal() as session:
-            # Match by username OR email, scoped to tenant
             result = await session.execute(
                 text("""
                     SELECT id, username, email, full_name, password_hash, role, is_active
@@ -203,25 +418,16 @@ async def _authenticate_local(username: str, password: str, tenant_id: str) -> d
         return {"success": False, "error": str(e)}
 
 
+# ── Legacy compat (kept for any external callers) ────────────────────────
+
 async def _get_tenant_auth_adapter(tenant_id: str) -> str:
-    """Read auth_adapter from tenants table. Falls back to 'local'."""
-    try:
-        from core.db.base import AsyncSessionLocal
-        from sqlalchemy import text
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                text("SELECT auth_adapter FROM tenants WHERE TRIM(id) = :tid LIMIT 1"),
-                {"tid": tenant_id.strip()}
-            )
-            row = result.first()
-            return (row[0] or "local").strip() if row else "local"
-    except Exception as e:
-        logger.warning(f"Could not read tenant auth_adapter: {e}")
-        return "local"
+    """DEPRECATED — use resolve_tenant_auth() instead. Kept for backward compat."""
+    info = await resolve_tenant_auth(tenant_id)
+    return info["adapter"]
+
 
 def _login_error(request: Request, message: str):
     """Return to login page with error message."""
-    # Redirect back to login with error in query param
     from urllib.parse import quote
     return RedirectResponse(
         url=f"/login?error={quote(message)}",

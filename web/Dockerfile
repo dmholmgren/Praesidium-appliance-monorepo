@@ -8,6 +8,7 @@ WORKDIR /app
 # OCR pipeline: tesseract-ocr + poppler-utils (pdftoppm)
 # Document conversion: libreoffice headless (DOCX → PDF preview)
 # Legacy doc formats: antiword (old .doc)
+# PST extraction: pst-utils (readpst) for Outlook PST ingestion
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl gcc g++ make pkg-config \
     libldap2-dev libsasl2-dev \
@@ -16,7 +17,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     libreoffice \
     antiword \
+    pandoc \
+    pst-utils \
+    default-jre-headless \
+    docker-cli \
     && rm -rf /var/lib/apt/lists/*
+
+# Timeslips Database Connector
+RUN apt-get update && apt-get install -y --no-install-recommends libfbclient2 && rm -rf /var/lib/apt/lists/*
 
 # Python dependencies
 COPY requirements.txt .

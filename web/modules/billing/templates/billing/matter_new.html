@@ -1,0 +1,347 @@
+{% extends "billing/layout.html" %}
+{% block title %}New Matter — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}New Matter{% endblock %}
+
+{% block billing_content %}
+
+{# ── Header ──────────────────────────────────────────────────────────────────── #}
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+  <div>
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px;">
+      <a href="/billing" style="font-size:12px; color:var(--muted); text-decoration:none;">← Billing</a>
+      <span style="font-size:11px; color:#D1D5DB;">·</span>
+      <span style="font-size:12px; color:var(--muted);">New Matter</span>
+    </div>
+    <h2 style="font-family:'Lora',serif; font-size:20px; font-weight:600; color:var(--text); margin:0;">
+      Open a New Matter
+    </h2>
+  </div>
+</div>
+
+{# ── Error banner ────────────────────────────────────────────────────────────── #}
+{% if error %}
+<div style="background:#FEF2F2; border:1px solid #FECACA; color:#7F1D1D;
+            border-radius:6px; padding:12px 16px; margin-bottom:16px; font-size:13px;">
+  {{ error }}
+</div>
+{% endif %}
+
+{# ── Form ────────────────────────────────────────────────────────────────────── #}
+<div style="max-width:720px;">
+  <div id="nm-form-error"
+       style="display:none; background:#FEF2F2; border:1px solid #FECACA;
+              color:#7F1D1D; border-radius:6px; padding:10px 14px;
+              margin-bottom:16px; font-size:13px;"></div>
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+
+    {# ── Client selector ──────────────────────────────────────────────────── #}
+    <div style="grid-column:1/-1;">
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Client *</label>
+      <div style="position:relative;">
+        <input type="text" id="nm-client-search"
+               placeholder="Search existing clients…"
+               value="{{ prefill.client_name or '' }}"
+               autocomplete="off"
+               style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                      padding:8px 12px; font-size:13px; box-sizing:border-box;"
+               oninput="nmSearchClients(this.value)"
+               onfocus="nmSearchClients(this.value)">
+        <input type="hidden" id="nm-client-id" value="{{ prefill.client_id or '' }}">
+        <div id="nm-client-results"
+             style="display:none; position:absolute; top:100%; left:0; right:0;
+                    max-height:200px; overflow-y:auto; background:#fff;
+                    border:1px solid #D1D5DB; border-top:none; border-radius:0 0 6px 6px;
+                    z-index:20; box-shadow:0 4px 12px rgba(0,0,0,0.08);"></div>
+      </div>
+      <div style="margin-top:6px; font-size:11px; color:var(--muted);">
+        Can't find the client?
+        <a href="/billing/clients/new" style="color:var(--primary); font-weight:500;">Create a new client first →</a>
+      </div>
+    </div>
+
+    {# ── Matter name ──────────────────────────────────────────────────────── #}
+    <div style="grid-column:1/-1;">
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Matter Name *</label>
+      <input type="text" id="nm-matter-name"
+             placeholder="e.g. Smith v. Jones — Breach of Contract"
+             value="{{ prefill.matter_name or '' }}"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                    padding:8px 12px; font-size:13px; box-sizing:border-box;">
+    </div>
+
+    {# ── Matter number ────────────────────────────────────────────────────── #}
+    <div>
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Matter Number</label>
+      <input type="text" id="nm-matter-number"
+             placeholder="Auto-generated if blank"
+             value="{{ prefill.matter_number or '' }}"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                    padding:8px 12px; font-size:13px; box-sizing:border-box;">
+      <div style="font-size:10px; color:var(--muted); margin-top:3px;">
+        Next: {{ next_matter_number }}
+      </div>
+    </div>
+
+    {# ── Practice area ────────────────────────────────────────────────────── #}
+    <div>
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Practice Area</label>
+      <select id="nm-practice-area"
+              style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                     padding:8px 12px; font-size:13px; background:#fff; box-sizing:border-box;">
+        <option value="">— Select —</option>
+        <option value="litigation" {{ 'selected' if prefill.matter_type == 'litigation' }}>Litigation</option>
+        <option value="transactional" {{ 'selected' if prefill.matter_type == 'transactional' }}>Transactional</option>
+        <option value="real_estate" {{ 'selected' if prefill.matter_type == 'real_estate' }}>Real Estate</option>
+        <option value="family" {{ 'selected' if prefill.matter_type == 'family' }}>Family</option>
+        <option value="probate" {{ 'selected' if prefill.matter_type == 'probate' }}>Probate</option>
+        <option value="corporate" {{ 'selected' if prefill.matter_type == 'corporate' }}>Corporate</option>
+        <option value="bankruptcy" {{ 'selected' if prefill.matter_type == 'bankruptcy' }}>Bankruptcy</option>
+        <option value="other" {{ 'selected' if prefill.matter_type == 'other' }}>Other</option>
+      </select>
+    </div>
+
+    {# ── Billing type ─────────────────────────────────────────────────────── #}
+    <div>
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Billing Type</label>
+      <select id="nm-billing-type"
+              onchange="nmToggleBillingFields()"
+              style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                     padding:8px 12px; font-size:13px; background:#fff; box-sizing:border-box;">
+        <option value="hourly">Hourly</option>
+        <option value="flat_fee">Flat Fee</option>
+        <option value="contingency">Contingency</option>
+        <option value="retainer">Retainer</option>
+      </select>
+    </div>
+
+    {# ── Hourly rate ──────────────────────────────────────────────────────── #}
+    <div id="nm-hourly-rate-wrap">
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Hourly Rate</label>
+      <input type="number" id="nm-hourly-rate" step="0.01" min="0"
+             placeholder="350.00"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                    padding:8px 12px; font-size:13px; box-sizing:border-box;">
+    </div>
+
+    {# ── Responsible attorney ─────────────────────────────────────────────── #}
+    <div>
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Responsible Attorney</label>
+      <select id="nm-attorney"
+              style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                     padding:8px 12px; font-size:13px; background:#fff; box-sizing:border-box;">
+        <option value="">— Select —</option>
+        {% for tk in timekeepers %}
+        <option value="{{ tk.ts_tk_id }}">{{ tk.ts_name or tk.ts_initials }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    {# ── Court info section ───────────────────────────────────────────────── #}
+    <div style="grid-column:1/-1; margin-top:8px;">
+      <div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:12px;
+                  padding-bottom:6px; border-bottom:1px solid var(--border);">
+        Court Information <span style="font-weight:400; color:var(--muted); font-size:11px;">(optional)</span>
+      </div>
+    </div>
+
+    <div>
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Court</label>
+      <input type="text" id="nm-court"
+             placeholder="e.g. 101st District Court, Dallas County"
+             value="{{ prefill.court or '' }}"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                    padding:8px 12px; font-size:13px; box-sizing:border-box;">
+    </div>
+
+    <div>
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Cause Number</label>
+      <input type="text" id="nm-cause-number"
+             placeholder="e.g. DC-26-12345"
+             value="{{ prefill.case_number or '' }}"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                    padding:8px 12px; font-size:13px; box-sizing:border-box;">
+    </div>
+
+    <div>
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Judge</label>
+      <input type="text" id="nm-judge"
+             placeholder="Judge name"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                    padding:8px 12px; font-size:13px; box-sizing:border-box;">
+    </div>
+
+    <div>
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Jurisdiction</label>
+      <input type="text" id="nm-jurisdiction"
+             placeholder="e.g. Texas, Federal — N.D. Tex."
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                    padding:8px 12px; font-size:13px; box-sizing:border-box;">
+    </div>
+
+    {# ── Dates ────────────────────────────────────────────────────────────── #}
+    <div>
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Open Date</label>
+      <input type="date" id="nm-open-date"
+             value="{{ today }}"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                    padding:8px 12px; font-size:13px; box-sizing:border-box;">
+    </div>
+
+    <div>
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Statute of Limitations</label>
+      <input type="date" id="nm-sol-date"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                    padding:8px 12px; font-size:13px; box-sizing:border-box;">
+    </div>
+
+    {# ── Notes ────────────────────────────────────────────────────────────── #}
+    <div style="grid-column:1/-1;">
+      <label style="display:block; font-size:12px; font-weight:500;
+                    color:#374151; margin-bottom:4px;">Notes</label>
+      <textarea id="nm-notes" rows="3"
+                placeholder="Internal notes about this matter…"
+                style="width:100%; border:1px solid #D1D5DB; border-radius:6px;
+                       padding:8px 12px; font-size:13px; resize:vertical;
+                       font-family:inherit; box-sizing:border-box;"></textarea>
+    </div>
+
+  </div>
+
+  {# ── Actions ─────────────────────────────────────────────────────────────── #}
+  <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:24px;
+              padding-top:16px; border-top:1px solid var(--border);">
+    <a href="/billing"
+       style="padding:8px 20px; border:1px solid #D1D5DB; background:#fff;
+              border-radius:6px; font-size:13px; color:#374151; text-decoration:none;
+              display:inline-flex; align-items:center;">Cancel</a>
+    <button onclick="nmSaveMatter()" id="nm-save-btn"
+            style="padding:8px 24px; background:var(--primary); color:#fff;
+                   border:none; border-radius:6px; font-size:13px;
+                   font-weight:500; cursor:pointer;">
+      Create Matter
+    </button>
+  </div>
+
+</div>
+
+<script>
+var _nmSearchTimer = null;
+
+function nmSearchClients(q) {
+  clearTimeout(_nmSearchTimer);
+  var results = document.getElementById('nm-client-results');
+  if (!q || q.length < 1) { results.style.display = 'none'; return; }
+  _nmSearchTimer = setTimeout(async function() {
+    try {
+      var res = await fetch('/billing/clients-search?search=' + encodeURIComponent(q));
+      var html = await res.text();
+      results.innerHTML = html;
+      results.style.display = 'block';
+      results.querySelectorAll('a').forEach(function(a) {
+        a.onclick = function(e) {
+          e.preventDefault();
+          var href = a.getAttribute('href');
+          var clientId = href.split('/').pop();
+          var clientName = a.textContent.trim();
+          document.getElementById('nm-client-search').value = clientName;
+          document.getElementById('nm-client-id').value = clientId;
+          results.style.display = 'none';
+        };
+      });
+    } catch(e) {
+      results.style.display = 'none';
+    }
+  }, 250);
+}
+
+document.addEventListener('click', function(e) {
+  var results = document.getElementById('nm-client-results');
+  var input   = document.getElementById('nm-client-search');
+  if (results && !results.contains(e.target) && e.target !== input) {
+    results.style.display = 'none';
+  }
+});
+
+function nmToggleBillingFields() {
+  var bt = document.getElementById('nm-billing-type').value;
+  document.getElementById('nm-hourly-rate-wrap').style.display =
+    (bt === 'hourly' || bt === 'retainer') ? '' : 'none';
+}
+
+async function nmSaveMatter() {
+  var btn   = document.getElementById('nm-save-btn');
+  var errEl = document.getElementById('nm-form-error');
+  errEl.style.display = 'none';
+
+  var clientId   = document.getElementById('nm-client-id').value.trim();
+  var matterName = document.getElementById('nm-matter-name').value.trim();
+
+  if (!clientId) {
+    errEl.textContent = 'Please select a client.';
+    errEl.style.display = 'block';
+    document.getElementById('nm-client-search').focus();
+    return;
+  }
+  if (!matterName) {
+    errEl.textContent = 'Matter name is required.';
+    errEl.style.display = 'block';
+    document.getElementById('nm-matter-name').focus();
+    return;
+  }
+
+  btn.textContent = 'Creating…'; btn.disabled = true;
+
+  var payload = {
+    client_id:     clientId,
+    matter_name:   matterName,
+    matter_number: document.getElementById('nm-matter-number').value.trim() || null,
+    practice_area: document.getElementById('nm-practice-area').value || null,
+    billing_type:  document.getElementById('nm-billing-type').value,
+    hourly_rate:   parseFloat(document.getElementById('nm-hourly-rate').value) || null,
+    court:         document.getElementById('nm-court').value.trim() || null,
+    cause_number:  document.getElementById('nm-cause-number').value.trim() || null,
+    judge:         document.getElementById('nm-judge').value.trim() || null,
+    jurisdiction:  document.getElementById('nm-jurisdiction').value.trim() || null,
+    open_date:     document.getElementById('nm-open-date').value || null,
+    sol_date:      document.getElementById('nm-sol-date').value || null,
+    notes:         document.getElementById('nm-notes').value.trim() || null,
+    responsible_attorney: document.getElementById('nm-attorney').value || null,
+  };
+
+  try {
+    var res = await fetch('/billing/matters/new', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify(payload),
+    });
+    var data = await res.json();
+    if (res.ok && data.matter_id) {
+      window.location.href = '/billing/clients/' + data.client_id + '/matters/' + data.matter_id;
+    } else {
+      errEl.textContent = data.error || 'Error creating matter.';
+      errEl.style.display = 'block';
+    }
+  } catch(e) {
+    errEl.textContent = 'Network error. Please try again.';
+    errEl.style.display = 'block';
+  } finally {
+    btn.textContent = 'Create Matter'; btn.disabled = false;
+  }
+}
+</script>
+
+{% endblock %}

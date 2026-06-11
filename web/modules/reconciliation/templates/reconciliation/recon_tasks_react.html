@@ -1,0 +1,11 @@
+{% extends "shell.html" %}
+{% block title %}Task Reconciliation — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/reconciliation">Reconciliation</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">AI Tasks</span>
+{% endblock %}
+{% block content %}
+<div id="recon-tasks-root"></div>
+<script type="module" src="/static/js/recon-tasks.js"></script>
+{% endblock %}

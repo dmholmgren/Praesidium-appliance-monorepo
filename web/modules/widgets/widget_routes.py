@@ -179,20 +179,42 @@ async def _lookup_widget(widget_slug: str, tenant_id: str) -> Optional[dict]:
 # Permission check — minimum role gate
 # ---------------------------------------------------------------------------
 
-_ROLE_RANK = {"attorney": 1, "partner": 2, "admin": 3, "superadmin": 4}
-
-
-def _check_permission(widget: dict, request: Request) -> bool:
+async def _check_permission(widget: dict, request: Request) -> bool:
     """
-    Returns True if the current user meets the widget's minimum permission_level.
-    Defaults to permit if no permission_level set.
+    Returns True if the current user is permitted to view this widget.
+
+    Uses PermissionService — replaces the legacy _ROLE_RANK ladder which
+    didn't recognize paralegal/staff/read_only/client/deal_room_guest.
+
+    Scope semantics:
+      - PermissionService.can(user, "widgets", "view") returns whether the
+        user can view ANY widgets at all.
+      - If scope_filters["widget_slug"] is None, all widgets are visible.
+      - If it's a list, this widget's slug must be in it.
+      - If it's an empty list, deny all (treat empty as deny per the
+        scope_filters contract).
+
+    The widget_registry.permission_level column is no longer enforcement;
+    the admin UI keeps it as display-only metadata indicating which role
+    the widget was originally designed for.
     """
-    required = widget.get("permission_level") or "attorney"
     current_user = getattr(request.state, "current_user", None)
     if current_user is None:
         return False
-    role = getattr(current_user, "role", "attorney") or "attorney"
-    return _ROLE_RANK.get(role, 0) >= _ROLE_RANK.get(required, 1)
+
+    # Lazy import to avoid circular dependency at module load.
+    from core.auth.permissions import PermissionService
+
+    perm = await PermissionService.can(current_user, "widgets", "view")
+    if not perm.allowed:
+        return False
+
+    slug_filter = perm.scope_filters.get("widget_slug")
+    if slug_filter is None:
+        return True  # unrestricted
+    if not slug_filter:
+        return False  # empty list = deny all
+    return widget.get("widget_slug") in slug_filter
 
 
 # ---------------------------------------------------------------------------
@@ -227,7 +249,7 @@ async def render_widget(
     widget_type = widget.get("widget_type") or "placeholder"
 
     # --- 2. Permission gate ---
-    if not _check_permission(widget, request):
+    if not await _check_permission(widget, request):
         return HTMLResponse(
             '<div style="padding:10px 12px;font-size:11px;color:var(--muted);">'
             'Insufficient permissions.</div>'

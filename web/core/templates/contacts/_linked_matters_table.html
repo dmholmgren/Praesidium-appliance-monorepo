@@ -1,0 +1,53 @@
+{% if linked_matters %}
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Matter</th>
+      <th>Client</th>
+      <th>Role</th>
+      <th style="text-align:center;">Primary</th>
+      <th>Status</th>
+      <th style="text-align:right;"></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for m in linked_matters %}
+    <tr>
+      <td><div style="font-weight:500;">{{ m.matter_number }} {{ m.matter_name }}</div></td>
+      <td style="color:var(--muted);">{{ m.client_name or '—' }}</td>
+      <td><span class="badge badge-gray">{{ m.role or '—' }}</span></td>
+      <td style="text-align:center;">
+        {% if m.is_primary == 'Y' %}
+        <span class="badge badge-green">Primary</span>
+        {% else %}
+        <span style="color:var(--muted);">—</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if m.matter_status %}
+        <span style="font-size:12px; color:var(--muted); text-transform:capitalize;">{{ m.matter_status }}</span>
+        {% else %}
+        <span style="color:var(--muted);">—</span>
+        {% endif %}
+      </td>
+      <td style="text-align:right;">
+        <button type="button"
+                hx-post="/contacts/{{ contact_id }}/unlink-matter/{{ m.link_id }}"
+                hx-target="#linked-matters-container"
+                hx-swap="innerHTML"
+                hx-confirm="Remove this matter link?"
+                style="font-size:12px; color:#991B1B; background:none;
+                       border:none; cursor:pointer; padding:0;
+                       font-family:'DM Sans',sans-serif;">
+          Remove
+        </button>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty-state" style="padding:24px;">
+  No matters linked yet. Use the form below to add one.
+</div>
+{% endif %}

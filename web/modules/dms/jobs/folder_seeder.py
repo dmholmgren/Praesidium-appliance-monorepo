@@ -85,6 +85,7 @@ FOLDER_STRUCTURES: dict[str, list[str]] = {
         "12-eDiscovery",
         "13-Billing",
         "14-Trial Preparation",
+        "15-Email",
     ],
     "transactional_loan": [
         "01-Client Documents",
@@ -99,6 +100,7 @@ FOLDER_STRUCTURES: dict[str, list[str]] = {
         "10-Post-Closing",
         "11-Correspondence",
         "12-Billing",
+        "13-Email",
     ],
     "transactional_securities": [
         "01-Client Documents",
@@ -108,6 +110,7 @@ FOLDER_STRUCTURES: dict[str, list[str]] = {
         "05-Research",
         "06-Correspondence",
         "07-Billing",
+        "08-Email",
     ],
     "transactional": [
         # Generic transactional fallback
@@ -119,6 +122,7 @@ FOLDER_STRUCTURES: dict[str, list[str]] = {
         "06-Closing",
         "07-Post-Closing",
         "08-Billing",
+        "09-Email",
     ],
     "ogc_retainer": [
         "01-Client Documents",
@@ -129,6 +133,7 @@ FOLDER_STRUCTURES: dict[str, list[str]] = {
         "06-Correspondence",
         "07-Research",
         "08-Billing",
+        "09-Email",
     ],
 }
 

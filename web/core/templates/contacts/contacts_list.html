@@ -1,0 +1,181 @@
+{% extends "billing/layout.html" %}
+{% block title %}{{ brand.platform_name if brand else 'Praesidium' }} — Contacts{% endblock %}
+{% block page_title %}Contacts{% endblock %}
+
+{% block billing_content %}
+
+{# ── Header ───────────────────────────────────────────────────────────────── #}
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+  <div>
+    <h2 style="font-family:'Lora',serif; font-size:20px; font-weight:600;
+               color:var(--text); margin:0 0 4px 0;">Contacts</h2>
+    <p style="font-size:12px; color:var(--muted); margin:0;">
+      People and companies linked to your matters
+    </p>
+  </div>
+  <a href="/contacts/new" class="btn-primary">+ New Contact</a>
+</div>
+
+{# ── Stats / Quick links ──────────────────────────────────────────────────── #}
+<div style="display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:20px;">
+  <div class="card" style="padding:14px;">
+    <div style="font-size:10px; color:var(--muted); text-transform:uppercase;
+                letter-spacing:.05em; margin-bottom:4px;">Total contacts</div>
+    <div style="font-size:22px; font-weight:600; color:var(--text);">{{ counts.total }}</div>
+    <div style="font-size:11px; color:var(--muted);">Active records</div>
+  </div>
+  <a href="/contacts/dedup-review" style="text-decoration:none; color:inherit;">
+    <div class="card" style="padding:14px; transition:border-color 120ms;
+                              {% if counts.pending_dedup > 0 %}border-color:#FCD34D;{% endif %}">
+      <div style="font-size:10px; color:var(--muted); text-transform:uppercase;
+                  letter-spacing:.05em; margin-bottom:4px;">Pending dedup clusters</div>
+      <div style="font-size:22px; font-weight:600;
+                  color:{% if counts.pending_dedup > 0 %}#92400E{% else %}var(--muted){% endif %};">
+        {{ counts.pending_dedup }}
+      </div>
+      <div style="font-size:11px; color:var(--muted);">
+        {% if counts.pending_dedup > 0 %}Review queue →{% else %}All clean{% endif %}
+      </div>
+    </div>
+  </a>
+  <a href="/contacts/proposals-review" style="text-decoration:none; color:inherit;">
+    <div class="card" style="padding:14px; transition:border-color 120ms;
+                              {% if counts.pending_proposals > 0 %}border-color:#93C5FD;{% endif %}">
+      <div style="font-size:10px; color:var(--muted); text-transform:uppercase;
+                  letter-spacing:.05em; margin-bottom:4px;">Pending matter proposals</div>
+      <div style="font-size:22px; font-weight:600;
+                  color:{% if counts.pending_proposals > 0 %}#1E40AF{% else %}var(--muted){% endif %};">
+        {{ counts.pending_proposals }}
+      </div>
+      <div style="font-size:11px; color:var(--muted);">
+        {% if counts.pending_proposals > 0 %}Review queue →{% else %}All resolved{% endif %}
+      </div>
+    </div>
+  </a>
+</div>
+
+{# ── Filter toolbar ───────────────────────────────────────────────────────── #}
+<form method="get" action="/contacts" class="card"
+      style="padding:14px; margin-bottom:16px; display:flex; gap:10px;
+             align-items:end; flex-wrap:wrap;">
+  <div style="flex:1; min-width:200px;">
+    <label style="display:block; font-size:11px; color:var(--muted);
+                  text-transform:uppercase; letter-spacing:.05em; margin-bottom:4px;">
+      Search
+    </label>
+    <input type="text" name="search" value="{{ search }}"
+           placeholder="Name, email, phone, company…"
+           style="width:100%; padding:7px 10px; font-size:13px;
+                  border:1px solid var(--border); border-radius:6px;
+                  font-family:'DM Sans',sans-serif;">
+  </div>
+  <div>
+    <label style="display:block; font-size:11px; color:var(--muted);
+                  text-transform:uppercase; letter-spacing:.05em; margin-bottom:4px;">
+      Type
+    </label>
+    <select name="contact_type"
+            style="padding:7px 10px; font-size:13px; border:1px solid var(--border);
+                   border-radius:6px; font-family:'DM Sans',sans-serif;">
+      <option value="">All</option>
+      {% for ct in contact_types %}
+      <option value="{{ ct }}" {% if contact_type == ct %}selected{% endif %}>{{ ct }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text); padding-bottom:8px;">
+    <input type="checkbox" name="has_matters" value="1" {% if has_matters %}checked{% endif %}>
+    Has matter links
+  </label>
+  <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text); padding-bottom:8px;">
+    <input type="checkbox" name="pending_dedup" value="1" {% if pending_dedup_filter %}checked{% endif %}>
+    In dedup queue
+  </label>
+  <button type="submit" class="btn-secondary">Filter</button>
+  {% if search or contact_type or has_matters or pending_dedup_filter %}
+  <a href="/contacts" style="font-size:11px; color:var(--muted); text-decoration:none; padding-bottom:14px;">Clear</a>
+  {% endif %}
+</form>
+
+{# ── Contacts table ───────────────────────────────────────────────────────── #}
+<div class="card" style="padding:0; overflow:hidden;">
+  <table class="data-table" style="margin:0;">
+    <thead>
+      <tr>
+        <th>Name / Company</th>
+        <th>Email</th>
+        <th>Phone</th>
+        <th>Type</th>
+        <th style="text-align:center;">Matters</th>
+        <th style="text-align:center;">Pending</th>
+        <th style="text-align:right;">Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in contacts %}
+      <tr {% if c.contact_type == 'archived' %}style="opacity:0.5;"{% endif %}>
+        <td>
+          <div style="font-weight:500;">{{ c.full_name }}</div>
+          {% if c.company or c.firm_name %}
+          <div style="font-size:11px; color:var(--muted);">
+            {{ c.company }}{% if c.firm_name %}{% if c.company %} · {% endif %}{{ c.firm_name }}{% endif %}
+          </div>
+          {% endif %}
+        </td>
+        <td style="font-size:12px;">{{ c.email or '—' }}</td>
+        <td style="font-size:12px; font-family:ui-monospace,monospace;">{{ c.phone or '—' }}</td>
+        <td>
+          {% if c.contact_type == 'auto_email' %}
+          <span class="badge badge-green">auto</span>
+          {% elif c.contact_type == 'exchange' %}
+          <span class="badge badge-blue">exchange</span>
+          {% elif c.contact_type == 'phone' %}
+          <span class="badge badge-blue">phone</span>
+          {% elif c.contact_type == 'archived' %}
+          <span class="badge badge-gray">archived</span>
+          {% else %}
+          <span class="badge badge-gray">{{ c.contact_type or 'manual' }}</span>
+          {% endif %}
+        </td>
+        <td style="text-align:center;">
+          {% if c.n_matters > 0 %}
+          <span class="badge badge-blue">{{ c.n_matters }}</span>
+          {% else %}
+          <span style="color:var(--muted);">—</span>
+          {% endif %}
+        </td>
+        <td style="text-align:center;">
+          {% if c.n_pending_proposals > 0 %}
+          <span class="badge badge-yellow">{{ c.n_pending_proposals }}</span>
+          {% else %}
+          <span style="color:var(--muted);">—</span>
+          {% endif %}
+        </td>
+        <td style="text-align:right;">
+          <a href="/contacts/{{ c.id }}"
+             style="font-size:12px; color:var(--primary); text-decoration:none;">
+            Edit →
+          </a>
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="7" class="empty-state">
+          {% if search or contact_type or has_matters or pending_dedup_filter %}
+            No contacts match the current filters.
+          {% else %}
+            No contacts yet. <a href="/contacts/new" style="color:var(--primary);">Create one →</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div style="font-size:11px; color:var(--muted); margin-top:10px;">
+  Showing {{ contacts | length }} contact{{ 's' if contacts | length != 1 else '' }}
+  {% if contacts | length >= 200 %} (limit reached — refine filters to see more){% endif %}
+</div>
+
+{% endblock %}

@@ -1,0 +1,39 @@
+{% extends "shell.html" %}
+{% block title %}{{ workspace_title }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+
+{% block breadcrumb %}
+<a href="/dashboard" style="color:var(--muted);text-decoration:none;">Home</a>
+<span style="margin:0 4px;">›</span>
+{% if matter_id %}
+<a href="/matters/{{ matter_id }}" style="color:var(--muted);text-decoration:none;">{{ client_name }}{% if client_name and matter_name %} ›{% endif %} {{ matter_name }} {% if matter_number %}#{{ matter_number }}{% endif %}</a>
+<span style="margin:0 4px;">›</span>
+{% endif %}
+<a href="/workspaces/" style="color:var(--muted);text-decoration:none;">Workspaces</a>
+<span style="margin:0 4px;">›</span>
+<span class="breadcrumb-current">{{ workspace_title }}</span>
+{% endblock %}
+
+{% block header_actions %}
+{% if matter_id %}
+<a href="/matters/{{ matter_id }}" style="padding:5px 12px;font-size:11px;border:1px solid var(--border);border-radius:5px;text-decoration:none;color:var(--text);background:var(--surface);">Back to Matter</a>
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<div id="workspace-detail-root"
+     data-workspace-id="{{ workspace_id }}"
+     data-workspace-type="{{ workspace_type }}"
+     data-workspace-title="{{ workspace_title }}"
+     data-matter-id="{{ matter_id }}"
+     data-matter-name="{{ matter_name }}"
+     data-matter-number="{{ matter_number }}"
+     data-client-name="{{ client_name }}"
+     data-project-id="{{ project_id }}"
+     data-project-title="{{ project_title }}"
+     style="min-height:600px;">
+  <div style="padding:48px; text-align:center; color:var(--muted); font-size:13px;">
+    Loading Workspace…
+  </div>
+</div>
+<script type="module" src="/static/js/meeting-workspace.js?v=1"></script>
+{% endblock %}

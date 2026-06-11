@@ -36,6 +36,12 @@ PUBLIC_PATHS = {
     "/favicon.ico",
     "/manifest.json",
     "/api/v1/addin/manifest.xml",
+    "/api/v1/desktop",
+    "/api/connectors",
+    "/docs",              # WebDAV — uses Basic auth, not session cookie
+    "/mobile",            # M-MOBILE C1 — PWA shell (JWT auth inside app)
+    "/sw.js",             # Service worker must be served from root
+    "/api/v1/mobile",     # Mobile API — JWT-auth, not session-cookie
 }
 
 SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "praesidium_session")

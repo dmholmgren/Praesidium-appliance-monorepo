@@ -44,6 +44,7 @@ Implementation notes:
 """
 
 import asyncio
+import re
 import hashlib
 import logging
 import mimetypes
@@ -63,6 +64,72 @@ from modules.ediscovery.services.review_widget_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Email body extraction helper for raw .eml files
+# ---------------------------------------------------------------------------
+import email as _email_mod
+import email.policy as _email_policy
+
+def _extract_email_body(raw_bytes: bytes) -> str:
+    """Parse a raw .eml file and return the best text representation."""
+    try:
+        msg = _email_mod.message_from_bytes(raw_bytes, policy=_email_policy.default)
+    except Exception:
+        return raw_bytes.decode("utf-8", errors="replace")
+    
+    # Build header prefix
+    headers = []
+    subj = msg.get("Subject", "")
+    if subj:
+        headers.append(f"Subject: {subj}")
+    
+    # Get body - prefer HTML, fall back to plain text
+    html_body = ""
+    text_body = ""
+    
+    if msg.is_multipart():
+        for part in msg.walk():
+            ct = part.get_content_type()
+            if ct == "text/html" and not html_body:
+                try:
+                    html_body = part.get_content()
+                except Exception:
+                    try:
+                        html_body = part.get_payload(decode=True).decode("utf-8", errors="replace")
+                    except Exception:
+                        pass
+            elif ct == "text/plain" and not text_body:
+                try:
+                    text_body = part.get_content()
+                except Exception:
+                    try:
+                        text_body = part.get_payload(decode=True).decode("utf-8", errors="replace")
+                    except Exception:
+                        pass
+    else:
+        ct = msg.get_content_type()
+        try:
+            body = msg.get_content()
+        except Exception:
+            try:
+                body = msg.get_payload(decode=True).decode("utf-8", errors="replace")
+            except Exception:
+                body = ""
+        if ct == "text/html":
+            html_body = body
+        else:
+            text_body = body
+    
+    # Return with header prefix
+    prefix = "\n".join(headers) + "\n\n" if headers else ""
+    if html_body:
+        return prefix + html_body
+    if text_body:
+        return prefix + text_body
+    return prefix + "(no body content)"
+
+
 
 router = APIRouter(tags=["ediscovery-review"])
 
@@ -437,13 +504,19 @@ async def review_workspace(request: Request, collection_id: str):
     brand = getattr(request.state, "branding", None)
     user = getattr(request.state, "current_user", None)
 
-    return HTMLResponse(_render("ediscovery/review_workspace.html", {
+    # Use TemplateResponse (not _render) so shell.html gets nav_items
+    from fastapi.templating import Jinja2Templates
+    from core.services.nav_context import get_nav_context
+    templates = Jinja2Templates(directory=["core/templates", "modules/ediscovery/templates"])
+    nav_ctx = await get_nav_context(request)
+    return templates.TemplateResponse(request, "ediscovery/ediscovery_review_react.html", {
         "brand": brand,
-        "user": user,
+        "current_user": user,
         "collection": collection,
         "collection_id": collection_id,
         "page": "ediscovery",
-    }))
+        **nav_ctx,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -599,6 +672,7 @@ async def document_file(request: Request, doc_id: str,
     async with AsyncSessionLocal() as session:
         r = await session.execute(sa_text("""
             SELECT ed.id, ed.file_name, ed.file_path, ed.working_path,
+                   ed.native_path, ed.rendition_path,
                    ed.mime_type, ed.file_hash, ec.storage_path as collection_storage_path
             FROM ediscovery_documents ed
             LEFT JOIN ediscovery_collections ec ON ec.id = ed.collection_id
@@ -613,7 +687,8 @@ async def document_file(request: Request, doc_id: str,
 
     rec = dict(row)
     # Prefer working_path (normalized location); fall back to file_path
-    src = rec.get("working_path") or rec.get("file_path")
+    # FIX: file_path is the original document; working_path is extracted text (.txt)
+    src = rec.get("file_path") or rec.get("native_path") or rec.get("working_path")
     if not src:
         raise HTTPException(status_code=500,
                             detail="Document has no file path on disk")
@@ -660,7 +735,27 @@ async def document_file(request: Request, doc_id: str,
             headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
         )
 
-    # Inline viewing path — convert if needed
+    # Prefer the durable pipeline rendition (renditions/{lane}/{doc_id}.pdf).
+    # It is the same PDF the production export engine will emboss, so the
+    # reviewer sees exactly what will be produced -- and nothing renders twice.
+    rend = rec.get("rendition_path")
+    if rend and col_root:
+        rend_path = Path(col_root) / rend
+        try:
+            r_resolved = rend_path.resolve()
+            r_root = Path(EDISCOVERY_ROOT).resolve()
+            if str(r_resolved).startswith(str(r_root)) and rend_path.is_file():
+                return FileResponse(
+                    path=str(rend_path),
+                    filename=src_path.stem + ".pdf",
+                    media_type="application/pdf",
+                    headers={"Content-Disposition": 'inline'},
+                )
+        except Exception:
+            pass  # fall through to the converter
+
+    # Inline viewing path — convert if needed (fallback for docs that have
+    # no pipeline rendition yet)
     if _needs_conversion(mime, str(src_path)):
         if not file_hash:
             # Conversion requires a stable cache key. Compute one if missing.
@@ -788,6 +883,15 @@ async def document_text(request: Request, doc_id: str):
     rec = dict(row)
 
     text = (rec.get("extracted_text") or "").strip().lstrip("\ufeff").strip()
+    # Quality check: if extracted_text looks like raw MIME headers, discard it
+    # and re-extract from the original .eml file
+    if text and re.match(r'^(Subject:\s*\n|DKIM-|Received:|ARC-|Return-Path:|MIME-Version:)', text[:200]):
+        # Check if the text after any Subject: line is just raw headers, not real content
+        lines = text.split('\n', 10)
+        has_mime_junk = any(l.strip().startswith(('DKIM-', 'Received:', 'ARC-', 'Return-Path:', 'spf=', 'dkim=', 'dmarc=')) for l in lines[:10])
+        if has_mime_junk:
+            logger.info("document_text: extracted_text for %s looks like raw MIME, will re-extract from .eml", doc_id)
+            text = ""  # Force fallback to file-based extraction
     if not text:
         # Try dms_source_path first (where extracted files live), then storage_path
         col_root = rec.get("col_source_path") or rec.get("col_storage_path") or ""
@@ -798,11 +902,41 @@ async def document_text(request: Request, doc_id: str):
             candidate = Path(rel) if Path(rel).is_absolute() else Path(col_root) / rel
             if candidate.exists() and candidate.is_file():
                 try:
-                    text = candidate.read_text(encoding="utf-8", errors="replace").strip().lstrip("\ufeff").strip()
+                    # Check if this is a raw .eml file — parse MIME instead of returning raw
+                    if candidate.suffix.lower() in (".eml", ".msg"):
+                        raw_bytes = candidate.read_bytes()
+                        text = _extract_email_body(raw_bytes).strip()
+                    else:
+                        text = candidate.read_text(encoding="utf-8", errors="replace").strip().lstrip("\ufeff").strip()
                     if text:
                         break
                 except Exception:
                     pass
+        # If still no text and we have a file_path that's an .eml, try that too
+        if not text:
+            file_path_rel = rec.get("col_source_path") or rec.get("col_storage_path") or ""
+            # Check the original file_path from the documents table
+            from sqlalchemy import text as sa_text2
+            try:
+                async with AsyncSessionLocal() as session2:
+                    r2 = await session2.execute(sa_text2("""
+                        SELECT ed.file_path, ec.storage_path
+                        FROM ediscovery_documents ed
+                        LEFT JOIN ediscovery_collections ec ON ec.id = ed.collection_id
+                        WHERE ed.id = CAST(:did AS uuid)
+                          AND trim(ed.tenant_id::text) = trim(:tid)
+                        LIMIT 1
+                    """), {"did": doc_id, "tid": tenant_id})
+                    frow = r2.mappings().fetchone()
+                if frow:
+                    fp = frow.get("file_path", "")
+                    sp = frow.get("storage_path", "")
+                    if fp and fp.lower().endswith((".eml", ".msg")):
+                        fp_full = Path(fp) if Path(fp).is_absolute() else Path(sp or EDISCOVERY_ROOT) / fp
+                        if fp_full.exists():
+                            text = _extract_email_body(fp_full.read_bytes()).strip()
+            except Exception:
+                pass
 
     return PlainTextResponse(text or "(no transcript available — Whisper transcription pending)")
 

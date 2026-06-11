@@ -1,0 +1,637 @@
+{% extends "base.html" %}
+{% block title %}Data Sources — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Data Sources{% endblock %}
+
+{% block head_extra %}
+<style>
+  /* ── Source cards ── */
+  .ds-card { background:var(--surface); border:1px solid var(--border); border-radius:8px; padding:18px 20px; display:flex; flex-direction:column; gap:12px; }
+  .ds-card-name { font-size:15px; font-weight:600; color:var(--text); }
+  .ds-card-path { font-size:12px; color:var(--muted); font-family:'Courier New',monospace; margin-top:2px; }
+  .ds-card-stats { display:flex; gap:20px; font-size:12px; color:var(--muted); }
+  .ds-card-stats strong { color:var(--text); font-weight:600; }
+
+  /* ── Two-panel workspace ── */
+  .ds-workspace { display:none; margin-top:16px; border:1px solid var(--border); border-radius:8px; background:var(--surface); overflow:hidden; }
+  .ds-workspace.open { display:flex; height:calc(100vh - 260px); min-height:420px; }
+  .ds-tree-panel { width:340px; min-width:200px; max-width:500px; display:flex; flex-direction:column; border-right:1px solid var(--border); flex-shrink:0; overflow:hidden; }
+  .ds-assign-panel { flex:1; display:flex; flex-direction:column; overflow:hidden; min-width:0; }
+  .ds-phdr { padding:8px 12px; font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.06em; border-bottom:1px solid #f1f5f9; background:#f8fafc; flex-shrink:0; display:flex; align-items:center; justify-content:space-between; gap:8px; }
+
+  /* ── Tree ── */
+  .ds-tree-scroll { flex:1; overflow-y:auto; padding:4px 0; }
+  .ds-tn { display:flex; align-items:center; gap:5px; padding:4px 8px; cursor:pointer; border-radius:4px; font-size:12px; user-select:none; margin:1px 4px; }
+  .ds-tn:hover { background:#f1f5f9; }
+  .ds-tn.sel { background:#dbeafe; color:#1d4ed8; }
+  .ds-tn.mapped { border-left:3px solid #22c55e; background:#f0fdf4; }
+  .ds-tn.unmapped { border-left:3px solid #fca5a5; background:#fff8f8; }
+  .ds-tn .ta { font-size:9px; color:var(--muted); transition:transform 0.12s; flex-shrink:0; width:10px; display:inline-block; cursor:pointer; }
+  .ds-tn .ta.open { transform:rotate(90deg); }
+  .ds-tc { display:none; }
+  .ds-tc.open { display:block; }
+
+  /* ── Assignment rows ── */
+  .ds-arow { display:grid; grid-template-columns:1fr 1fr 220px 28px 60px; gap:6px; padding:7px 12px; border-bottom:1px solid #f8fafc; font-size:12px; align-items:center; }
+  .ds-arow.unmapped { background:#fff8f8; border-left:3px solid #fca5a5; }
+  .ds-arow.mapped { background:#f0fdf4; border-left:3px solid #86efac; }
+  .ds-arow.committed { background:#dcfce7; border-left:3px solid #22c55e; }
+  .ds-ahead { display:grid; grid-template-columns:1fr 1fr 220px 28px 60px; gap:6px; padding:5px 12px; font-size:10px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:0.05em; background:#f8fafc; border-bottom:1px solid #e2e8f0; position:sticky; top:0; z-index:2; }
+
+  /* ── Typeahead ── */
+  .ds-ta { position:relative; }
+  .ds-ta input { width:100%; padding:4px 8px; font-size:11px; border:1px solid var(--border); border-radius:4px; box-sizing:border-box; background:var(--surface); color:var(--text); font-family:'DM Sans',sans-serif; }
+  .ds-ta input:focus { border-color:var(--accent); outline:none; }
+  .ds-drop { display:none; position:absolute; left:0; top:100%; z-index:400; background:var(--surface); border:1px solid var(--border); border-radius:4px; box-shadow:0 4px 12px rgba(0,0,0,0.1); min-width:280px; max-height:220px; overflow-y:auto; font-size:11px; }
+  .ds-drop-item { padding:6px 10px; cursor:pointer; }
+  .ds-drop-item:hover { background:#f1f5f9; }
+  .ds-drop-create { padding:6px 10px; cursor:pointer; border-top:1px solid var(--border); color:var(--accent); font-weight:500; }
+  .ds-drop-create:hover { background:#FEF3C7; }
+
+  /* ── Resize handle ── */
+  .ds-resize { width:4px; background:transparent; cursor:col-resize; flex-shrink:0; }
+  .ds-resize:hover, .ds-resize.dragging { background:var(--primary); opacity:0.15; }
+
+  /* ── Chat side panel ── */
+  .ds-chat-toggle { position:fixed; right:0; top:50%; transform:translateY(-50%); z-index:100; writing-mode:vertical-rl; padding:12px 6px; background:var(--primary); color:#fff; border-radius:6px 0 0 6px; font-size:11px; font-weight:500; cursor:pointer; letter-spacing:0.03em; font-family:'DM Sans',sans-serif; border:none; }
+  .ds-chat-toggle:hover { opacity:0.9; }
+  .ds-chat-side { position:fixed; right:0; top:0; width:380px; height:100vh; background:var(--surface); border-left:1px solid var(--border); z-index:200; display:flex; flex-direction:column; transform:translateX(100%); transition:transform 200ms ease; box-shadow:-4px 0 20px rgba(0,0,0,0.05); }
+  .ds-chat-side.open { transform:translateX(0); }
+  .ds-chat-side-hdr { padding:10px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; flex-shrink:0; }
+  .ds-chat-side-body { flex:1; overflow:hidden; min-height:0; }
+
+  /* ── Create matter modal ── */
+  .ds-modal-bg { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.3); z-index:500; align-items:center; justify-content:center; }
+  .ds-modal-bg.open { display:flex; }
+  .ds-modal { background:var(--surface); border-radius:8px; padding:24px; width:440px; max-width:90vw; box-shadow:0 8px 32px rgba(0,0,0,0.15); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div style="padding:0;">
+
+  {% set ta_page_breadcrumb = '<a href="/tenant-admin/file-import">File Import</a><span class="sep">/</span>Data Sources' %}
+  {% include "tenant_admin/_topnav.html" %}
+  {% include "tenant_admin/_fileimport_subnav.html" %}
+
+  {# ── Banners ── #}
+  {% if request.query_params.get('saved') %}
+  <div style="background:#D1FAE5; border:1px solid #6EE7B7; border-radius:6px; padding:10px 14px; font-size:13px; color:#065F46; margin-bottom:16px;">✓ Changes saved.</div>
+  {% endif %}
+  {% if request.query_params.get('error') %}
+  <div style="background:#FEE2E2; border:1px solid #FCA5A5; border-radius:6px; padding:10px 14px; font-size:13px; color:#991B1B; margin-bottom:16px;">✗ {{ request.query_params.get('error') | replace('+', ' ') }}</div>
+  {% endif %}
+
+  {# ── Header ── #}
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+    <div>
+      <h2 style="font-size:16px; font-weight:600; color:var(--text); margin:0 0 4px 0;">Data Sources</h2>
+      <p style="font-size:12px; color:var(--muted); margin:0;">Register and browse file shares, USB drives, or external disks. Assign folders to matters inline.</p>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button onclick="document.getElementById('ds-add-panel').style.display=document.getElementById('ds-add-panel').style.display==='block'?'none':'block'" class="btn-primary" style="font-size:13px;">+ Add Source</button>
+    </div>
+  </div>
+
+  {# ── Add source form ── #}
+  <div id="ds-add-panel" style="display:none; margin-bottom:20px;">
+    <div class="card">
+      <h3 style="font-size:13px; font-weight:600; color:var(--text); margin:0 0 14px 0;">Register Data Source</h3>
+      <form method="post" action="/tenant-admin/data-sources/add">
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px;">
+          <div>
+            <label style="display:block; font-size:12px; font-weight:500; color:var(--text); margin-bottom:4px;">Source Name *</label>
+            <input type="text" name="source_name" required placeholder="e.g. USB - Martinez Files" style="width:100%; font-size:12px; padding:7px 10px; border:1px solid var(--border); border-radius:6px; box-sizing:border-box; font-family:'DM Sans',sans-serif;">
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; font-weight:500; color:var(--text); margin-bottom:4px;">Mount Path *</label>
+            <input type="text" name="mount_path" required placeholder="e.g. /mnt/usb-martinez" style="width:100%; font-size:12px; padding:7px 10px; border:1px solid var(--border); border-radius:6px; box-sizing:border-box; font-family:'Courier New',monospace;">
+          </div>
+        </div>
+        <div style="display:grid; grid-template-columns:2fr auto; gap:12px; margin-bottom:14px;">
+          <div>
+            <label style="display:block; font-size:12px; font-weight:500; color:var(--text); margin-bottom:4px;">Description</label>
+            <input type="text" name="description" placeholder="Optional" style="width:100%; font-size:12px; padding:7px 10px; border:1px solid var(--border); border-radius:6px; box-sizing:border-box; font-family:'DM Sans',sans-serif;">
+          </div>
+          <div style="display:flex; align-items:end; gap:6px; padding-bottom:1px;">
+            <label style="font-size:12px; color:var(--text); display:flex; align-items:center; gap:6px; cursor:pointer;">
+              <input type="checkbox" name="read_only" value="on" checked style="width:14px; height:14px; accent-color:var(--primary);"> Read-only
+            </label>
+          </div>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button type="submit" class="btn-primary" style="font-size:12px;">Register Source</button>
+          <button type="button" onclick="document.getElementById('ds-add-panel').style.display='none'" class="btn-secondary" style="font-size:12px;">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {# ── Source cards ── #}
+  {% if sources %}
+  <div style="display:grid; grid-template-columns:1fr; gap:14px; margin-bottom:8px;">
+    {% for s in sources %}
+    <div class="ds-card" id="source-{{ s.id }}">
+      <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:12px;">
+        <div>
+          <div class="ds-card-name">{{ s.source_name }}
+            {% if s.read_only %}<span style="font-size:10px; color:var(--muted); font-weight:400; margin-left:6px;">read-only</span>{% endif %}
+          </div>
+          <div class="ds-card-path">{{ s.mount_path }}</div>
+          {% if s.description %}<div style="font-size:12px; color:var(--muted); margin-top:4px;">{{ s.description }}</div>{% endif %}
+        </div>
+        <span class="badge badge-{% if s.status == 'active' %}green{% else %}gray{% endif %}">{{ s.status | title }}</span>
+      </div>
+      <div class="ds-card-stats">
+        <div><strong>{{ "{:,}".format(s.file_count) }}</strong> files indexed</div>
+        <div><strong>{{ s.matched_folders }}</strong> / {{ s.total_folders }} folders matched</div>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        {% if s.status == 'active' %}
+        <button class="btn-primary" style="font-size:12px;" onclick="_ds.openWorkspace('{{ s.id }}','{{ s.source_name }}')">Browse &amp; Assign</button>
+        <button class="btn-secondary" style="font-size:12px;" onclick="_ds.runAIMatch('{{ s.id }}')">🤖 AI Match</button>
+        <button class="btn-secondary" style="font-size:12px;" onclick="_ds.scanSource('{{ s.id }}','{{ s.source_name }}')">🔍 Inventory</button>
+        <form method="post" action="/tenant-admin/data-sources/{{ s.id }}/deactivate" style="margin:0;">
+          <button type="submit" class="btn-secondary" style="font-size:12px; color:var(--muted);" onclick="return confirm('Deactivate this source?')">Deactivate</button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div style="border:1px dashed var(--border); border-radius:8px; padding:40px; text-align:center; background:var(--surface);">
+    <div style="font-size:14px; font-weight:500; color:var(--text); margin-bottom:8px;">No data sources registered</div>
+    <p style="font-size:12px; color:var(--muted); margin:0 0 16px 0;">Register a file share, USB drive, or external disk to start.</p>
+    <button onclick="document.getElementById('ds-add-panel').style.display='block'; window.scrollTo(0,0)" class="btn-primary">+ Add Source</button>
+  </div>
+  {% endif %}
+
+  {# ── Two-panel workspace ── #}
+  <div class="ds-workspace" id="ds-workspace">
+    {# LEFT: Tree #}
+    <div class="ds-tree-panel" id="ds-tree-panel">
+      <div class="ds-phdr">
+        <span id="ds-tree-title">Source</span>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <span id="ds-tree-status" style="font-size:10px; color:var(--muted);"></span>
+          <button onclick="_ds.closeWorkspace()" class="btn-secondary" style="font-size:10px; padding:2px 8px;">Close</button>
+        </div>
+      </div>
+      <div style="padding:6px 8px; border-bottom:1px solid #f1f5f9; flex-shrink:0;">
+        <input type="text" id="ds-tree-filter" placeholder="Filter folders..." oninput="_ds.filterTree(this.value)" style="width:100%; padding:4px 8px; font-size:11px; border:1px solid var(--border); border-radius:4px; box-sizing:border-box; background:var(--surface); color:var(--text); font-family:'DM Sans',sans-serif;">
+      </div>
+      <div class="ds-tree-scroll" id="ds-tree-scroll"></div>
+    </div>
+
+    <div class="ds-resize" id="ds-resize" onmousedown="_ds.startResize(event)"></div>
+
+    {# RIGHT: Assignment #}
+    <div class="ds-assign-panel">
+      <div class="ds-phdr">
+        <span id="ds-assign-title">Select a folder to assign</span>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <span id="ds-assign-status" style="font-size:10px; color:var(--muted);"></span>
+          <button onclick="_ds.syncAllMapped()" id="ds-sync-all-btn" style="display:none; padding:2px 10px; font-size:10px; border:1px solid #0D1F3C; border-radius:4px; cursor:pointer; background:#0D1F3C; color:#fff;">⇅ Sync All Mapped</button>
+          <button onclick="_ds.commitChecked()" id="ds-commit-btn" style="display:none; padding:2px 10px; font-size:10px; border:1px solid #22c55e; border-radius:4px; cursor:pointer; background:#f0fdf4; color:#166534;">✓ Commit Checked</button>
+        </div>
+      </div>
+      <div id="ds-assign-rows" style="flex:1; overflow-y:auto; min-height:0;">
+        <div style="padding:32px; text-align:center; color:var(--muted); font-size:12px;">
+          <div style="font-size:32px; margin-bottom:8px;">📁</div>
+          Click a folder in the tree to assign its contents to matters.
+        </div>
+      </div>
+      <div style="padding:6px 14px; border-top:1px solid var(--border); display:flex; align-items:center; gap:10px; flex-shrink:0; background:#f8fafc;">
+        <span id="ds-map-summary" style="font-size:11px; color:var(--muted); flex:1;"></span>
+        <span id="ds-save-status" style="font-size:11px; color:var(--muted);"></span>
+      </div>
+    </div>
+  </div>
+
+  {# ── Create matter modal ── #}
+  <div class="ds-modal-bg" id="ds-create-modal">
+    <div class="ds-modal">
+      <h3 style="font-size:14px; font-weight:600; color:var(--text); margin:0 0 16px 0;">Create New Matter</h3>
+      <div style="display:grid; gap:12px; margin-bottom:16px;">
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500; color:var(--text); margin-bottom:4px;">Client Name *</label>
+          <input type="text" id="ds-cm-client" placeholder="Search or enter new client..." style="width:100%; font-size:12px; padding:7px 10px; border:1px solid var(--border); border-radius:6px; box-sizing:border-box; font-family:'DM Sans',sans-serif;">
+        </div>
+        <div>
+          <label style="display:block; font-size:12px; font-weight:500; color:var(--text); margin-bottom:4px;">Matter Name *</label>
+          <input type="text" id="ds-cm-matter" placeholder="e.g. Smith v. Jones" style="width:100%; font-size:12px; padding:7px 10px; border:1px solid var(--border); border-radius:6px; box-sizing:border-box; font-family:'DM Sans',sans-serif;">
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+          <div>
+            <label style="display:block; font-size:12px; font-weight:500; color:var(--text); margin-bottom:4px;">Matter Number</label>
+            <input type="text" id="ds-cm-number" placeholder="Optional" style="width:100%; font-size:12px; padding:7px 10px; border:1px solid var(--border); border-radius:6px; box-sizing:border-box; font-family:'DM Sans',sans-serif;">
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; font-weight:500; color:var(--text); margin-bottom:4px;">Matter Type</label>
+            <select id="ds-cm-type" style="width:100%; font-size:12px; padding:7px 10px; border:1px solid var(--border); border-radius:6px; background:var(--surface); font-family:'DM Sans',sans-serif;">
+              <option value="litigation">Litigation</option>
+              <option value="transactional">Transactional</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <button onclick="_ds.closeCreateModal()" class="btn-secondary" style="font-size:12px;">Cancel</button>
+        <button onclick="_ds.submitCreateMatter()" class="btn-primary" style="font-size:12px;">Create &amp; Assign</button>
+      </div>
+      <input type="hidden" id="ds-cm-rowid" value="">
+    </div>
+  </div>
+
+</div>
+
+{# ── Chat side panel ── #}
+<button class="ds-chat-toggle" id="ds-chat-toggle" onclick="_ds.toggleChat()">AI Assistant</button>
+<div class="ds-chat-side" id="ds-chat-side">
+  <div class="ds-chat-side-hdr">
+    <svg width="15" height="15" fill="none" stroke="var(--accent)" viewBox="0 0 24 24" stroke-width="1.75"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+    <span style="font-size:13px; font-weight:500; color:var(--text);">AI Assistant</span>
+    <span style="font-size:10px; color:var(--muted); margin-left:auto;">MCP</span>
+    <span style="width:6px; height:6px; border-radius:50%; background:#10B981; flex-shrink:0;"></span>
+    <button onclick="_ds.toggleChat()" class="btn-secondary" style="font-size:10px; padding:2px 8px; margin-left:8px;">Close</button>
+  </div>
+  <div class="ds-chat-side-body" hx-get="/widgets/admin_ai_chat" hx-trigger="load" hx-swap="innerHTML">
+    <div style="padding:30px; text-align:center; color:var(--muted); font-size:12px;">Loading...</div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts_extra %}
+<script>
+(function(){
+  const S = {
+    sourceId: '', sourceName: '', mapped: {},
+    selectedFolder: null, createRowId: '',
+  };
+
+  // ── Load mapped index ──
+  async function loadMapped() {
+    try {
+      const r = await fetch('/tenant-admin/folder-reconciliation/mapped-index');
+      const d = await r.json();
+      (Array.isArray(d) ? d : []).forEach(m => {
+        if (!S.mapped[m.folder_path]) S.mapped[m.folder_path] = [];
+        S.mapped[m.folder_path].push(m);
+      });
+    } catch(e) {}
+  }
+
+  // ── Open workspace ──
+  function openWorkspace(sourceId, sourceName) {
+    S.sourceId = sourceId; S.sourceName = sourceName;
+    const ws = document.getElementById('ds-workspace');
+    ws.classList.add('open');
+    document.getElementById('ds-tree-title').textContent = sourceName;
+    document.getElementById('ds-tree-status').textContent = 'Loading...';
+    document.getElementById('ds-tree-scroll').innerHTML = '<div style="padding:16px;text-align:center;color:var(--muted);font-size:12px;">Loading...</div>';
+    loadTreeLevel('', document.getElementById('ds-tree-scroll'), 0);
+    ws.scrollIntoView({behavior:'smooth', block:'start'});
+  }
+
+  function closeWorkspace() {
+    document.getElementById('ds-workspace').classList.remove('open');
+  }
+
+  // ── Tree loading ──
+  async function loadTreeLevel(prefix, container, depth) {
+    try {
+      const r = await fetch(`/tenant-admin/data-sources/browse?source_id=${enc(S.sourceId)}&prefix=${enc(prefix)}`);
+      const d = await r.json();
+      if (d.error) { container.innerHTML = `<div style="padding:8px 12px;color:#991B1B;font-size:11px;">${esc(d.error)}</div>`; return; }
+      container.innerHTML = '';
+      const folders = d.folders || [];
+      if (!folders.length) { container.innerHTML = '<div style="padding:6px 16px;color:var(--muted);font-size:11px;font-style:italic;">No subfolders</div>'; return; }
+      folders.forEach(f => renderNode(container, f, depth));
+      document.getElementById('ds-tree-status').textContent = `${folders.length} folders`;
+    } catch(e) { container.innerHTML = '<div style="padding:8px;color:#dc2626;font-size:11px;">Failed to load</div>'; }
+  }
+
+  function renderNode(container, f, depth) {
+    const isMapped = !!S.mapped[f.path];
+    const wrap = document.createElement('div');
+    wrap.dataset.path = f.path;
+    wrap.dataset.name = f.name.toLowerCase();
+
+    const node = document.createElement('div');
+    node.className = 'ds-tn ' + (isMapped ? 'mapped' : 'unmapped');
+    node.style.paddingLeft = (8 + depth * 16) + 'px';
+    node.dataset.path = f.path;
+
+    node.innerHTML = `<span class="ta">▶</span><span style="font-size:13px;flex-shrink:0;">📁</span><span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(f.name)}</span><span style="font-size:10px;color:var(--muted);flex-shrink:0;">${f.file_count}f ${f.subfolder_count}d</span>${isMapped?'<span style="font-size:9px;background:#dcfce7;color:#166534;padding:1px 4px;border-radius:8px;flex-shrink:0;">✓</span>':''}`;
+
+    node.addEventListener('click', e => {
+      if (e.target.classList.contains('ta')) return;
+      e.stopPropagation();
+      selectFolder(f.path, f.name, node);
+    });
+
+    const children = document.createElement('div');
+    children.className = 'ds-tc';
+
+    node.querySelector('.ta').addEventListener('click', async e => {
+      e.stopPropagation();
+      const arrow = node.querySelector('.ta');
+      if (!children.dataset.loaded) {
+        children.innerHTML = '<div style="padding:4px 8px;color:var(--muted);font-size:11px;">Loading...</div>';
+        children.classList.add('open'); arrow.classList.add('open');
+        await loadTreeLevel(f.path, children, depth + 1);
+        children.dataset.loaded = '1';
+      } else {
+        children.classList.toggle('open'); arrow.classList.toggle('open');
+      }
+    });
+
+    wrap.appendChild(node);
+    wrap.appendChild(children);
+    container.appendChild(wrap);
+  }
+
+  // ── Select folder → load assignment rows ──
+  async function selectFolder(path, name, nodeEl) {
+    document.querySelectorAll('.ds-tn.sel').forEach(n => n.classList.remove('sel'));
+    nodeEl.classList.add('sel');
+    S.selectedFolder = {path, name};
+
+    document.getElementById('ds-assign-title').textContent = `📁 ${name} — subfolders`;
+    document.getElementById('ds-commit-btn').style.display = 'inline-block';
+    document.getElementById('ds-sync-all-btn').style.display = 'inline-block';
+
+    const rows = document.getElementById('ds-assign-rows');
+    rows.innerHTML = '<div style="padding:12px;text-align:center;color:var(--muted);font-size:12px;">Loading...</div>';
+
+    try {
+      const r = await fetch(`/tenant-admin/data-sources/browse?source_id=${enc(S.sourceId)}&prefix=${enc(path)}`);
+      const d = await r.json();
+      const subs = d.folders || [];
+      rows.innerHTML = '';
+
+      // Header
+      const hdr = document.createElement('div');
+      hdr.className = 'ds-ahead';
+      hdr.innerHTML = '<span>Folder</span><span>Current Mapping</span><span>Assign to Matter</span><span></span><span></span>';
+      rows.appendChild(hdr);
+
+      if (!subs.length) {
+        // Leaf folder — show self
+        addAssignRow(rows, {path, name});
+      } else {
+        // Parent row first
+        addAssignRow(rows, {path, name}, true);
+        subs.forEach(sf => addAssignRow(rows, sf));
+      }
+
+      const total = rows.querySelectorAll('.ds-arow').length;
+      const mapped = rows.querySelectorAll('.ds-arow.mapped').length;
+      document.getElementById('ds-map-summary').textContent = `${mapped}/${total} mapped`;
+    } catch(e) { rows.innerHTML = '<div style="padding:12px;color:#dc2626;font-size:12px;">Failed to load</div>'; }
+  }
+
+  function addAssignRow(container, f, isParent) {
+    const isMapped = !!S.mapped[f.path];
+    const maps = S.mapped[f.path] || [];
+    const rid = 'ar-' + f.path.replace(/[^a-zA-Z0-9]/g,'_');
+
+    const row = document.createElement('div');
+    row.className = 'ds-arow ' + (isMapped ? 'mapped' : 'unmapped');
+    row.id = rid; row.dataset.path = f.path;
+
+    const mapText = isMapped ? `<span style="color:#166534;">${esc(maps[0].matter_name)}</span>` : '<span style="font-style:italic;">Not mapped</span>';
+
+    row.innerHTML = `
+      <div style="display:flex;align-items:center;gap:5px;">
+        ${isParent ? '<span>📌</span>' : '<span style="font-size:13px;">📁</span>'}
+        <span style="font-weight:${isParent?'700':'400'};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(f.name)}${isParent?' <span style="font-size:10px;color:var(--muted);font-weight:400;">(entire folder)</span>':''}</span>
+      </div>
+      <div style="font-size:11px;color:var(--muted);">${mapText}</div>
+      <div class="ds-ta">
+        <input type="text" id="tai-${rid}" placeholder="Search matter..." value="${isMapped?esc(maps[0].matter_name):''}" autocomplete="off" oninput="_ds.taSearch(this,'${rid}')" onfocus="_ds.taSearch(this,'${rid}')" onblur="_ds.taHide('${rid}')">
+        <input type="hidden" id="tav-${rid}" value="${isMapped&&maps[0]?maps[0].matter_id:''}">
+        <div class="ds-drop" id="tad-${rid}"></div>
+      </div>
+      <input type="checkbox" id="tac-${rid}" style="width:15px;height:15px;cursor:pointer;accent-color:var(--primary);" ${isMapped?'checked':''}>
+      <button onclick="_ds.syncRow('${rid}')" style="padding:3px 8px;font-size:10px;border:1px solid #0D1F3C;border-radius:4px;cursor:pointer;background:${isMapped?'#0D1F3C':'#e5e7eb'};color:${isMapped?'#fff':'#9ca3af'};${isMapped?'':'pointer-events:none;'}">⇅</button>`;
+    container.appendChild(row);
+  }
+
+  // ── Typeahead search ──
+  const taTimers = {};
+  function taSearch(input, rid) {
+    const q = input.value.trim();
+    const drop = document.getElementById('tad-' + rid);
+    clearTimeout(taTimers[rid]);
+    if (!q || q.length < 1) { drop.style.display = 'none'; return; }
+    taTimers[rid] = setTimeout(async () => {
+      try {
+        const r = await fetch(`/tenant-admin/folder-reconciliation/search-matters?q=${enc(q)}`);
+        const data = await r.json();
+        const matters = Array.isArray(data) ? data : (data.matters || []);
+        let html = '';
+        if (!matters.length) {
+          html = '<div style="padding:7px 10px;color:var(--muted);">No matches</div>';
+        } else {
+          html = matters.map(m => `<div class="ds-drop-item" data-id="${m.id}" data-name="${esc(m.matter_name)}" data-client="${esc(m.client_name||'')}" onmousedown="_ds.taSelect(this,'${rid}')"><div style="font-weight:500;">${esc(m.matter_name)}</div><div style="font-size:10px;color:var(--muted);">${esc(m.client_name||'—')}${m.matter_number?' · '+esc(m.matter_number):''}</div></div>`).join('');
+        }
+        // Always show "+ Create new matter" at the bottom
+        html += `<div class="ds-drop-create" onmousedown="_ds.openCreateModal('${rid}','${esc(q)}')">+ Create new matter "${esc(q)}"</div>`;
+        drop.innerHTML = html;
+        drop.style.display = 'block';
+      } catch(e) { drop.style.display = 'none'; }
+    }, 350);
+  }
+
+  function taSelect(el, rid) {
+    const id = el.dataset.id, name = el.dataset.name;
+    document.getElementById('tai-' + rid).value = name;
+    document.getElementById('tav-' + rid).value = id;
+    document.getElementById('tad-' + rid).style.display = 'none';
+    document.getElementById('tac-' + rid).checked = true;
+    // Enable sync button
+    const row = document.getElementById(rid);
+    const btn = row?.querySelector('button');
+    if (btn) { btn.style.background = '#0D1F3C'; btn.style.color = '#fff'; btn.style.pointerEvents = 'auto'; }
+  }
+
+  function taHide(rid) { setTimeout(() => { const d = document.getElementById('tad-'+rid); if(d) d.style.display='none'; }, 300); }
+
+  // ── Create matter modal ──
+  function openCreateModal(rid, prefill) {
+    S.createRowId = rid;
+    document.getElementById('ds-cm-client').value = '';
+    document.getElementById('ds-cm-matter').value = prefill || '';
+    document.getElementById('ds-cm-number').value = '';
+    document.getElementById('ds-cm-rowid').value = rid;
+    document.getElementById('ds-create-modal').classList.add('open');
+    document.getElementById('ds-cm-client').focus();
+  }
+
+  function closeCreateModal() {
+    document.getElementById('ds-create-modal').classList.remove('open');
+  }
+
+  async function submitCreateMatter() {
+    const client = document.getElementById('ds-cm-client').value.trim();
+    const matter = document.getElementById('ds-cm-matter').value.trim();
+    const number = document.getElementById('ds-cm-number').value.trim();
+    const type = document.getElementById('ds-cm-type').value;
+    const rid = S.createRowId;
+
+    if (!client || !matter) { alert('Client name and matter name are required.'); return; }
+
+    try {
+      const r = await fetch('/tenant-admin/data-sources/create-matter', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({client_name: client, matter_name: matter, matter_number: number, matter_type: type}),
+      });
+      const d = await r.json();
+      if (d.error) { alert('Error: ' + d.error); return; }
+
+      // Fill the typeahead row with the new matter
+      if (rid) {
+        document.getElementById('tai-' + rid).value = d.matter_name;
+        document.getElementById('tav-' + rid).value = d.matter_id;
+        document.getElementById('tac-' + rid).checked = true;
+        const row = document.getElementById(rid);
+        const btn = row?.querySelector('button');
+        if (btn) { btn.style.background = '#0D1F3C'; btn.style.color = '#fff'; btn.style.pointerEvents = 'auto'; }
+      }
+      closeCreateModal();
+    } catch(e) { alert('Network error: ' + e.message); }
+  }
+
+  // ── Commit checked rows ──
+  async function commitChecked() {
+    const st = document.getElementById('ds-save-status');
+    const checks = document.querySelectorAll('.ds-arow input[type=checkbox]:checked');
+    if (!checks.length) { st.style.color='#dc2626'; st.textContent='Check rows first'; return; }
+
+    const items = [];
+    checks.forEach(cb => {
+      const rid = cb.id.replace('tac-','');
+      const row = document.getElementById(rid);
+      const matterId = document.getElementById('tav-'+rid)?.value;
+      const folderPath = row?.dataset.path;
+      if (matterId && folderPath) items.push({matter_id: matterId, disk_path: folderPath, disk_root: '', file_count: null});
+    });
+    if (!items.length) { st.style.color='#dc2626'; st.textContent='Assign matters first'; return; }
+
+    st.textContent = 'Saving...'; st.style.color = 'var(--muted)';
+    try {
+      const r = await fetch('/tenant-admin/folder-reconciliation/accept-batch', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({items}),
+      });
+      const d = await r.json();
+      if (r.ok) {
+        st.style.color='#166534'; st.textContent=`✓ ${d.accepted||items.length} committed`;
+        items.forEach(item => {
+          const rid = 'ar-' + item.disk_path.replace(/[^a-zA-Z0-9]/g,'_');
+          const row = document.getElementById(rid);
+          if (row) { row.classList.remove('unmapped','mapped'); row.classList.add('committed'); }
+          if (!S.mapped[item.disk_path]) S.mapped[item.disk_path] = [];
+          S.mapped[item.disk_path].push({matter_id:item.matter_id, matter_name:'✓'});
+          document.querySelectorAll(`.ds-tn[data-path="${item.disk_path}"]`).forEach(n => { n.classList.add('mapped'); n.classList.remove('unmapped'); });
+        });
+        setTimeout(()=>st.textContent='', 3000);
+      } else { st.style.color='#dc2626'; st.textContent='Error: '+(d.detail||'failed'); }
+    } catch(e) { st.style.color='#dc2626'; st.textContent='Network error'; }
+  }
+
+  // ── Sync row ──
+  async function syncRow(rid) {
+    const matterId = document.getElementById('tav-'+rid)?.value;
+    if (!matterId) return;
+    const row = document.getElementById(rid);
+    const btn = row?.querySelector('button');
+    if (btn) { btn.disabled=true; btn.textContent='…'; }
+    try {
+      const r = await fetch(`/tenant-admin/folder-reconciliation/sync-matter/${matterId}`, {method:'POST'});
+      const d = await r.json();
+      if (btn) { btn.textContent = d.error ? '✗' : `✓ ${d.files_copied||0}`; btn.disabled=false; }
+    } catch(e) { if (btn) { btn.textContent='✗'; btn.disabled=false; } }
+  }
+
+  // ── Sync all mapped ──
+  function syncAllMapped() {
+    const btns = document.querySelectorAll('.ds-arow.mapped button, .ds-arow.committed button');
+    if (!btns.length) { alert('No mapped rows to sync.'); return; }
+    if (!confirm(`Sync ${btns.length} mapped matter(s)?`)) return;
+    btns.forEach(btn => {
+      const rid = btn.closest('.ds-arow')?.id;
+      if (rid) syncRow(rid);
+    });
+  }
+
+  // ── AI Match ──
+  async function runAIMatch(sourceId) {
+    window.location.href = '/tenant-admin/folder-reconciliation?source_id=' + encodeURIComponent(sourceId) + '&action=ai-match';
+  }
+
+  // ── Scan/Inventory source ──
+  async function scanSource(sourceId, sourceName) {
+    if (!confirm('Scan "' + sourceName + '" and catalog all files? This may take several minutes for large shares.')) return;
+    var card = document.getElementById('source-' + sourceId);
+    var badge = card ? card.querySelector('.ds-card-stats') : null;
+    if (badge) badge.innerHTML += ' <span style="color:var(--accent);font-size:11px;margin-left:8px;">Scanning...</span>';
+    try {
+      var r = await fetch('/tenant-admin/data-sources/' + sourceId + '/scan', {method: 'POST'});
+      var d = await r.json();
+      if (d.error || d.detail) { alert('Error: ' + (d.error || d.detail)); }
+      else {
+        var parts = [];
+        if (d.files) parts.push(d.files.toLocaleString() + ' files');
+        if (d.folders) parts.push(d.folders.toLocaleString() + ' folders');
+        alert('Inventory complete: ' + parts.join(', '));
+        location.reload();
+      }
+    } catch(e) { alert('Error: ' + e.message); }
+  }
+
+  // ── Chat toggle ──
+  function toggleChat() {
+    document.getElementById('ds-chat-side').classList.toggle('open');
+    document.getElementById('ds-chat-toggle').style.display = document.getElementById('ds-chat-side').classList.contains('open') ? 'none' : 'block';
+  }
+
+  // ── Filter tree ──
+  function filterTree(q) {
+    q = (q||'').toLowerCase();
+    document.querySelectorAll('#ds-tree-scroll > div').forEach(wrap => {
+      const name = (wrap.dataset.name||'');
+      wrap.style.display = !q || name.includes(q) ? '' : 'none';
+    });
+  }
+
+  // ── Resize ──
+  let rs = null;
+  function startResize(e) {
+    e.preventDefault();
+    document.getElementById('ds-resize').classList.add('dragging');
+    rs = {x0:e.clientX, w0:document.getElementById('ds-tree-panel').offsetWidth};
+    document.addEventListener('mousemove', doResize);
+    document.addEventListener('mouseup', endResize);
+  }
+  function doResize(e) { if (!rs) return; document.getElementById('ds-tree-panel').style.width = Math.max(180,Math.min(520,rs.w0+e.clientX-rs.x0))+'px'; }
+  function endResize() { rs=null; document.getElementById('ds-resize').classList.remove('dragging'); document.removeEventListener('mousemove',doResize); document.removeEventListener('mouseup',endResize); }
+
+  function esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function enc(s) { return encodeURIComponent(s); }
+
+  // ── Expose ──
+  window._ds = {
+    openWorkspace, closeWorkspace, taSearch, taSelect, taHide,
+    openCreateModal, closeCreateModal, submitCreateMatter,
+    commitChecked, syncRow, syncAllMapped, runAIMatch,
+    toggleChat, filterTree, startResize, scanSource,
+  };
+
+  // Init
+  loadMapped();
+})();
+</script>
+{% endblock %}

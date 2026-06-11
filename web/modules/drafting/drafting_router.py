@@ -1,449 +1,376 @@
 """
-modules/drafting/drafting_router.py
+modules/drafting/drafting_router.py — v2
+=========================================
 
-FastAPI router for Module 4 — Document Generation & Assembly.
+Appliance rewrite — Document Drafting UI.
 
-Mounts at: /drafting/
-Registered in: app.py
+v2 changes: matter-search returns clickable div items (not datalist options).
 
-Routes:
-    GET  /drafting/                              -- panel home (matter selector)
-    GET  /drafting/matters/{matter_id}           -- drafting panel for a matter
-    POST /drafting/matters/{matter_id}/sessions  -- create new session
-    GET  /drafting/sessions/{session_id}         -- session detail / resume
-    POST /drafting/sessions/{session_id}/assemble   -- run assembly
-    POST /drafting/sessions/{session_id}/sanity     -- run sanity check
-    POST /drafting/sessions/{session_id}/dismiss    -- dismiss session
-    POST /drafting/sessions/{session_id}/bates/{log_id}/dispose  -- accept/reject bates item
-    GET  /drafting/templates                     -- list templates (HTMX partial)
-    GET  /drafting/exemplars                     -- list exemplars (HTMX partial)
-
-Architecture:
-    - No DB access in this file -- all calls go through drafting_service
-    - TemplateResponse(request, "name.html", {...}) signature
-    - Static paths before path parameters
-    - get_nav_context called on every TemplateResponse
-    - tenant_id from request.state (ActivityMiddleware)
-    - user_id from request.state (ActivityMiddleware)
+Patent Pending - Series 2/3 - D.M. Holmgren, Reg. No. 54,168
 """
-
 from __future__ import annotations
 
 import logging
-import os
-from typing import Optional
-from uuid import UUID
+import uuid
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Form, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import text
 
-from modules.dashboard.services.nav_context import get_nav_context
-from modules.drafting.drafting_service import (
-    create_session,
-    dismiss_session,
-    get_session,
-    get_session_summary,
-    list_sessions,
-    run_assembly,
-    run_sanity,
-)
-from modules.drafting.bates_service import dispose_insertion
+from core.db.base import AsyncSessionLocal
 
-logger = logging.getLogger(__name__)
+log = logging.getLogger("praesidium.drafting")
 
 router = APIRouter(prefix="/drafting", tags=["drafting"])
 
-_TEMPLATE_DIR = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-    "templates",
-)
 templates = Jinja2Templates(directory=[
-    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "core", "templates"),
-    _TEMPLATE_DIR,
-    os.path.join(_TEMPLATE_DIR, "drafting"),
+    "core/templates",
+    "modules/billing/templates",
 ])
 
 
-def _get_tenant(request: Request) -> str:
-    return (getattr(request.state, "tenant_id", "") or "").strip()
+# --------------------------------------------------------------------------
+# Auth / context helpers
+# --------------------------------------------------------------------------
+def _strip(v: Optional[str]) -> str:
+    return (v or "").strip()
 
 
-def _get_user(request: Request) -> Optional[int]:
-    return getattr(request.state, "user_id", None)
+async def _require_user(request: Request) -> Dict[str, Any]:
+    user = getattr(request.state, "current_user", None)
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+    tid = getattr(request.state, "tenant_id", None) or getattr(user, "tenant_id", None)
+    if not tid:
+        raise HTTPException(401, "Tenant not resolved")
+    return {
+        "user_id": int(user.id),
+        "tenant_id": _strip(tid),
+        "role": getattr(user, "role", None) or "staff",
+    }
 
 
-# ---------------------------------------------------------------------------
-# Panel home — matter selector
-# ---------------------------------------------------------------------------
+def _ctx(request: Request, sess: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+    from modules.billing.brand_helper import get_brand
+    user = getattr(request.state, "current_user", None)
+    return {
+        "request": request,
+        "brand": get_brand(request),
+        "page": "drafting",
+        "bill_tab": "",
+        "user": user,
+        "current_user": user,
+        **kwargs,
+    }
 
+
+# --------------------------------------------------------------------------
+# Data access
+# --------------------------------------------------------------------------
+async def _search_matters(tenant_id: str, q: str = "", limit: int = 20) -> List[Any]:
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(
+            text("""
+                SELECT m.id, m.matter_number, m.matter_name, m.status,
+                       c.client_name
+                FROM matters m
+                LEFT JOIN clients c ON c.id = m.client_id
+                WHERE TRIM(m.tenant_id) = :tid
+                  AND (m.matter_number ILIKE :p OR m.matter_name ILIKE :p
+                       OR c.client_name ILIKE :p)
+                ORDER BY m.matter_name
+                LIMIT :lim
+            """),
+            {"tid": tenant_id, "p": f"%{q.strip()}%", "lim": limit},
+        )
+        return r.fetchall()
+
+
+async def _get_matter(matter_id: str, tenant_id: str):
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(
+            text("""
+                SELECT m.id, m.matter_number, m.matter_name, m.status,
+                       m.matter_type, m.practice_area,
+                       c.client_name
+                FROM matters m
+                LEFT JOIN clients c ON c.id = m.client_id
+                WHERE m.id = CAST(:mid AS uuid)
+                  AND TRIM(m.tenant_id) = :tid
+            """),
+            {"mid": matter_id, "tid": tenant_id},
+        )
+        return r.fetchone()
+
+
+async def _get_recent_sessions(
+    tenant_id: str, matter_id: Optional[str] = None, limit: int = 10
+) -> List[Any]:
+    filters = ["TRIM(ds.tenant_id) = :tid"]
+    params: Dict[str, Any] = {"tid": tenant_id, "lim": limit}
+    if matter_id:
+        filters.append("ds.matter_id = CAST(:mid AS uuid)")
+        params["mid"] = matter_id
+    where = " AND ".join(filters)
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(
+            text(f"""
+                SELECT ds.id, ds.title, ds.document_type, ds.status,
+                       ds.created_at, ds.updated_at,
+                       m.matter_name, m.matter_number
+                FROM drafting_sessions ds
+                LEFT JOIN matters m ON m.id = ds.matter_id
+                WHERE {where}
+                ORDER BY ds.updated_at DESC NULLS LAST
+                LIMIT :lim
+            """),
+            params,
+        )
+        return r.fetchall()
+
+
+# --------------------------------------------------------------------------
+# Routes
+# --------------------------------------------------------------------------
 @router.get("/", response_class=HTMLResponse)
 async def drafting_home(request: Request):
-    tenant_id = _get_tenant(request)
-    if not tenant_id:
-        return RedirectResponse("/login", status_code=303)
+    sess = await _require_user(request)
+    tid = sess["tenant_id"]
+    recent = await _get_recent_sessions(tid, limit=5)
 
-    sessions = await list_sessions(tenant_id=tenant_id, limit=20)
-    nav = await get_nav_context(request, page="drafting")
-
+    from core.services.nav_context import get_nav_context
+    nav_ctx = await get_nav_context(request)
+    brand = getattr(request.state, "branding", None)
     return templates.TemplateResponse(
         request,
-        "drafting/drafting_home.html",
-        {
-            "nav": nav,
-            "recent_sessions": sessions,
-            "page_title": "Document Drafting",
-        },
-    )
+        "drafting/drafting_home_react.html",
+        {"request": request, "brand": brand, "page": "drafting",
+         "current_user": getattr(request.state, "current_user", None),
+         **nav_ctx})
+    # OLD HTMX PATH (preserved):
+    # return templates.TemplateResponse(
+    #     request,
+    #     "drafting/drafting_home.html",
+    #     _ctx(request, sess,
+    #          recent_sessions=recent,
+    #          document_types=[
+#                 ("motion", "Motion"),
+#                 ("brief", "Brief"),
+#                 ("contract", "Contract"),
+#                 ("discovery_request", "Discovery Request"),
+#                 ("discovery_response", "Discovery Response"),
+#                 ("pleading", "Pleading"),
+#                 ("letter", "Letter"),
+#                 ("disclosure", "Disclosure"),
+#                 ("agreement", "Agreement"),
+#                 ("other", "Other"),
+#             ]),
+    #)
 
 
-# ---------------------------------------------------------------------------
-# Matter-scoped drafting panel
-# ---------------------------------------------------------------------------
-
-@router.get("/matters/{matter_id}", response_class=HTMLResponse)
-async def drafting_panel(request: Request, matter_id: UUID):
-    tenant_id = _get_tenant(request)
-    if not tenant_id:
-        return RedirectResponse("/login", status_code=303)
-
-    sessions = await list_sessions(
-        tenant_id=tenant_id,
-        matter_id=matter_id,
-        limit=20,
-    )
-    nav = await get_nav_context(request, page="drafting")
-
-    return templates.TemplateResponse(
-        request,
-        "drafting/drafting_panel.html",
-        {
-            "nav": nav,
-            "matter_id": str(matter_id),
-            "sessions": sessions,
-            "page_title": "Document Drafting",
-            "document_types": [
-                ("motion", "Motion"),
-                ("brief", "Brief"),
-                ("contract", "Contract"),
-                ("discovery_request", "Discovery Request"),
-                ("discovery_response", "Discovery Response"),
-                ("pleading", "Pleading"),
-                ("letter", "Letter"),
-                ("disclosure", "Disclosure"),
-                ("agreement", "Agreement"),
-                ("other", "Other"),
-            ],
-            "practice_areas": [
-                ("litigation", "Litigation"),
-                ("transactional", "Transactional"),
-                ("real_estate", "Real Estate"),
-                ("securities", "Securities"),
-                ("employment", "Employment"),
-                ("appellate", "Appellate"),
-                ("federal", "Federal"),
-                ("ediscovery", "eDiscovery"),
-                ("general", "General"),
-            ],
-        },
-    )
+# --------------------------------------------------------------------------
+# HTMX API endpoints
+# --------------------------------------------------------------------------
+@router.get("/api/matter-search", response_class=HTMLResponse)
+async def matter_search(request: Request, q: str = ""):
+    """Returns clickable div items for the matter picker dropdown."""
+    sess = await _require_user(request)
+    if len(q.strip()) < 2:
+        return HTMLResponse("")
+    rows = await _search_matters(sess["tenant_id"], q)
+    if not rows:
+        return HTMLResponse(
+            '<div style="padding:10px 12px; font-size:12px; color:var(--muted);">'
+            'No matters found</div>'
+        )
+    parts = []
+    for r in rows:
+        label = f"{r.matter_number or ''} {r.matter_name}".strip()
+        client = r.client_name or ""
+        status = r.status or ""
+        # Escape quotes in data attributes
+        safe_label = label.replace('"', '&quot;')
+        safe_client = client.replace('"', '&quot;')
+        parts.append(
+            f'<div class="picker-item" '
+            f'data-id="{r.id}" data-label="{safe_label}" data-client="{safe_client}">'
+            f'<div class="picker-item-name">{label}</div>'
+            f'<div class="picker-item-meta">'
+            f'{client}{" &middot; " if client and status else ""}{status}'
+            f'</div></div>'
+        )
+    return HTMLResponse("\n".join(parts))
 
 
-# ---------------------------------------------------------------------------
-# Create session
-# ---------------------------------------------------------------------------
-
-@router.post("/matters/{matter_id}/sessions")
-async def create_drafting_session(
+@router.get("/api/exemplar-matters", response_class=HTMLResponse)
+async def exemplar_matters_partial(
     request: Request,
-    matter_id: UUID,
-    document_type: str = Form(...),
-    practice_area: str = Form(...),
-    title: Optional[str] = Form(None),
-    template_id: Optional[str] = Form(None),
-    assembly_prompt: Optional[str] = Form(None),
+    exemplar_q: str = "",
+    exemplar_exclude: str = "",
 ):
-    tenant_id = _get_tenant(request)
-    user_id = _get_user(request)
-    if not tenant_id:
-        return RedirectResponse("/login", status_code=303)
-
-    tmpl_uuid = UUID(template_id) if template_id else None
-
-    sess = await create_session(
-        tenant_id=tenant_id,
-        matter_id=matter_id,
-        document_type=document_type,
-        practice_area=practice_area,
-        title=title,
-        template_id=tmpl_uuid,
-        source_doc_ids=[],
-        assembly_prompt=assembly_prompt,
-        created_by=user_id,
-    )
-
-    return RedirectResponse(
-        f"/drafting/sessions/{sess['id']}",
-        status_code=303,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Session detail — resume / view
-# ---------------------------------------------------------------------------
-
-@router.get("/sessions/{session_id}", response_class=HTMLResponse)
-async def session_detail(request: Request, session_id: UUID):
-    tenant_id = _get_tenant(request)
-    if not tenant_id:
-        return RedirectResponse("/login", status_code=303)
-
-    summary = await get_session_summary(session_id, tenant_id)
-    if not summary:
-        return HTMLResponse("Session not found", status_code=404)
-
-    nav = await get_nav_context(request, page="drafting")
-
-    return templates.TemplateResponse(
-        request,
-        "drafting/drafting_session.html",
-        {
-            "nav": nav,
-            "summary": summary,
-            "session": summary["session"],
-            "latest_doc": summary["latest_document"],
-            "sanity": summary["sanity"],
-            "bates": summary["bates"],
-            "contributions": summary["ai_contributions"],
-            "page_title": summary["session"].get("title", "Draft"),
-        },
-    )
-
-
-# ---------------------------------------------------------------------------
-# Run assembly
-# ---------------------------------------------------------------------------
-
-@router.post("/sessions/{session_id}/assemble")
-async def assemble(request: Request, session_id: UUID):
-    tenant_id = _get_tenant(request)
-    user_id = _get_user(request)
-    if not tenant_id:
-        return JSONResponse({"error": "Unauthorized"}, status_code=401)
-
-    try:
-        result = await run_assembly(
-            session_id=session_id,
-            tenant_id=tenant_id,
-            created_by=user_id,
+    sess = await _require_user(request)
+    tid = sess["tenant_id"]
+    q = exemplar_q
+    exclude = exemplar_exclude
+    filters = ["TRIM(m.tenant_id) = :tid"]
+    params: Dict[str, Any] = {"tid": tid, "lim": 20}
+    if exclude:
+        filters.append("m.id != CAST(:exc AS uuid)")
+        params["exc"] = exclude
+    if q and len(q.strip()) >= 2:
+        filters.append(
+            "(m.matter_number ILIKE :p OR m.matter_name ILIKE :p"
+            " OR cl.client_name ILIKE :p)"
         )
-        # HTMX redirect to session detail to reload with new draft
-        return RedirectResponse(
-            f"/drafting/sessions/{session_id}",
-            status_code=303,
-        )
-    except ValueError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=400)
-    except Exception as exc:
-        logger.error("Assembly failed session=%s: %s", session_id, exc)
-        return JSONResponse({"error": "Assembly failed. Check logs."}, status_code=500)
-
-
-# ---------------------------------------------------------------------------
-# Run sanity check
-# ---------------------------------------------------------------------------
-
-@router.post("/sessions/{session_id}/sanity")
-async def sanity(request: Request, session_id: UUID):
-    tenant_id = _get_tenant(request)
-    if not tenant_id:
-        return JSONResponse({"error": "Unauthorized"}, status_code=401)
-
-    try:
-        result = await run_sanity(
-            session_id=session_id,
-            tenant_id=tenant_id,
-        )
-        return RedirectResponse(
-            f"/drafting/sessions/{session_id}",
-            status_code=303,
-        )
-    except ValueError as exc:
-        return JSONResponse({"error": str(exc)}, status_code=400)
-    except Exception as exc:
-        logger.error("Sanity check failed session=%s: %s", session_id, exc)
-        return JSONResponse({"error": "Sanity check failed. Check logs."}, status_code=500)
-
-
-# ---------------------------------------------------------------------------
-# Dismiss session
-# ---------------------------------------------------------------------------
-
-@router.post("/sessions/{session_id}/dismiss")
-async def dismiss(request: Request, session_id: UUID):
-    tenant_id = _get_tenant(request)
-    if not tenant_id:
-        return JSONResponse({"error": "Unauthorized"}, status_code=401)
-
-    await dismiss_session(session_id, tenant_id)
-
-    matter_id = request.query_params.get("matter_id")
-    if matter_id:
-        return RedirectResponse(f"/drafting/matters/{matter_id}", status_code=303)
-    return RedirectResponse("/drafting/", status_code=303)
-
-
-# ---------------------------------------------------------------------------
-# Dispose Bates insertion (accept / reject)
-# ---------------------------------------------------------------------------
-
-@router.post("/sessions/{session_id}/bates/{log_id}/dispose")
-async def dispose_bates(
-    request: Request,
-    session_id: UUID,
-    log_id: UUID,
-    disposition: str = Form(...),
-):
-    tenant_id = _get_tenant(request)
-    user_id = _get_user(request)
-    if not tenant_id:
-        return JSONResponse({"error": "Unauthorized"}, status_code=401)
-
-    if disposition not in ("accepted", "rejected"):
-        return JSONResponse({"error": "Invalid disposition"}, status_code=400)
-
-    updated = await dispose_insertion(
-        log_id=log_id,
-        session_id=session_id,
-        tenant_id=tenant_id,
-        disposition=disposition,
-        disposed_by=user_id or 0,
-    )
-
-    if not updated:
-        return JSONResponse(
-            {"error": "Item not found or already disposed"},
-            status_code=404,
-        )
-
-    # HTMX partial refresh — return updated bates row
-    from modules.drafting.bates_service import get_bates_insertions
-    items = await get_bates_insertions(session_id, tenant_id)
-    item = next((i for i in items if i["id"] == str(log_id)), None)
-
-    return templates.TemplateResponse(
-        request,
-        "drafting/partials/bates_row.html",
-        {"item": item},
-    )
-
-
-# ---------------------------------------------------------------------------
-# Template list (HTMX partial)
-# ---------------------------------------------------------------------------
-
-@router.get("/templates", response_class=HTMLResponse)
-async def list_templates(
-    request: Request,
-    document_type: Optional[str] = None,
-    practice_area: Optional[str] = None,
-):
-    tenant_id = _get_tenant(request)
-    if not tenant_id:
-        return JSONResponse({"error": "Unauthorized"}, status_code=401)
-
-    from sqlalchemy import text
-    from core.db.base import AsyncSessionLocal
-
-    filters = ["trim(tenant_id) = :tid", "is_active = TRUE"]
-    params: dict = {"tid": tenant_id}
-    if document_type:
-        filters.append("document_type = :dt")
-        params["dt"] = document_type
-    if practice_area:
-        filters.append("practice_area = :pa")
-        params["pa"] = practice_area
-
+        params["p"] = f"%{q.strip()}%"
     where = " AND ".join(filters)
-    async with AsyncSessionLocal() as session:
-        rows = await session.execute(
-            text(
-                f"SELECT id, name, document_type, practice_area, scope, version "
-                f"FROM template_library WHERE {where} "
-                f"ORDER BY practice_area, document_type, name"
-            ),
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(
+            text(f"""
+                SELECT m.id, m.matter_number, m.matter_name, m.status,
+                       cl.client_name,
+                       (SELECT COUNT(*) FROM dms_documents d
+                        WHERE d.matter_id = m.id
+                          AND TRIM(d.tenant_id) = TRIM(m.tenant_id)) AS doc_count
+                FROM matters m
+                LEFT JOIN clients cl ON cl.id = m.client_id
+                WHERE {where}
+                ORDER BY m.matter_name
+                LIMIT :lim
+            """),
             params,
         )
-        tmpl_list = [
-            {
-                "id": str(r.id),
-                "name": r.name,
-                "document_type": r.document_type,
-                "practice_area": r.practice_area,
-                "scope": r.scope,
-                "version": r.version,
-            }
-            for r in rows.fetchall()
-        ]
+        rows = r.fetchall()
 
-    return templates.TemplateResponse(
-        request,
-        "drafting/partials/template_list.html",
-        {"templates": tmpl_list},
-    )
-
-
-# ---------------------------------------------------------------------------
-# Exemplar list (HTMX partial)
-# ---------------------------------------------------------------------------
-
-@router.get("/exemplars", response_class=HTMLResponse)
-async def list_exemplars(
-    request: Request,
-    document_type: Optional[str] = None,
-    matter_id: Optional[str] = None,
-):
-    tenant_id = _get_tenant(request)
-    if not tenant_id:
-        return JSONResponse({"error": "Unauthorized"}, status_code=401)
-
-    from sqlalchemy import text
-    from core.db.base import AsyncSessionLocal
-
-    filters = ["trim(tenant_id) = :tid", "is_active = TRUE"]
-    params: dict = {"tid": tenant_id}
-    if document_type:
-        filters.append("document_type = :dt")
-        params["dt"] = document_type
-    if matter_id:
-        filters.append("(matter_id IS NULL OR matter_id = :mid)")
-        params["mid"] = matter_id
-
-    where = " AND ".join(filters)
-    async with AsyncSessionLocal() as session:
-        rows = await session.execute(
-            text(
-                f"SELECT id, name, document_type, practice_area, "
-                f"       matter_id, created_at "
-                f"FROM exemplar_library WHERE {where} "
-                f"ORDER BY matter_id NULLS LAST, document_type, name"
-            ),
-            params,
+    if not rows:
+        return HTMLResponse(
+            '<div style="font-size:12px; color:var(--muted); padding:12px;">'
+            'No matching matters found.</div>'
         )
-        ex_list = [
-            {
-                "id": str(r.id),
-                "name": r.name,
-                "document_type": r.document_type,
-                "practice_area": r.practice_area,
-                "scope": "matter" if r.matter_id else "firm",
-                "created_at": r.created_at.isoformat() if r.created_at else None,
-            }
-            for r in rows.fetchall()
-        ]
 
-    return templates.TemplateResponse(
-        request,
-        "drafting/partials/exemplar_list.html",
-        {"exemplars": ex_list},
-    )
+    parts = []
+    for r in rows:
+        label = f"{r.matter_number or ''} {r.matter_name}".strip()
+        client = r.client_name or ""
+        doc_count = r.doc_count or 0
+        parts.append(f"""
+        <label style="display:flex; align-items:center; gap:10px; padding:8px 12px;
+                      border:1px solid var(--border); border-radius:6px; cursor:pointer;
+                      font-size:13px; transition:background 100ms;"
+               onmouseover="this.style.background='var(--bg)'"
+               onmouseout="this.style.background='transparent'">
+          <input type="checkbox" name="exemplar_matter_ids" value="{r.id}"
+                 onchange="toggleExemplar(this)">
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:500; overflow:hidden; text-overflow:ellipsis;
+                        white-space:nowrap;">{label}</div>
+            <div style="font-size:11px; color:var(--muted);">
+              {client}{"  &middot;  " if client else ""}{doc_count} doc{"s" if doc_count != 1 else ""}
+            </div>
+          </div>
+          <span class="badge badge-gray" style="font-size:10px;">{r.status or "&#8212;"}</span>
+        </label>""")
+    return HTMLResponse("\n".join(parts))
+
+
+@router.post("/api/upload-goby", response_class=HTMLResponse)
+async def upload_goby(request: Request, files: List[UploadFile] = File(...)):
+    sess = await _require_user(request)
+    parts = []
+    for f in files:
+        content = await f.read()
+        size_bytes = len(content)
+        if size_bytes > 50 * 1024 * 1024:
+            parts.append(f"""
+            <div style="display:flex; align-items:center; gap:10px; padding:8px 12px;
+                        border:1px solid #FCA5A5; border-radius:6px; font-size:12px;
+                        color:#991B1B; background:#FEF2F2;">
+              &#9888; {f.filename} exceeds 50 MB limit
+            </div>""")
+            continue
+
+        if size_bytes < 1024:
+            size_str = f"{size_bytes} B"
+        elif size_bytes < 1024 * 1024:
+            size_str = f"{size_bytes / 1024:.1f} KB"
+        else:
+            size_str = f"{size_bytes / (1024*1024):.1f} MB"
+
+        ext = (f.filename or "").rsplit(".", 1)[-1].lower() if f.filename else ""
+        icon_map = {"pdf": "&#128213;", "doc": "&#128216;", "docx": "&#128216;",
+                    "xls": "&#128215;", "xlsx": "&#128215;", "txt": "&#128221;",
+                    "rtf": "&#128221;"}
+        icon = icon_map.get(ext, "&#128196;")
+        file_id = str(uuid.uuid4())[:8]
+
+        parts.append(f"""
+        <div id="goby-{file_id}"
+             style="display:flex; align-items:center; gap:10px; padding:8px 12px;
+                    border:1px solid var(--border); border-radius:6px; font-size:13px;
+                    background:var(--surface);">
+          <span style="font-size:18px;">{icon}</span>
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:500; overflow:hidden; text-overflow:ellipsis;
+                        white-space:nowrap;">{f.filename}</div>
+            <div style="font-size:11px; color:var(--muted);">{size_str}</div>
+          </div>
+          <button type="button" onclick="this.closest('[id^=goby-]').remove()"
+                  style="background:none; border:none; cursor:pointer;
+                         font-size:16px; color:var(--muted); padding:4px;"
+                  title="Remove">&times;</button>
+        </div>""")
+    return HTMLResponse("\n".join(parts))
+
+
+@router.post("/api/chat", response_class=HTMLResponse)
+async def chat_message(
+    request: Request,
+    message: str = Form(""),
+    matter_id: str = Form(""),
+    document_type: str = Form(""),
+    exemplar_matter_ids: str = Form(""),
+):
+    sess = await _require_user(request)
+    tid = sess["tenant_id"]
+    msg = _strip(message)
+    if not msg:
+        return HTMLResponse("")
+
+    context_parts = []
+    if matter_id:
+        matter = await _get_matter(matter_id, tid)
+        if matter:
+            context_parts.append(
+                f"Matter: {matter.matter_number or ''} {matter.matter_name}".strip()
+            )
+    if document_type:
+        context_parts.append(f"Type: {document_type.replace('_', ' ').title()}")
+    if exemplar_matter_ids:
+        ids = [x.strip() for x in exemplar_matter_ids.split(",") if x.strip()]
+        if ids:
+            context_parts.append(f"{len(ids)} exemplar matter{'s' if len(ids) != 1 else ''}")
+
+    ctx = " &middot; ".join(context_parts) if context_parts else "No matter selected"
+    ts = datetime.now().strftime("%I:%M %p")
+
+    html = f"""
+    <div class="chat-msg chat-msg-user">
+      <div class="chat-bubble chat-bubble-user">
+        {msg}
+        <div class="chat-ts" style="text-align:right;">{ts}</div>
+      </div>
+    </div>
+    <div class="chat-msg chat-msg-system">
+      <div class="chat-bubble chat-bubble-system">
+        <div style="font-size:10px; color:var(--muted); margin-bottom:6px;">{ctx}</div>
+        Drafting AI is ready. This chat surface will connect to the AI pipeline
+        with full matter context, exemplar documents, and go-by files when the
+        assembly service is invoked.
+        <div class="chat-ts">{ts}</div>
+      </div>
+    </div>
+    """
+    return HTMLResponse(html)

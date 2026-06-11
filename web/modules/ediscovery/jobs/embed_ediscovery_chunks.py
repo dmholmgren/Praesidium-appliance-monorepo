@@ -26,7 +26,12 @@ import urllib.request
 logger = logging.getLogger(__name__)
 
 EMBED_URL_DEFAULT = os.environ.get("EMBED_URL", "http://praesidium-embed:8000")
-BATCH_DEFAULT = 64
+# EMBED_BURST=1: bulk-ingest mode. Bigger batches; the embedding service
+# owns the V100 while interactive LLM traffic routes to the external API.
+# (The GPU-residency knob itself lives service-side in praesidium-embed;
+# this is the job-side half of the contract.)
+_EMBED_BURST = os.environ.get("EMBED_BURST", "0") == "1"
+BATCH_DEFAULT = int(os.environ.get("EMBED_BATCH", "256" if _EMBED_BURST else "64"))
 
 
 def _db_kwargs() -> dict:
@@ -62,6 +67,45 @@ def _vec_literal(v):
     return "[" + ",".join(repr(float(x)) for x in v) + "]"
 
 
+EMBED_LEDGER_SQL = """
+    INSERT INTO ediscovery_stage_status
+        (tenant_id, document_id, collection_id, stage, state, attempt,
+         worker_id, started_at, finished_at, updated_at)
+    SELECT %(t)s, d.id, d.collection_id, 'embed',
+           CASE WHEN cnt.missing = 0 THEN 'done' ELSE 'pending' END,
+           1, %(w)s, now(), now(), now()
+    FROM ediscovery_documents d
+    JOIN LATERAL (
+        SELECT count(*) FILTER (WHERE e.chunk_id IS NULL) AS missing,
+               count(*) AS total
+        FROM ediscovery_chunks ch
+        LEFT JOIN ediscovery_chunk_embeddings e
+               ON e.chunk_id = ch.id AND e.embedding_768 IS NOT NULL
+        WHERE ch.document_id = d.id
+    ) cnt ON true
+    WHERE TRIM(d.tenant_id) = %(t)s AND d.collection_id = %(c)s::uuid
+      AND cnt.total > 0
+    ON CONFLICT (tenant_id, document_id, stage) DO UPDATE SET
+        state = EXCLUDED.state,
+        attempt = ediscovery_stage_status.attempt + 1,
+        collection_id = EXCLUDED.collection_id,
+        worker_id = EXCLUDED.worker_id,
+        finished_at = now(), updated_at = now()
+"""
+
+
+def _write_embed_ledger(cur, conn, tenant, collection) -> int:
+    """Set-based ledger reconciliation for the embed stage."""
+    import os as _os
+    cur.execute(EMBED_LEDGER_SQL,
+                {"t": tenant, "c": str(collection),
+                 "w": _os.environ.get("HOSTNAME", "embed")})
+    n = cur.rowcount
+    conn.commit()
+    logger.info("embed ledger: %d doc row(s) reconciled", n)
+    return n
+
+
 def embed_collection(tenant, collection=None, docs=None, limit=0,
                      batch_size=BATCH_DEFAULT, embed_url=EMBED_URL_DEFAULT,
                      force=False, dry_run=False) -> dict:
@@ -91,7 +135,11 @@ def embed_collection(tenant, collection=None, docs=None, limit=0,
         s["chunks"] = len(rows)
         logger.info("embed_ediscovery: %d chunk(s) to embed (collection=%s force=%s dry=%s)",
                     len(rows), collection, force, dry_run)
-        if dry_run or not rows:
+        if dry_run:
+            return s
+        if not rows:
+            if collection:
+                s["ledger_docs"] = _write_embed_ledger(cur, conn, ten, collection)
             return s
 
         for i in range(0, len(rows), batch_size):
@@ -118,6 +166,8 @@ def embed_collection(tenant, collection=None, docs=None, limit=0,
             s["embedded"] += len(batch)
             s["batches"] += 1
             logger.info("  batch %d: +%d (model=%s)", s["batches"], len(batch), model_id)
+        if collection:
+            s["ledger_docs"] = _write_embed_ledger(cur, conn, ten, collection)
         return s
     finally:
         conn.close()

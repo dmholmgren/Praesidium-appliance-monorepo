@@ -1,0 +1,183 @@
+{% extends "billing/layout.html" %}
+{% block title %}New Client — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}New Client{% endblock %}
+
+{% block billing_content %}
+
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:20px;">
+  <div>
+    <div style="display:flex; align-items:center; gap:10px; margin-bottom:4px;">
+      <a href="/billing" style="font-size:12px; color:var(--muted); text-decoration:none;">← Billing</a>
+      <span style="font-size:11px; color:#D1D5DB;">·</span>
+      <a href="/billing/clients" style="font-size:12px; color:var(--muted); text-decoration:none;">Clients</a>
+      <span style="font-size:11px; color:#D1D5DB;">·</span>
+      <span style="font-size:12px; color:var(--muted);">New Client</span>
+    </div>
+    <h2 style="font-family:'Lora',serif; font-size:20px; font-weight:600; color:var(--text); margin:0;">
+      Add a New Client
+    </h2>
+  </div>
+</div>
+
+<div style="max-width:720px;">
+  <div id="nc-form-error"
+       style="display:none; background:#FEF2F2; border:1px solid #FECACA;
+              color:#7F1D1D; border-radius:6px; padding:10px 14px;
+              margin-bottom:16px; font-size:13px;"></div>
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+
+    <div style="grid-column:1/-1;">
+      <label style="display:block; font-size:12px; font-weight:500; color:#374151; margin-bottom:4px;">Client Name *</label>
+      <input type="text" id="nc-client-name" placeholder="Full legal name of client"
+             value="{{ prefill.client_name or '' }}"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px; padding:8px 12px; font-size:13px; box-sizing:border-box;">
+    </div>
+
+    <div>
+      <label style="display:block; font-size:12px; font-weight:500; color:#374151; margin-bottom:4px;">Client Type</label>
+      <select id="nc-client-type"
+              style="width:100%; border:1px solid #D1D5DB; border-radius:6px; padding:8px 12px; font-size:13px; background:#fff; box-sizing:border-box;">
+        <option value="individual" {{ 'selected' if prefill.client_type == 'individual' }}>Individual</option>
+        <option value="entity" {{ 'selected' if prefill.client_type == 'entity' }}>Entity</option>
+      </select>
+    </div>
+
+    <div>
+      <label style="display:block; font-size:12px; font-weight:500; color:#374151; margin-bottom:4px;">Client Number</label>
+      <input type="text" id="nc-client-number" placeholder="Optional — auto-assigned if blank"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px; padding:8px 12px; font-size:13px; box-sizing:border-box;">
+    </div>
+
+    <div>
+      <label style="display:block; font-size:12px; font-weight:500; color:#374151; margin-bottom:4px;">Primary Contact</label>
+      <input type="text" id="nc-primary-contact" placeholder="Contact person name"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px; padding:8px 12px; font-size:13px; box-sizing:border-box;">
+    </div>
+
+    <div>
+      <label style="display:block; font-size:12px; font-weight:500; color:#374151; margin-bottom:4px;">Email</label>
+      <input type="email" id="nc-email"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px; padding:8px 12px; font-size:13px; box-sizing:border-box;">
+    </div>
+
+    <div>
+      <label style="display:block; font-size:12px; font-weight:500; color:#374151; margin-bottom:4px;">Phone</label>
+      <input type="text" id="nc-phone"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px; padding:8px 12px; font-size:13px; box-sizing:border-box;">
+    </div>
+
+    <div style="grid-column:1/-1; margin-top:8px;">
+      <div style="font-size:13px; font-weight:600; color:var(--text); margin-bottom:12px;
+                  padding-bottom:6px; border-bottom:1px solid var(--border);">Address</div>
+    </div>
+
+    <div style="grid-column:1/-1;">
+      <label style="display:block; font-size:12px; font-weight:500; color:#374151; margin-bottom:4px;">Street Address</label>
+      <input type="text" id="nc-address1"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px; padding:8px 12px; font-size:13px; box-sizing:border-box; margin-bottom:6px;">
+      <input type="text" id="nc-address2" placeholder="Suite, floor, etc."
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px; padding:8px 12px; font-size:13px; box-sizing:border-box;">
+    </div>
+
+    <div>
+      <label style="display:block; font-size:12px; font-weight:500; color:#374151; margin-bottom:4px;">City</label>
+      <input type="text" id="nc-city"
+             style="width:100%; border:1px solid #D1D5DB; border-radius:6px; padding:8px 12px; font-size:13px; box-sizing:border-box;">
+    </div>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+      <div>
+        <label style="display:block; font-size:12px; font-weight:500; color:#374151; margin-bottom:4px;">State</label>
+        <input type="text" id="nc-state" maxlength="2" placeholder="TX"
+               style="width:100%; border:1px solid #D1D5DB; border-radius:6px; padding:8px 12px; font-size:13px; box-sizing:border-box; text-transform:uppercase;">
+      </div>
+      <div>
+        <label style="display:block; font-size:12px; font-weight:500; color:#374151; margin-bottom:4px;">ZIP</label>
+        <input type="text" id="nc-zip"
+               style="width:100%; border:1px solid #D1D5DB; border-radius:6px; padding:8px 12px; font-size:13px; box-sizing:border-box;">
+      </div>
+    </div>
+
+    <div style="grid-column:1/-1;">
+      <label style="display:block; font-size:12px; font-weight:500; color:#374151; margin-bottom:4px;">Notes</label>
+      <textarea id="nc-notes" rows="3"
+                style="width:100%; border:1px solid #D1D5DB; border-radius:6px; padding:8px 12px; font-size:13px; resize:vertical; font-family:inherit; box-sizing:border-box;"></textarea>
+    </div>
+
+  </div>
+
+  <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:24px;
+              padding-top:16px; border-top:1px solid var(--border);">
+    <a href="/billing/clients"
+       style="padding:8px 20px; border:1px solid #D1D5DB; background:#fff;
+              border-radius:6px; font-size:13px; color:#374151; text-decoration:none;
+              display:inline-flex; align-items:center;">Cancel</a>
+    <button onclick="ncSaveClient()" id="nc-save-btn"
+            style="padding:8px 24px; background:var(--primary); color:#fff;
+                   border:none; border-radius:6px; font-size:13px; font-weight:500; cursor:pointer;">
+      Create Client
+    </button>
+  </div>
+</div>
+
+<script>
+async function ncSaveClient() {
+  var btn   = document.getElementById('nc-save-btn');
+  var errEl = document.getElementById('nc-form-error');
+  errEl.style.display = 'none';
+
+  var clientName = document.getElementById('nc-client-name').value.trim();
+  if (!clientName) {
+    errEl.textContent = 'Client name is required.';
+    errEl.style.display = 'block';
+    document.getElementById('nc-client-name').focus();
+    return;
+  }
+
+  btn.textContent = 'Creating…'; btn.disabled = true;
+
+  var payload = {
+    client_name:     clientName,
+    client_type:     document.getElementById('nc-client-type').value,
+    client_number:   document.getElementById('nc-client-number').value.trim() || null,
+    primary_contact: document.getElementById('nc-primary-contact').value.trim() || null,
+    email:           document.getElementById('nc-email').value.trim() || null,
+    phone:           document.getElementById('nc-phone').value.trim() || null,
+    address1:        document.getElementById('nc-address1').value.trim() || null,
+    address2:        document.getElementById('nc-address2').value.trim() || null,
+    city:            document.getElementById('nc-city').value.trim() || null,
+    state:           document.getElementById('nc-state').value.trim().toUpperCase() || null,
+    zip_code:        document.getElementById('nc-zip').value.trim() || null,
+    notes:           document.getElementById('nc-notes').value.trim() || null,
+  };
+
+  try {
+    var res = await fetch('/billing/clients/new', {
+      method:  'POST',
+      headers: {'Content-Type': 'application/json'},
+      body:    JSON.stringify(payload),
+    });
+    var data = await res.json();
+    if (res.ok && data.client_id) {
+      var params = new URLSearchParams(window.location.search);
+      if (params.get('then') === 'matter') {
+        window.location.href = '/billing/matters/new?client_id=' + data.client_id
+          + '&client_name=' + encodeURIComponent(clientName);
+      } else {
+        window.location.href = '/billing/clients/' + data.client_id;
+      }
+    } else {
+      errEl.textContent = data.error || 'Error creating client.';
+      errEl.style.display = 'block';
+    }
+  } catch(e) {
+    errEl.textContent = 'Network error. Please try again.';
+    errEl.style.display = 'block';
+  } finally {
+    btn.textContent = 'Create Client'; btn.disabled = false;
+  }
+}
+</script>
+
+{% endblock %}

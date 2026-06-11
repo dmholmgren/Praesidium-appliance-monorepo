@@ -1,5 +1,5 @@
-{% extends "base.html" %}
-{% block title %}Billing — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% extends "billing/layout.html" %}
+{% block title %}{{ brand.platform_name if brand else 'Praesidium' }} — Billing{% endblock %}
 {% block page_title %}Billing{% endblock %}
 
 {% block header_right %}
@@ -11,103 +11,120 @@
 </a>
 {% endblock %}
 
-{% block content %}
-<style>
-  .bil-tabs {
-    display: flex;
-    gap: 2px;
-    border-bottom: 2px solid var(--border-color, #e2e8f0);
-    margin-bottom: 16px;
-    flex-shrink: 0;
-  }
-  .bil-tab {
-    padding: 8px 18px;
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--muted, #64748b);
-    cursor: pointer;
-    border: none;
-    background: none;
-    border-bottom: 2px solid transparent;
-    margin-bottom: -2px;
-    border-radius: 4px 4px 0 0;
-    transition: color 0.15s, border-color 0.15s;
-    white-space: nowrap;
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-  }
-  .bil-tab:hover {
-    color: var(--text, #1a202c);
-    background: #f8fafc;
-  }
-  .bil-tab.active {
-    color: var(--primary, #1B2A4A);
-    border-bottom-color: var(--primary, #1B2A4A);
-    font-weight: 600;
-  }
-  .bil-body {
-    min-height: 400px;
-  }
-</style>
+{% block billing_content %}
 
-{# Tab bar — mirrors eDiscovery tab pattern #}
-<div class="bil-tabs">
-  <button class="bil-tab active" id="tab-overview"
-          onclick="switchBilTab('overview')">Overview</button>
-  <button class="bil-tab" id="tab-clients"
-          onclick="switchBilTab('clients')">Clients</button>
-  <button class="bil-tab" id="tab-timesheet"
-          onclick="switchBilTab('timesheet')">Timesheets</button>
-  <button class="bil-tab" id="tab-trust"
-          onclick="switchBilTab('trust')">Trust</button>
-  <button class="bil-tab" id="tab-reports"
-          onclick="switchBilTab('reports')">Reports</button>
+{# ── Overview body ────────────────────────────────────────────────────────
+   This page is the "Overview" tab landing. The body loads the existing
+   /billing/overview HTMX partial (three-column dashboard).
+   (Previously billing_home had its own internal tab strip — that's now
+   superseded by billing/layout.html's horizontal nav.)
+─────────────────────────────────────────────────────────────────────────── #}
+
+{# ── AI Search Bar ──────────────────────────────────────────────────────── #}
+<div style="margin-bottom:14px;">
+  <div style="display:flex; gap:8px; align-items:center; margin-bottom:6px;">
+    <div style="flex:1; position:relative;">
+      <input type="text" id="bil-ai-search"
+             placeholder="Search billing — clients, matters, invoices, time entries…"
+             style="width:100%; padding:9px 14px 9px 34px; font-size:13px;
+                    border:1px solid var(--border); border-radius:6px;
+                    box-sizing:border-box; background:var(--surface);
+                    color:var(--text); font-family:inherit; outline:none;"
+             onkeydown="if(event.key==='Enter') bilSearch()"
+             oninput="bilTriggerSearch(this.value)">
+      <span style="position:absolute; left:11px; top:50%; transform:translateY(-50%);
+                   font-size:13px; pointer-events:none; color:var(--muted);">&#128269;</span>
+    </div>
+    <button onclick="bilSearch()"
+            style="padding:8px 16px; background:var(--primary); color:#fff;
+                   border:none; border-radius:6px; font-size:12px; font-weight:600;
+                   cursor:pointer; white-space:nowrap;">Search</button>
+  </div>
+  <div style="display:flex; gap:6px;">
+    <button onclick="setBilSearchMode('keyword')" id="bil-smode-keyword"
+            style="font-size:11px; padding:2px 10px; border-radius:10px; cursor:pointer;
+                   border:1px solid var(--border);
+                   background:var(--primary); color:#fff;">Keyword</button>
+    <button onclick="setBilSearchMode('ai')" id="bil-smode-ai"
+            style="font-size:11px; padding:2px 10px; border-radius:10px; cursor:pointer;
+                   border:1px solid var(--border);
+                   background:transparent; color:var(--muted);">Ask AI</button>
+  </div>
 </div>
+<div id="bil-search-results" style="display:none; margin-bottom:14px;"></div>
 
-{# Body — HTMX swap target #}
-<div class="bil-body" id="bil-body">
+<div id="bil-body" class="bil-body" style="min-height:400px;">
   <div style="padding:32px; text-align:center; font-size:12px; color:var(--muted);">
     Loading…
   </div>
 </div>
 
 <script>
-const BIL_TABS = {
-  overview:  '/billing/overview',
-  clients:   '/billing/overview',   // same partial — tree IS the client list
-  timesheet: '/billing/timesheet',
-  trust:     '/billing/trust',
-  reports:   '/billing/reports',
-};
+  var bilSearchMode = 'keyword';
+  var bilSearchTimer = null;
 
-// Tabs that are full-page navigations vs HTMX partials
-const BIL_NAVIGATE = new Set(['timesheet', 'trust', 'reports']);
-
-function switchBilTab(tabSlug) {
-  document.querySelectorAll('.bil-tab').forEach(t => t.classList.remove('active'));
-  const activeTab = document.getElementById('tab-' + tabSlug);
-  if (activeTab) activeTab.classList.add('active');
-
-  if (BIL_NAVIGATE.has(tabSlug)) {
-    window.location.href = BIL_TABS[tabSlug];
-    return;
+  function setBilSearchMode(mode) {
+    bilSearchMode = mode;
+    ['keyword', 'ai'].forEach(function(m) {
+      var btn = document.getElementById('bil-smode-' + m);
+      if (!btn) return;
+      btn.style.background = m === mode ? 'var(--primary)' : 'transparent';
+      btn.style.color = m === mode ? '#fff' : 'var(--muted)';
+      btn.style.borderColor = m === mode ? 'var(--primary)' : 'var(--border)';
+    });
+    var ph = {
+      keyword: 'Search billing — clients, matters, invoices, time entries…',
+      ai: 'Ask in plain English: "Show me unbilled time for the Williams matters"…',
+    };
+    document.getElementById('bil-ai-search').placeholder = ph[mode] || ph.keyword;
   }
 
-  htmx.ajax('GET', BIL_TABS[tabSlug], {
-    target: '#bil-body',
-    swap: 'innerHTML'
-  });
+  function bilTriggerSearch(val) {
+    clearTimeout(bilSearchTimer);
+    if (!val || val.length < 2) {
+      document.getElementById('bil-search-results').style.display = 'none';
+      return;
+    }
+    bilSearchTimer = setTimeout(bilSearch, 400);
+  }
 
-  try { sessionStorage.setItem('bil_active_tab', tabSlug); } catch(e) {}
-}
+  async function bilSearch() {
+    var q = document.getElementById('bil-ai-search').value.trim();
+    if (!q || q.length < 2) return;
+    var results = document.getElementById('bil-search-results');
+    results.style.display = 'block';
 
-document.addEventListener('DOMContentLoaded', function() {
-  // Load overview partial on initial render
-  htmx.ajax('GET', '/billing/overview', {
-    target: '#bil-body',
-    swap: 'innerHTML'
+    if (bilSearchMode === 'ai') {
+      results.innerHTML = '<div class="card" style="padding:14px;font-size:12px;color:var(--muted);">'
+        + '<span style="font-size:14px;">&#129302;</span> Asking AI to search billing data…</div>';
+      try {
+        var resp = await fetch('/dms/ai-search?q=' + encodeURIComponent(q));
+        var html = await resp.text();
+        results.innerHTML = '<div class="card" style="padding:0; overflow:hidden;">' + html + '</div>';
+      } catch(e) {
+        results.innerHTML = '<div class="card" style="padding:12px;font-size:12px;color:#dc2626;">'
+          + 'AI search failed: ' + e.message + '</div>';
+      }
+      return;
+    }
+
+    // Keyword mode — use DMS dashboard search
+    results.innerHTML = '<div class="card" style="padding:12px 14px;font-size:12px;color:var(--muted);">Searching…</div>';
+    try {
+      var resp = await fetch('/dms/dash/search?q=' + encodeURIComponent(q));
+      var html = await resp.text();
+      results.innerHTML = html || '<div class="card" style="padding:16px;text-align:center;color:var(--muted);font-size:12px;">No results found.</div>';
+    } catch(e) {
+      results.innerHTML = '<div class="card" style="padding:12px;font-size:12px;color:#dc2626;">Search failed.</div>';
+    }
+  }
+
+  // Load the overview partial on initial render
+  document.addEventListener('DOMContentLoaded', function() {
+    htmx.ajax('GET', '/billing/overview', {
+      target: '#bil-body',
+      swap: 'innerHTML'
+    });
   });
-});
 </script>
 {% endblock %}

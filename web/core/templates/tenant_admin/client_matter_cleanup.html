@@ -4,8 +4,9 @@
 {% block content %}
 <div style="padding:0;">
 
+  {% set ta_page_breadcrumb = '<a href="/tenant-admin/#settings">Settings</a><span class="sep">/</span><a href="/tenant-admin/onboarding">Onboarding</a><span class="sep">/</span>Data Quality' %}
   {% include "tenant_admin/_topnav.html" %}
-  {% include "tenant_admin/_dataquality_subnav.html" %}
+  {% include "tenant_admin/_onboarding_subnav.html" %}
 
 
 <style>
@@ -89,6 +90,12 @@
       ⚡ SQL Classify First
     </button>
     <span id="sql-classify-status" style="font-size:11px; color:var(--muted);"></span>
+    <button onclick="embedTimeRecords()"
+            id="embed-time-btn"
+            style="padding:6px 14px; font-size:12px; border:1px solid #1A3A5C; border-radius:5px; cursor:pointer; background:#1A3A5C; color:#fff;">
+      ⚡ Embed Time Records
+    </button>
+    <span id="embed-time-status" style="font-size:11px; color:var(--muted);"></span>
     <button onclick="classifyWithAI()"
             style="padding:6px 14px; font-size:12px; border:1px solid var(--border-color,#e2e8f0); border-radius:5px; cursor:pointer; background:var(--surface,#fff); color:var(--text);">
       🤖 AI Classify Untyped
@@ -983,6 +990,36 @@ function clearSessionCommits() {
   const tog = document.getElementById('committed-toggle');
   if (tog) tog.textContent = 'Hide committed (0)';
 }
+
+// ── Embed Time Records ───────────────────────────────────────────────────
+async function embedTimeRecords() {
+  const btn = document.getElementById('embed-time-btn');
+  const statusEl = document.getElementById('embed-time-status');
+  btn.disabled = true;
+  btn.textContent = 'Chunking…';
+  statusEl.textContent = '';
+  try {
+    const resp = await fetch('/tenant-admin/client-matter-cleanup/embed-time', {method: 'POST'});
+    const data = await resp.json();
+    if (data.error || data.detail) {
+      statusEl.style.color = '#DC2626';
+      statusEl.textContent = 'Error: ' + (data.error || data.detail);
+    } else {
+      statusEl.style.color = '#166534';
+      statusEl.textContent = data.chunks_created + ' chunks, ' + (data.embedded || 0) + ' embedded';
+      if (data.embed_error) {
+        statusEl.style.color = '#b45309';
+        statusEl.textContent += ' — ' + data.embed_error;
+      }
+    }
+  } catch(e) {
+    statusEl.style.color = '#DC2626';
+    statusEl.textContent = 'Error: ' + e.message;
+  }
+  btn.disabled = false;
+  btn.textContent = '⚡ Embed Time Records';
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   updateSelectionCount();

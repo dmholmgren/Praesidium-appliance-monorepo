@@ -301,10 +301,22 @@ _CONVERTIBLE_MIMES_PREFIX = (
 )
 
 
-def _viewer_mode(mime: Optional[str], file_name: Optional[str]) -> str:
-    """Return 'pdf' | 'image' | 'text' | 'convert' | 'unsupported'."""
+def _viewer_mode(mime: Optional[str], file_name: Optional[str],
+                 doc_type: Optional[str] = None, has_text: bool = False) -> str:
+    """Return 'pdf' | 'image' | 'text' | 'convert' | 'unsupported'.
+    
+    Decision chain (first match wins):
+      1. PDF by mime or extension
+      2. Image by mime or extension
+      3. Plain text by mime or extension
+      4. Office docs convertible via LibreOffice
+      5. Email by mime, extension, or doc_type
+      6. Fallback: if extracted_text exists, show text viewer
+      7. Otherwise unsupported
+    """
     m = (mime or "").lower()
     name = (file_name or "").lower()
+    dtype = (doc_type or "").lower()
 
     if m == "application/pdf" or name.endswith(".pdf"):
         return "pdf"
@@ -319,8 +331,14 @@ def _viewer_mode(mime: Optional[str], file_name: Optional[str]) -> str:
         )
     ):
         return "convert"
-    # Email: we use extracted_text as fallback
-    if any(name.endswith(ext) for ext in (".msg", ".eml")):
+    # Email: by mime, extension, or doc_type column
+    if (m in ("message/rfc822", "application/vnd.ms-outlook")
+            or any(name.endswith(ext) for ext in (".msg", ".eml"))
+            or dtype == "email"):
+        return "text"
+    # Fallback: if we have extracted text, show the text viewer
+    # rather than "unsupported" — covers octet-stream with parsed content
+    if has_text:
         return "text"
     return "unsupported"
 
@@ -345,6 +363,7 @@ async def get_doc_viewer(scope: dict) -> dict:
                     ed.page_count, ed.working_path, ed.file_path,
                     ed.native_path, ed.text_path,
                     ed.bates_begin, ed.bates_end, ed.collection_id,
+                    ed.doc_type,
                     ed.extracted_text IS NOT NULL AS has_text
                 FROM ediscovery_documents ed
                 WHERE ed.id = CAST(:did AS uuid)
@@ -383,7 +402,7 @@ async def get_doc_viewer(scope: dict) -> dict:
         if native_ext in AUDIO_EXTS:
             mode = "audio"
         else:
-            mode = _viewer_mode(rec.get("mime_type"), rec.get("file_name"))
+            mode = _viewer_mode(rec.get("mime_type"), rec.get("file_name"), doc_type=rec.get("doc_type"), has_text=bool(rec.get("has_text")))
 
         file_url   = f"/ediscovery/documents/{rec['id']}/file"
         text_url   = f"/ediscovery/documents/{rec['id']}/text"

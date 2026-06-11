@@ -1,0 +1,9 @@
+{% extends "shell.html" %}
+{% block title %}Reconciliation — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<span class="breadcrumb-current">Reconciliation</span>
+{% endblock %}
+{% block content %}
+<div id="recon-home-root"></div>
+<script type="module" src="/static/js/recon-home.js"></script>
+{% endblock %}

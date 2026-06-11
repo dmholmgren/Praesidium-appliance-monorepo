@@ -1,0 +1,223 @@
+{% extends "billing/layout.html" %}
+{% block title %}{{ brand.platform_name if brand else 'Praesidium' }} — {{ contact.full_name }}{% endblock %}
+{% block page_title %}{{ contact.full_name }}{% endblock %}
+
+{% block billing_content %}
+
+<div style="max-width:960px;">
+
+  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+    <a href="/contacts" style="font-size:12px; color:var(--muted); text-decoration:none;">
+      ← Back to contacts
+    </a>
+    <div style="display:flex; gap:8px;">
+      <button type="button"
+              hx-get="/contacts/{{ contact.id }}/assign-client"
+              hx-target="#assign-client-modal-slot"
+              hx-swap="innerHTML"
+              class="btn-primary">
+        + Assign to Client
+      </button>
+      {% if contact.contact_type != 'archived' %}
+      <form method="post" action="/contacts/{{ contact.id }}/delete"
+            onsubmit="return confirm('Archive this contact? matter_contacts links will be preserved.')"
+            style="display:inline;">
+        <button type="submit"
+                style="font-size:12px; padding:7px 14px; background:transparent;
+                       color:#991B1B; border:1px solid #FCA5A5; border-radius:6px;
+                       cursor:pointer; font-family:'DM Sans',sans-serif;">
+          Archive Contact
+        </button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ── Modal slot — populated by HTMX when Assign-to-Client clicked ────── #}
+  <div id="assign-client-modal-slot"></div>
+
+  {# ── Inline-edit details card ────────────────────────────────────────── #}
+  <div class="card" style="margin-bottom:20px;">
+    <h3 style="font-family:'Lora',serif; font-size:16px; font-weight:500;
+               color:var(--text); margin:0 0 4px 0;">Contact Details</h3>
+    <p style="font-size:11px; color:var(--muted); margin:0 0 16px 0;">
+      Click any field to edit in place
+    </p>
+
+    {# Render each editable field. We iterate editable_fields in dict order
+       (Python 3.7+ insertion-ordered): full_name, email, phone, company,
+       firm_name, contact_type, notes. full_name and notes span both cols. #}
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+      {% for fn, spec in editable_fields.items() %}
+      <div {% if fn == 'full_name' or spec.type == 'textarea' %}style="grid-column:span 2;"{% endif %}>
+        <label style="display:block; font-size:11px; color:var(--muted);
+                      text-transform:uppercase; letter-spacing:.05em; margin-bottom:4px;">
+          {%- if fn == 'firm_name' -%}Firm
+          {%- elif fn == 'contact_type' -%}Type
+          {%- elif fn == 'full_name' -%}Full Name
+          {%- else -%}{{ fn.replace('_',' ')|title }}
+          {%- endif -%}
+          {% if spec.required %} *{% endif %}
+        </label>
+        {% with field_name = fn,
+                field_spec = spec,
+                current_value = (contact[fn] if contact[fn] is not none else '') %}
+          {% include "contacts/_field_label.html" %}
+        {% endwith %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# ── Dedup warning ─────────────────────────────────────────────────────── #}
+  {% if dedup_candidates %}
+  <div class="card" style="margin-bottom:20px; border-color:#FCD34D; background:#FFFBEB;">
+    <div style="font-size:13px; font-weight:500; color:#92400E; margin-bottom:6px;">
+      ⚠ This contact appears in {{ dedup_candidates | length }} pending dedup
+      cluster{{ 's' if dedup_candidates | length != 1 else '' }}
+    </div>
+    <div style="font-size:12px; color:#92400E; margin-bottom:10px;">
+      Review and merge in the
+      <a href="/contacts/dedup-review" style="color:#92400E; text-decoration:underline;">dedup queue</a>.
+    </div>
+    <ul style="margin:0; padding-left:20px; font-size:12px; color:#92400E;">
+      {% for d in dedup_candidates %}
+      <li>
+        <span class="badge badge-yellow">{{ d.signal_type }}</span>
+        confidence {{ "%.2f"|format(d.confidence|float) }} —
+        cluster contains {{ d.contact_ids | length }} record{{ 's' if d.contact_ids | length != 1 else '' }}
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {# ── Linked matters ───────────────────────────────────────────────────── #}
+  <div class="card" style="margin-bottom:20px;">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+      <h3 style="font-family:'Lora',serif; font-size:16px; font-weight:500;
+                 color:var(--text); margin:0;">
+        Linked Matters
+        <span class="badge badge-blue" style="margin-left:8px;">{{ linked_matters | length }}</span>
+      </h3>
+    </div>
+
+    <div id="linked-matters-container">
+      {% include "contacts/_linked_matters_table.html" %}
+    </div>
+
+    <div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--border);">
+      <div style="font-size:11px; color:var(--muted); text-transform:uppercase;
+                  letter-spacing:.05em; margin-bottom:8px;">
+        Add Existing Matter Link
+      </div>
+      <form hx-post="/contacts/{{ contact.id }}/link-matter"
+            hx-target="#linked-matters-container"
+            hx-swap="innerHTML"
+            style="display:grid; grid-template-columns:5fr 3fr 2fr 2fr; gap:8px; align-items:end;">
+        <div>
+          <label style="display:block; font-size:10px; color:var(--muted);
+                        margin-bottom:3px;">Matter</label>
+          <input type="text" list="matter-options" name="matter_id"
+                 placeholder="Type matter number or name…"
+                 hx-get="/contacts/api/matter-search"
+                 hx-trigger="input changed delay:300ms"
+                 hx-target="#matter-options"
+                 hx-swap="innerHTML"
+                 style="width:100%; padding:6px 8px; font-size:12px;
+                        border:1px solid var(--border); border-radius:5px;
+                        font-family:'DM Sans',sans-serif;">
+          <datalist id="matter-options"></datalist>
+        </div>
+        <div>
+          <label style="display:block; font-size:10px; color:var(--muted);
+                        margin-bottom:3px;">Role</label>
+          <select name="role"
+                  style="width:100%; padding:6px 8px; font-size:12px;
+                         border:1px solid var(--border); border-radius:5px;
+                         font-family:'DM Sans',sans-serif;">
+            {% for role in roles %}
+            <option value="{{ role }}">{{ role.replace('_', ' ') }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <label style="display:flex; align-items:center; gap:5px; font-size:11px;
+                      color:var(--text); padding-bottom:7px;">
+          <input type="checkbox" name="is_primary" value="Y"> Primary
+        </label>
+        <button type="submit" class="btn-primary" style="font-size:11px; padding:6px 10px;">
+          + Add link
+        </button>
+      </form>
+    </div>
+  </div>
+
+  {# ── Pending matter proposals ────────────────────────────────────────── #}
+  {% if pending_proposals %}
+  <div class="card" style="margin-bottom:20px;">
+    <h3 style="font-family:'Lora',serif; font-size:16px; font-weight:500;
+               color:var(--text); margin:0 0 14px 0;">
+      Pending Matter Proposals
+      <span class="badge badge-yellow" style="margin-left:8px;">{{ pending_proposals | length }}</span>
+    </h3>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Matter</th>
+          <th>Proposed Role</th>
+          <th>Signal</th>
+          <th>Confidence</th>
+          <th style="text-align:right;">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in pending_proposals %}
+        <tr>
+          <td>
+            <div style="font-weight:500;">{{ p.matter_number }} {{ p.matter_name }}</div>
+            {% if p.client_name %}
+            <div style="font-size:11px; color:var(--muted);">{{ p.client_name }}</div>
+            {% endif %}
+          </td>
+          <td>{{ p.proposed_role or '—' }}</td>
+          <td><span class="badge badge-gray">{{ p.signal_type }}</span></td>
+          <td style="font-family:ui-monospace,monospace;">
+            {{ "%.2f"|format(p.confidence|float) }}
+            {% if p.signal_count|int > 1 %}
+            <span style="color:var(--muted); font-size:11px;">×{{ p.signal_count }}</span>
+            {% endif %}
+          </td>
+          <td style="text-align:right;">
+            <form method="post" action="/contacts/proposals-review/{{ p.proposal_id }}/approve"
+                  style="display:inline;">
+              <button type="submit" style="font-size:12px; color:#166534;
+                                            background:none; border:none; cursor:pointer;
+                                            padding:0; font-family:'DM Sans',sans-serif;">
+                Approve
+              </button>
+            </form>
+            <span style="color:var(--muted); margin:0 6px;">·</span>
+            <form method="post" action="/contacts/proposals-review/{{ p.proposal_id }}/reject"
+                  style="display:inline;">
+              <button type="submit" style="font-size:12px; color:#991B1B;
+                                            background:none; border:none; cursor:pointer;
+                                            padding:0; font-family:'DM Sans',sans-serif;">
+                Reject
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <div style="font-size:11px; color:var(--muted); margin-top:8px;">
+    Contact #{{ contact.id }} · created {{ contact.created_at.strftime('%b %d %Y') }}
+    {% if contact.updated_at %} · updated {{ contact.updated_at.strftime('%b %d %Y %H:%M') }}{% endif %}
+  </div>
+
+</div>
+
+{% endblock %}

@@ -1,0 +1,15 @@
+{% extends "shell.html" %}
+{% block title %}Workspaces — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/dashboard" style="color:var(--muted);text-decoration:none;">Home</a>
+<span style="margin:0 4px;">›</span>
+<span class="breadcrumb-current">Workspaces</span>
+{% endblock %}
+{% block content %}
+<div id="workspace-list-root" style="min-height:400px;">
+  <div style="padding:48px; text-align:center; color:var(--muted); font-size:13px;">
+    Loading Workspaces…
+  </div>
+</div>
+<script type="module" src="/static/js/meeting-workspace.js?v=1"></script>
+{% endblock %}

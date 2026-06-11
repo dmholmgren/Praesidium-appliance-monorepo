@@ -1,0 +1,15 @@
+{#
+  Sub-navigation for Users tab.
+  Usage: {% include "tenant_admin/_users_subnav.html" %}
+#}
+{% set p = request.url.path %}
+<div style="display:flex; gap:0; margin-bottom:16px; border-bottom:1px solid var(--border); padding-bottom:0;">
+  <a href="/tenant-admin/users"
+     style="padding:6px 16px; font-size:12px; text-decoration:none; border-bottom:2px solid {% if p == '/tenant-admin/users' or p.startswith('/tenant-admin/users/') %}var(--primary){% else %}transparent{% endif %}; margin-bottom:-1px; color:{% if p == '/tenant-admin/users' or p.startswith('/tenant-admin/users/') %}var(--primary){% else %}var(--muted){% endif %}; font-weight:{% if p == '/tenant-admin/users' or p.startswith('/tenant-admin/users/') %}600{% else %}400{% endif %};">
+    Users
+  </a>
+  <a href="/tenant-admin/permissions"
+     style="padding:6px 16px; font-size:12px; text-decoration:none; border-bottom:2px solid {% if p.startswith('/tenant-admin/permissions') %}var(--primary){% else %}transparent{% endif %}; margin-bottom:-1px; color:{% if p.startswith('/tenant-admin/permissions') %}var(--primary){% else %}var(--muted){% endif %}; font-weight:{% if p.startswith('/tenant-admin/permissions') %}600{% else %}400{% endif %};">
+    Permissions
+  </a>
+</div>

@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}Sync Report — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Sync Report{% endblock %}
+
+{% block content %}
+<div style="padding:0;">
+  {% set ta_page_breadcrumb = '<a href="/tenant-admin/file-import">File Import</a><span class="sep">/</span>Sync Report' %}
+  {% include "tenant_admin/_topnav.html" %}
+  {% include "tenant_admin/_fileimport_subnav.html" %}
+
+  {# ── Summary ────────────────────────────────────────────────────────── #}
+  <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:16px;">
+    <div class="card" style="padding:10px 16px; flex:1; min-width:110px; text-align:center;">
+      <div style="font-size:22px; font-weight:700; color:var(--text);">{{ summary.total_folders }}</div>
+      <div style="font-size:11px; color:var(--muted);">Legacy Folders</div>
+    </div>
+    <div class="card" style="padding:10px 16px; flex:1; min-width:110px; text-align:center;">
+      <div style="font-size:22px; font-weight:700; color:#166534;">{{ summary.synced }}</div>
+      <div style="font-size:11px; color:var(--muted);">Synced</div>
+    </div>
+    <div class="card" style="padding:10px 16px; flex:1; min-width:110px; text-align:center;">
+      <div style="font-size:22px; font-weight:700; color:#B45309;">{{ summary.partial }}</div>
+      <div style="font-size:11px; color:var(--muted);">Partial</div>
+    </div>
+    <div class="card" style="padding:10px 16px; flex:1; min-width:110px; text-align:center;">
+      <div style="font-size:22px; font-weight:700; color:#991B1B;">{{ summary.unsynced }}</div>
+      <div style="font-size:11px; color:var(--muted);">Not Synced</div>
+    </div>
+    <div class="card" style="padding:10px 16px; flex:1; min-width:110px; text-align:center;">
+      <div style="font-size:22px; font-weight:700; color:#6B7280;">{{ summary.unmatched }}</div>
+      <div style="font-size:11px; color:var(--muted);">Unmatched</div>
+    </div>
+  </div>
+
+  {% if recon %}
+  <div class="card" style="padding:8px 16px; margin-bottom:14px; display:flex; gap:16px; align-items:center; font-size:12px;">
+    <span style="font-weight:600; color:var(--text);">Last Reconciliation</span>
+    <span style="color:var(--muted);">{{ recon.created_at.strftime('%Y-%m-%d %H:%M') if recon.created_at else '—' }}</span>
+    <span>Orphans: <strong style="color:#B45309;">{{ recon.orphans }}</strong></span>
+    <span>Ghosts: <strong style="color:#991B1B;">{{ recon.ghosts }}</strong></span>
+    <span>Mismatches: <strong style="color:#B45309;">{{ recon.mismatches }}</strong></span>
+  </div>
+  {% endif %}
+
+  {# ── Filters ────────────────────────────────────────────────────────── #}
+  <div style="display:flex; align-items:center; gap:6px; margin-bottom:14px;">
+    <span style="font-size:11px; color:var(--muted); margin-right:4px;">Show:</span>
+    {% set filters = [('all','All'),('synced','Synced'),('partial','Partial'),('unsynced','Not Synced'),('unmatched','Unmatched')] %}
+    {% for slug, label in filters %}
+    <a href="/tenant-admin/folder-migration?filter={{ slug }}"
+       style="padding:3px 10px; font-size:11px; font-weight:500; border-radius:4px; text-decoration:none;
+              {% if current_filter == slug %}background:var(--primary); color:#fff;{% else %}background:#F1F5F9; color:var(--text);{% endif %}">{{ label }}</a>
+    {% endfor %}
+    <div style="flex:1;"></div>
+    <input type="text" id="folder-search" placeholder="Search folders..." oninput="filterRows(this.value)"
+           style="padding:4px 10px; font-size:11px; border:1px solid var(--border); border-radius:4px; width:200px;">
+  </div>
+
+  {# ── Table ──────────────────────────────────────────────────────────── #}
+  <div class="card" style="padding:0; overflow-x:auto;">
+    <table style="width:100%; border-collapse:collapse; min-width:900px;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border); background:#FAFBFC;">
+          <th style="padding:6px 8px; font-size:10px; font-weight:600; color:var(--muted); text-align:left; text-transform:uppercase; letter-spacing:.04em;">Legacy Folder</th>
+          <th style="padding:6px 8px; font-size:10px; font-weight:600; color:var(--muted); text-align:left; text-transform:uppercase; letter-spacing:.04em;">Mapped Matter</th>
+          <th style="padding:6px 8px; font-size:10px; font-weight:600; color:var(--muted); text-align:center; text-transform:uppercase; letter-spacing:.04em;">Legacy Docs</th>
+          <th style="padding:6px 8px; font-size:10px; font-weight:600; color:var(--muted); text-align:center; text-transform:uppercase; letter-spacing:.04em;">Praesidium Docs</th>
+          <th style="padding:6px 8px; font-size:10px; font-weight:600; color:var(--muted); text-align:center; text-transform:uppercase; letter-spacing:.04em;">Status</th>
+          <th style="padding:6px 8px; font-size:10px; font-weight:600; color:var(--muted); text-align:left; text-transform:uppercase; letter-spacing:.04em; width:260px;">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="folder-rows"
+             hx-get="/tenant-admin/folder-migration/batch?tenant_id={{ tenant_id }}&filter={{ current_filter }}&offset=0&limit={{ page_size }}"
+             hx-trigger="load" hx-swap="innerHTML">
+        <tr><td colspan="6" style="padding:24px; text-align:center; color:var(--muted); font-size:12px;">Loading folders...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ── Assign Modal (for + New) ─────────────────────────────────────────── #}
+<div id="assign-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.35); z-index:100; justify-content:center; align-items:center;">
+  <div style="background:#fff; border-radius:8px; padding:24px; width:480px; max-width:90vw; box-shadow:0 8px 30px rgba(0,0,0,0.18);">
+    <div style="font-size:14px; font-weight:600; margin-bottom:4px;">Create & Assign Matter</div>
+    <div id="assign-folder-name" style="font-size:12px; color:var(--muted); margin-bottom:14px;"></div>
+    <input type="hidden" id="assign-legacy-path">
+    <div style="display:flex; gap:8px; margin-bottom:10px;">
+      <div style="flex:1;"><div style="font-size:11px; font-weight:500; color:var(--muted); margin-bottom:3px; text-transform:uppercase;">Client</div>
+        <input type="text" id="new-client" placeholder="e.g. Smith" style="width:100%; border:1px solid var(--border); border-radius:5px; padding:6px 10px; font-size:12px; box-sizing:border-box;"></div>
+      <div style="flex:1;"><div style="font-size:11px; font-weight:500; color:var(--muted); margin-bottom:3px; text-transform:uppercase;">Matter</div>
+        <input type="text" id="new-matter" placeholder="e.g. v. Jones" style="width:100%; border:1px solid var(--border); border-radius:5px; padding:6px 10px; font-size:12px; box-sizing:border-box;"></div>
+    </div>
+    <div style="margin-bottom:14px;">
+      <div style="font-size:11px; font-weight:500; color:var(--muted); margin-bottom:3px; text-transform:uppercase;">Sync Mode</div>
+      <div style="display:flex; gap:10px;">
+        <label style="font-size:12px;"><input type="radio" name="modal-sync-mode" value="smart" checked> Smart</label>
+        <label style="font-size:12px;"><input type="radio" name="modal-sync-mode" value="raw"> Raw</label>
+        <label style="font-size:12px;"><input type="radio" name="modal-sync-mode" value="none"> Assign only</label>
+      </div>
+    </div>
+    <div style="display:flex; gap:8px; justify-content:flex-end;">
+      <button onclick="closeModal()" class="btn-secondary" style="font-size:12px;">Cancel</button>
+      <button onclick="doAssign()" id="assign-btn" class="btn-primary" style="font-size:12px;">Create & Assign</button>
+    </div>
+  </div>
+</div>
+
+<div id="sync-toast" style="display:none; position:fixed; bottom:20px; right:20px; z-index:200; padding:12px 20px; border-radius:8px; font-size:12px; font-weight:500; box-shadow:0 4px 16px rgba(0,0,0,0.15); transition:opacity 0.3s;"></div>
+
+<script>
+function filterRows(q){q=q.toLowerCase();document.querySelectorAll('.folder-row').forEach(function(r){r.style.display=(r.dataset.name||'').indexOf(q)>=0?'':'none';});}
+function toast(m,t){var e=document.getElementById('sync-toast');e.textContent=m;e.style.display='block';e.style.opacity='1';
+  if(t==='ok'){e.style.background='#D1FAE5';e.style.color='#065F46';}else if(t==='err'){e.style.background='#FEE2E2';e.style.color='#991B1B';}
+  else{e.style.background='#DBEAFE';e.style.color='#1E40AF';}
+  setTimeout(function(){e.style.opacity='0';setTimeout(function(){e.style.display='none';},300);},4000);}
+
+function syncFolder(mid,matterId,mode){var b=event.target;var o=b.textContent;b.disabled=true;b.textContent='...';toast('Syncing...','info');
+  fetch('/tenant-admin/folder-migration/sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({matter_id:matterId,match_id:mid,sync_mode:mode})})
+  .then(function(r){return r.json()}).then(function(d){if(d.status==='ok'){toast(d.message,'ok');setTimeout(function(){location.reload();},1500);}else{toast(d.detail||'Failed','err');b.disabled=false;b.textContent=o;}})
+  .catch(function(e){toast('Error: '+e,'err');b.disabled=false;b.textContent=o;});}
+
+function acceptAndSync(mid,matterId,mode){var b=event.target;b.disabled=true;b.textContent='...';
+  fetch('/tenant-admin/folder-migration/accept-and-sync',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({matter_id:matterId,match_id:mid,sync_mode:mode})})
+  .then(function(r){return r.json()}).then(function(d){if(d.status==='ok'){toast(d.message,'ok');setTimeout(function(){location.reload();},1500);}else{toast(d.detail||'Failed','err');b.disabled=false;b.textContent='✓ Accept';}})
+  .catch(function(e){toast('Error: '+e,'err');b.disabled=false;b.textContent='✓ Accept';});}
+
+// ── Inline typeahead for unmatched ───────────────────────────────────
+var _taT={};
+function _taSearch(input,rid){var q=input.value.trim();var d=document.getElementById('td-'+rid);clearTimeout(_taT[rid]);
+  if(!q||q.length<2){d.style.display='none';return;}
+  _taT[rid]=setTimeout(function(){fetch('/tenant-admin/folder-migration/search-matters?q='+encodeURIComponent(q))
+    .then(function(r){return r.json()}).then(function(data){var ms=data.matters||[];
+      if(!ms.length){d.innerHTML='<div style="padding:6px 10px;color:var(--muted);">No results</div>';}
+      else{var h='';ms.forEach(function(m){h+='<div style="padding:5px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9;" onmousedown="_taPick(\''+rid+'\',\''+m.id+'\',\''+((m.name||'').replace(/'/g,"\\'"))+'\')" onmouseover="this.style.background=\'#f0f4ff\'" onmouseout="this.style.background=\'\'"><div style="font-weight:500;">'+(m.name||'')+'</div><div style="font-size:10px;color:var(--muted);">'+(m.client||'')+(m.number?' · '+m.number:'')+'</div></div>';});d.innerHTML=h;}
+      d.style.display='block';});},300);}
+
+function _taPick(rid,id,nm){document.getElementById('ta-'+rid).value=nm;document.getElementById('tv-'+rid).value=id;document.getElementById('td-'+rid).style.display='none';}
+
+function _inlineAssign(rid,legacyPath){
+  var matterId=document.getElementById('tv-'+rid).value;
+  if(!matterId){alert('Search and select a matter first.');return;}
+  var syncMode=document.getElementById('sm-'+rid).value;
+  var btn=event.target;btn.disabled=true;var o=btn.textContent;btn.textContent='...';
+  fetch('/tenant-admin/folder-migration/assign',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({matter_id:matterId,legacy_path:legacyPath,sync_mode:syncMode})})
+  .then(function(r){return r.json()}).then(function(d){
+    if(d.status==='ok'){toast(d.message||'Assigned!','ok');setTimeout(function(){location.reload();},1200);}
+    else{toast(d.detail||'Failed','err');btn.disabled=false;btn.textContent=o;}})
+  .catch(function(e){toast('Error: '+e,'err');btn.disabled=false;btn.textContent=o;});}
+
+// ── Modal assign (+ New) ─────────────────────────────────────────────
+function openAssignModal(fn,lp){document.getElementById('assign-folder-name').textContent=fn;document.getElementById('assign-legacy-path').value=lp;document.getElementById('new-client').value=fn.split(',')[0]||fn;document.getElementById('new-matter').value='';document.getElementById('assign-btn').textContent='Create & Assign';document.getElementById('assign-modal').style.display='flex';document.getElementById('new-client').focus();}
+function closeModal(){document.getElementById('assign-modal').style.display='none';}
+function doAssign(){var lp=document.getElementById('assign-legacy-path').value;var sm=document.querySelector('input[name="modal-sync-mode"]:checked').value;var b=document.getElementById('assign-btn');b.disabled=true;b.textContent='Working...';
+  var body={legacy_path:lp,sync_mode:sm,new_client:document.getElementById('new-client').value.trim(),new_matter:document.getElementById('new-matter').value.trim()};
+  if(!body.new_client||!body.new_matter){alert('Enter client and matter name.');b.disabled=false;b.textContent='Create & Assign';return;}
+  fetch('/tenant-admin/folder-migration/assign',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+  .then(function(r){return r.json()}).then(function(d){if(d.status==='ok'){toast(d.message||'Done!','ok');closeModal();setTimeout(function(){location.reload();},1200);}else{toast(d.detail||'Failed','err');b.disabled=false;b.textContent='Create & Assign';}})
+  .catch(function(e){toast('Error: '+e,'err');b.disabled=false;b.textContent='Create & Assign';});}
+
+document.addEventListener('keydown',function(e){if(e.key==='Escape')closeModal();});
+document.getElementById('assign-modal').addEventListener('click',function(e){if(e.target===this)closeModal();});
+</script>
+{% endblock %}

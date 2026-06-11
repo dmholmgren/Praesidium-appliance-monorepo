@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Integrity — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block page_title %}Integrity{% endblock %}
+
+{% block content %}
+<div style="padding:0;">
+  {% set ta_page_breadcrumb = '<a href="/tenant-admin/file-import">File Import</a><span class="sep">/</span>Integrity' %}
+  {% include "tenant_admin/_topnav.html" %}
+  {% include "tenant_admin/_fileimport_subnav.html" %}
+
+  {# ── Summary ────────────────────────────────────────────────────────── #}
+  {% if recon %}
+  <div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:16px;">
+    <div class="card" style="padding:10px 16px; flex:1; min-width:110px; text-align:center;">
+      <div style="font-size:22px; font-weight:700; color:#166534;">{{ recon.verified }}</div>
+      <div style="font-size:11px; color:var(--muted);">Verified</div>
+    </div>
+    <div class="card" style="padding:10px 16px; flex:1; min-width:110px; text-align:center;">
+      <div style="font-size:22px; font-weight:700; color:#B45309;">{{ recon.orphans }}</div>
+      <div style="font-size:11px; color:var(--muted);">Orphans (disk only)</div>
+    </div>
+    <div class="card" style="padding:10px 16px; flex:1; min-width:110px; text-align:center;">
+      <div style="font-size:22px; font-weight:700; color:#991B1B;">{{ recon.ghosts }}</div>
+      <div style="font-size:11px; color:var(--muted);">Ghosts (DB only)</div>
+    </div>
+    <div class="card" style="padding:10px 16px; flex:1; min-width:110px; text-align:center;">
+      <div style="font-size:22px; font-weight:700; color:#6B21A8;">{{ recon.mismatches }}</div>
+      <div style="font-size:11px; color:var(--muted);">Size Mismatches</div>
+    </div>
+    <div class="card" style="padding:10px 16px; flex:1; min-width:110px; text-align:center;">
+      <div style="font-size:11px; font-weight:500; color:var(--muted);">Last Run</div>
+      <div style="font-size:13px; font-weight:600; color:var(--text); margin-top:2px;">{{ recon.created_at }}</div>
+      <div style="font-size:10px; color:var(--muted); margin-top:1px;">{{ recon.run_id[:8] }}...</div>
+    </div>
+  </div>
+  {% else %}
+  <div class="card" style="padding:24px; text-align:center; margin-bottom:16px;">
+    <div style="font-size:14px; font-weight:500; color:var(--text); margin-bottom:8px;">No Reconciliation Run Yet</div>
+    <p style="font-size:12px; color:var(--muted); margin:0 0 14px;">Run the reconciliation script to compare Praesidium disk contents against the document database.</p>
+    <button onclick="runRecon()" id="run-recon-btn" class="btn-primary" style="font-size:12px;">Run Reconciliation</button>
+    <div id="recon-status" style="font-size:11px; color:var(--muted); margin-top:8px;"></div>
+  </div>
+  {% endif %}
+
+  {# ── Run button (when recon exists) ─────────────────────────────────── #}
+  {% if recon %}
+  <div style="display:flex; align-items:center; gap:8px; margin-bottom:14px;">
+    <button onclick="runRecon()" id="run-recon-btn" class="btn-primary" style="font-size:12px;">Re-run Reconciliation</button>
+    <div id="recon-status" style="font-size:11px; color:var(--muted);"></div>
+    <div style="flex:1;"></div>
+  </div>
+  {% endif %}
+
+  {# ── Filters ────────────────────────────────────────────────────────── #}
+  {% if recon and recon.total_issues > 0 %}
+  <div style="display:flex; align-items:center; gap:6px; margin-bottom:14px;">
+    <span style="font-size:11px; color:var(--muted); margin-right:4px;">Show:</span>
+    {% set filters = [('all','All Issues'),('orphan','Orphans'),('ghost','Ghosts'),('size_mismatch','Mismatches')] %}
+    {% for slug, label in filters %}
+    <a href="/tenant-admin/integrity?filter={{ slug }}"
+       style="padding:3px 10px; font-size:11px; font-weight:500; border-radius:4px; text-decoration:none;
+              {% if current_filter == slug %}background:var(--primary); color:#fff;{% else %}background:#F1F5F9; color:var(--text);{% endif %}">{{ label }}</a>
+    {% endfor %}
+    <div style="flex:1;"></div>
+    <input type="text" id="issue-search" placeholder="Search paths..." oninput="filterIssues(this.value)"
+           style="padding:4px 10px; font-size:11px; border:1px solid var(--border); border-radius:4px; width:240px;">
+  </div>
+
+  {# ── Issues Table ───────────────────────────────────────────────────── #}
+  <div class="card" style="padding:0; overflow-x:auto;">
+    <table style="width:100%; border-collapse:collapse; min-width:800px;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border); background:#FAFBFC;">
+          <th style="padding:6px 8px; font-size:10px; font-weight:600; color:var(--muted); text-align:left; text-transform:uppercase; letter-spacing:.04em;">Type</th>
+          <th style="padding:6px 8px; font-size:10px; font-weight:600; color:var(--muted); text-align:left; text-transform:uppercase; letter-spacing:.04em;">File Path</th>
+          <th style="padding:6px 8px; font-size:10px; font-weight:600; color:var(--muted); text-align:left; text-transform:uppercase; letter-spacing:.04em;">Folder</th>
+          <th style="padding:6px 8px; font-size:10px; font-weight:600; color:var(--muted); text-align:center; text-transform:uppercase; letter-spacing:.04em;">Size</th>
+          <th style="padding:6px 8px; font-size:10px; font-weight:600; color:var(--muted); text-align:left; text-transform:uppercase; letter-spacing:.04em; width:120px;">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="issue-rows"
+             hx-get="/tenant-admin/integrity/batch?filter={{ current_filter }}&offset=0&limit=50"
+             hx-trigger="load" hx-swap="innerHTML">
+        <tr><td colspan="5" style="padding:24px; text-align:center; color:var(--muted); font-size:12px;">Loading issues...</td></tr>
+      </tbody>
+    </table>
+  </div>
+  {% elif recon %}
+  <div class="card" style="padding:24px; text-align:center;">
+    <div style="font-size:32px; margin-bottom:8px;">✅</div>
+    <div style="font-size:14px; font-weight:500; color:#166534;">All Clear</div>
+    <p style="font-size:12px; color:var(--muted); margin-top:4px;">All {{ recon.verified }} documents verified. No orphans, ghosts, or mismatches detected.</p>
+  </div>
+  {% endif %}
+</div>
+
+<div id="recon-toast" style="display:none; position:fixed; bottom:20px; right:20px; z-index:200; padding:12px 20px; border-radius:8px; font-size:12px; font-weight:500; box-shadow:0 4px 16px rgba(0,0,0,0.15); transition:opacity 0.3s;"></div>
+
+<script>
+function filterIssues(q){q=q.toLowerCase();document.querySelectorAll('.issue-row').forEach(function(r){r.style.display=(r.dataset.path||'').indexOf(q)>=0?'':'none';});}
+
+function toast(m,t){var e=document.getElementById('recon-toast');e.textContent=m;e.style.display='block';e.style.opacity='1';
+  if(t==='ok'){e.style.background='#D1FAE5';e.style.color='#065F46';}else if(t==='err'){e.style.background='#FEE2E2';e.style.color='#991B1B';}
+  else{e.style.background='#DBEAFE';e.style.color='#1E40AF';}
+  setTimeout(function(){e.style.opacity='0';setTimeout(function(){e.style.display='none';},300);},4000);}
+
+function runRecon(){
+  var btn=document.getElementById('run-recon-btn');var st=document.getElementById('recon-status');
+  btn.disabled=true;btn.textContent='Running...';st.textContent='Scanning /mnt/praesidium — this takes ~30 seconds...';
+  fetch('/tenant-admin/integrity/run',{method:'POST'})
+  .then(function(r){return r.json()}).then(function(d){
+    if(d.status==='ok'){st.textContent=d.message||'Done!';toast(d.message||'Reconciliation complete','ok');setTimeout(function(){location.reload();},1500);}
+    else{st.textContent='Failed: '+(d.detail||'');toast('Failed','err');btn.disabled=false;btn.textContent='Run Reconciliation';}
+  }).catch(function(e){st.textContent='Error: '+e;btn.disabled=false;btn.textContent='Run Reconciliation';});}
+
+function registerOrphan(issueId){var btn=event.target;btn.disabled=true;btn.textContent='...';
+  fetch('/tenant-admin/integrity/register',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({issue_id:issueId})})
+  .then(function(r){return r.json()}).then(function(d){
+    if(d.status==='ok'){toast('Registered','ok');btn.closest('tr').style.background='#F0FDF4';btn.textContent='✓';}
+    else{toast(d.detail||'Failed','err');btn.disabled=false;btn.textContent='Register';}
+  }).catch(function(e){toast('Error','err');btn.disabled=false;btn.textContent='Register';});}
+
+function removeGhost(issueId){if(!confirm('Remove this DB record? The file does not exist on disk.'))return;
+  var btn=event.target;btn.disabled=true;btn.textContent='...';
+  fetch('/tenant-admin/integrity/remove-ghost',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({issue_id:issueId})})
+  .then(function(r){return r.json()}).then(function(d){
+    if(d.status==='ok'){toast('Removed','ok');btn.closest('tr').style.background='#FEF2F2';btn.closest('tr').style.opacity='0.5';btn.textContent='✓';}
+    else{toast(d.detail||'Failed','err');btn.disabled=false;btn.textContent='Remove';}
+  }).catch(function(e){toast('Error','err');btn.disabled=false;btn.textContent='Remove';});}
+</script>
+{% endblock %}

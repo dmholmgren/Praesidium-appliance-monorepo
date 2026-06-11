@@ -538,6 +538,9 @@ def run_collection(tenant_id, collection_id, user_id=None,
     The coordinating worker seeds, enqueues sibling drains over RQ, drains
     spine itself, then monitors the ledger to completion."""
     import subprocess
+    spine_workers = int(os.environ.get("SPINE_WORKERS", spine_workers))
+    ocr_workers = int(os.environ.get("OCR_WORKERS", ocr_workers))
+    embed_workers = int(os.environ.get("EMBED_WORKERS", embed_workers))
     from modules.ediscovery.jobs.pipeline_orchestrator import (
         _db, _log, _status, _storage_path, _extract_archives, PY, APP)
 
@@ -726,7 +729,7 @@ if __name__ == "__main__":
 
 
 def run_collection_full(tenant_id, collection_id, user_id=None,
-                        spine_workers=6, ocr_workers=2, embed_workers=1) -> dict:
+                        spine_workers=12, ocr_workers=4, embed_workers=3) -> dict:
     """GUI/API entrypoint: legacy intake first (source copy, archive/PST
     expansion, hashing, dedupe, ediscovery_documents rows), then the v2
     ledger DAG over the resulting substrate.

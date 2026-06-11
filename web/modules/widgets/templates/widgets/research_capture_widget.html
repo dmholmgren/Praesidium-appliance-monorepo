@@ -1,0 +1,518 @@
+<!-- Research Capture Widget v2 — right-panel companion -->
+<!-- Added: AI Capture popup, Open Browser, editable site links -->
+<div id="rc-root" style="height:100%;display:flex;flex-direction:column;overflow:hidden;font-family:var(--font-sans,'Inter',system-ui,sans-serif);color:var(--text,#0F172A);position:relative;">
+
+  <!-- Context header -->
+  <div id="rc-context" style="padding:10px 14px;border-bottom:1px solid var(--border,#E2E8F0);background:var(--primary-light,#EFF6FF);flex-shrink:0;">
+    <div style="font-size:10px;font-weight:600;color:var(--primary,#0D1F3C);text-transform:uppercase;letter-spacing:0.06em;">Research Capture</div>
+    <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
+      <select id="rc-type" onchange="window._rc.setType(this.value)" style="padding:3px 6px;border-radius:var(--radius-sm,4px);border:1px solid var(--border,#E2E8F0);font-size:11px;font-family:inherit;color:var(--text,#0F172A);background:var(--surface,#FFF);">
+        <option value="property">Property</option>
+        <option value="witness">Witness</option>
+        <option value="party">Party / Entity</option>
+        <option value="case_law">Case Law</option>
+      </select>
+      <input id="rc-name" type="text" placeholder="Record name..." value="" style="flex:1;padding:3px 6px;border-radius:var(--radius-sm,4px);border:1px solid var(--border,#E2E8F0);font-size:11px;font-family:inherit;color:var(--text,#0F172A);background:var(--surface,#FFF);min-width:0;outline:none;" onfocus="this.style.borderColor='var(--primary,#0D1F3C)';this.style.boxShadow='0 0 0 2px var(--border-focus,rgba(13,31,60,0.12))'" onblur="this.style.borderColor='var(--border,#E2E8F0)';this.style.boxShadow='none'" />
+    </div>
+  </div>
+
+  <!-- Tab strip -->
+  <div id="rc-tabs" style="display:flex;border-bottom:1px solid var(--border,#E2E8F0);flex-shrink:0;"></div>
+
+  <!-- Content area -->
+  <div id="rc-content" style="flex:1;overflow-y:auto;padding:10px 14px;"></div>
+
+  <!-- Toast -->
+  <div id="rc-toast" style="display:none;position:absolute;bottom:10px;left:10px;right:10px;padding:7px 12px;border-radius:var(--radius-md,6px);background:var(--primary,#0D1F3C);color:var(--text-inverse,#FFF);font-size:11px;font-weight:500;text-align:center;box-shadow:var(--shadow-md);z-index:20;transition:opacity 0.15s;"></div>
+</div>
+
+<style>
+  #rc-root * { box-sizing:border-box; }
+  .rc-btn { cursor:pointer;font-family:inherit;transition:all 100ms;border:none;background:none; }
+  .rc-btn:hover { opacity:0.85; }
+  .rc-site-btn:hover { background:var(--bg-muted,#F1F5F9)!important; }
+  .rc-tab { flex:1;padding:7px 0;font-size:10px;font-weight:400;color:var(--muted,#94A3B8);background:none;border:none;border-bottom:2px solid transparent;letter-spacing:0.04em;text-transform:uppercase;cursor:pointer;font-family:inherit;transition:all 100ms; }
+  .rc-tab.active { font-weight:600;color:var(--primary,#0D1F3C);border-bottom-color:var(--primary,#0D1F3C); }
+  .rc-textarea { width:100%;padding:8px;border-radius:var(--radius-md,6px);font-size:11px;font-family:'JetBrains Mono',monospace;color:var(--text,#0F172A);resize:vertical;line-height:1.5;outline:none;transition:border-color 0.15s; }
+  .rc-textarea:focus { border-color:var(--primary,#0D1F3C)!important;box-shadow:0 0 0 3px var(--border-focus,rgba(13,31,60,0.12)); }
+  .rc-textarea::placeholder { color:var(--muted,#94A3B8); }
+  .rc-field { margin-bottom:6px;transition:opacity 0.2s; }
+  .rc-field.inserted { opacity:0.4; }
+  .rc-label { font-size:9px;font-weight:600;color:var(--muted,#94A3B8);text-transform:uppercase;letter-spacing:0.04em;display:flex;align-items:center;justify-content:space-between;margin-bottom:2px; }
+  .rc-insert-btn { padding:1px 6px;border-radius:var(--radius-sm,4px);background:var(--success-bg,#D1FAE5);border:none;font-size:9px;font-weight:600;color:var(--success,#065F46);cursor:pointer;font-family:inherit; }
+  .rc-insert-btn:hover { opacity:0.8; }
+  .rc-input { padding:3px 6px;border-radius:var(--radius-sm,4px);border:1px solid var(--border,#E2E8F0);font-size:10px;font-family:inherit;color:var(--text,#0F172A);background:var(--surface,#FFF);outline:none; }
+  .rc-input:focus { border-color:var(--primary,#0D1F3C);box-shadow:0 0 0 2px var(--border-focus,rgba(13,31,60,0.12)); }
+  @keyframes rc-spin { to{transform:rotate(360deg)} }
+  @keyframes rc-shimmer { 0%{background-position:-200px 0} 100%{background-position:200px 0} }
+  @keyframes rc-fade { from{opacity:0;transform:translateY(3px)} to{opacity:1;transform:translateY(0)} }
+  .rc-fade { animation:rc-fade 0.2s ease-out; }
+</style>
+
+<script>
+(function(){
+  // Reset if reloading
+  if (window._rc) { delete window._rc; }
+
+  var SCHEMAS = {
+    witness: { employer:'Employer / Firm', license:'License / Credentials', education:'Education', priorTestimony:'Prior Testimony', publications:'Publications', background:'Background' },
+    property: { parcel:'Parcel #', owner:'Record Owner', legalDesc:'Legal Desc.', appraised:'Appraised Value', landValue:'Land Value', improvValue:'Improvement Value', acres:'Acreage', yearBuilt:'Year Built', zoning:'Zoning', taxStatus:'Tax Status' },
+    party: { entityType:'Entity Type', stateOfFormation:'State', registeredAgent:'Reg. Agent', officers:'Officers', status:'Standing', filingHistory:'Filing History' },
+    case_law: { citation:'Citation', court:'Court', date:'Date', shepards:"Shepard's Signal", holdingSummary:'Holding', relevance:'Relevance' }
+  };
+
+  // Default sites — will be extended by user custom sites
+  var DEFAULT_SITES = {
+    witness: [{l:'Google',i:'🔍',u:'https://google.com'},{l:'CourtListener',i:'⚖️',u:'https://courtlistener.com'},{l:'TX License',i:'📜',u:'https://license.state.tx.us'}],
+    property: [{l:'Dallas CAD',i:'🏛',u:'https://dallascad.org'},{l:'Tarrant CAD',i:'🏛',u:'https://tad.org'},{l:'Collin CAD',i:'🏛',u:'https://collincad.org'}],
+    party: [{l:'TX SOS',i:'🏢',u:'https://sos.state.tx.us'},{l:'OpenCorp',i:'🌐',u:'https://opencorporates.com'},{l:'EDGAR',i:'📊',u:'https://sec.gov/edgar'}],
+    case_law: [{l:'Lexis+',i:'📚',u:'https://plus.lexis.com'},{l:'Westlaw',i:'📚',u:'https://next.westlaw.com'},{l:'CourtListener',i:'⚖️',u:'https://courtlistener.com'}]
+  };
+
+  // Load custom sites from localStorage
+  function loadCustomSites() {
+    try { return JSON.parse(localStorage.getItem('rc_custom_sites') || '{}'); } catch(e) { return {}; }
+  }
+  function saveCustomSites(cs) {
+    try { localStorage.setItem('rc_custom_sites', JSON.stringify(cs)); } catch(e) {}
+  }
+
+  function getSites(type) {
+    var defaults = (DEFAULT_SITES[type] || []).map(function(s) { return Object.assign({}, s, {custom:false}); });
+    var custom = (loadCustomSites()[type] || []).map(function(s) { return Object.assign({}, s, {custom:true}); });
+    return defaults.concat(custom);
+  }
+
+  var state = {
+    type: 'property', name: '', tab: 'capture', pasteText: '',
+    aiStatus: 'idle', extracted: null, edited: null, inserted: {},
+    browsing: null, history: [],
+    editingSites: false, addingSite: false,
+    popupWindow: null
+  };
+
+  function esc(s) { var d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+
+  function toast(msg) {
+    var el = document.getElementById('rc-toast');
+    if (!el) return;
+    el.textContent = msg; el.style.display='block'; el.style.opacity='1';
+    clearTimeout(el._t);
+    el._t = setTimeout(function(){ el.style.opacity='0'; setTimeout(function(){ el.style.display='none'; },200); }, 2500);
+  }
+
+  // ── Popup with AI Capture ─────────────────────────────
+  function openCapturePopup(url) {
+    // Open a popup with a capture toolbar at the top
+    var w = window.open('', '_blank', 'width=1200,height=850,scrollbars=yes,toolbar=no,menubar=no');
+    if (!w) { toast('Popup blocked — allow popups for this site'); return null; }
+    state.popupWindow = w;
+
+    w.document.write('<!DOCTYPE html><html><head><title>Research Capture — ' + esc(state.name || 'Praesidium') + '</title>' +
+      '<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Inter,system-ui,sans-serif;background:#F8FAFC;height:100vh;display:flex;flex-direction:column;overflow:hidden}' +
+      '.toolbar{display:flex;align-items:center;gap:8px;padding:6px 12px;background:#0D1F3C;color:#FFF;flex-shrink:0}' +
+      '.toolbar input{flex:1;padding:5px 10px;border-radius:4px;border:1px solid #334155;background:#1E293B;color:#FFF;font-size:12px;font-family:inherit;outline:none}' +
+      '.toolbar input:focus{border-color:#C8923A}' +
+      '.toolbar button{padding:5px 12px;border-radius:4px;border:none;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit}' +
+      '.btn-go{background:#334155;color:#94A3B8}.btn-go:hover{background:#475569}' +
+      '.btn-capture{background:#C8923A;color:#FFF}.btn-capture:hover{opacity:0.9}' +
+      '.btn-close{background:transparent;color:#94A3B8;border:1px solid #334155}.btn-close:hover{background:#1E293B}' +
+      '.context{font-size:10px;color:#94A3B8;white-space:nowrap}' +
+      '.frame{flex:1;border:none;width:100%}' +
+      '.blocked{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;color:#475569;padding:40px}' +
+      '</style></head><body>' +
+      '<div class="toolbar">' +
+        '<span style="font-weight:700;font-size:12px;">P</span>' +
+        '<span class="context">→ ' + esc(state.name || 'Record') + '</span>' +
+        '<input type="text" id="cap-url" value="' + esc(url) + '" placeholder="Enter URL..." onkeydown="if(event.key===\'Enter\')document.getElementById(\'cap-go\').click()" />' +
+        '<button class="btn-go" id="cap-go" onclick="navigateTo()">Go</button>' +
+        '<button class="btn-capture" onclick="captureAI()">✦ AI Capture</button>' +
+        '<button class="btn-close" onclick="window.close()">✕</button>' +
+      '</div>' +
+      '<div id="cap-frame-wrap" style="flex:1;display:flex;flex-direction:column;overflow:hidden;">' +
+        '<iframe id="cap-frame" class="frame" src="' + esc(url) + '"></iframe>' +
+      '</div>' +
+      '<script>' +
+        'var currentUrl = "' + esc(url) + '";' +
+        'function navigateTo() {' +
+          'var u = document.getElementById("cap-url").value.trim();' +
+          'if (!u) return;' +
+          'if (!u.startsWith("http")) u = "https://" + u;' +
+          'currentUrl = u;' +
+          'document.getElementById("cap-url").value = u;' +
+          'var f = document.getElementById("cap-frame");' +
+          'f.src = u;' +
+          'f.onerror = function() { showBlocked(u); };' +
+        '}' +
+        'function showBlocked(u) {' +
+          'document.getElementById("cap-frame-wrap").innerHTML = ' +
+            '"<div class=\\"blocked\\"><div><div style=\\"font-size:24px;margin-bottom:8px;\\">🔗</div>" +' +
+            '"<div style=\\"font-size:14px;font-weight:600;margin-bottom:4px;\\">Site opened in new tab</div>" +' +
+            '"<div style=\\"font-size:12px;color:#94A3B8;margin-bottom:12px;\\">This site blocks embedding. It opened in a new tab — browse there, then come back and click AI Capture.</div>" +' +
+            '"<div style=\\"font-size:11px;color:#C8923A;font-weight:500;\\">Paste the page text here when ready</div>" +' +
+            '"<textarea id=\\"cap-paste\\" style=\\"width:100%;max-width:500px;min-height:120px;margin-top:8px;padding:8px;border:1.5px dashed #CBD5E1;border-radius:6px;font-size:11px;font-family:monospace;resize:vertical;outline:none;\\" placeholder=\\"Ctrl+A → Ctrl+C on the site, then Ctrl+V here...\\"></textarea></div></div>";' +
+          'window.open(u, "_blank");' +
+        '}' +
+        'function captureAI() {' +
+          'var text = "";' +
+          'var paste = document.getElementById("cap-paste");' +
+          'if (paste && paste.value.trim()) { text = paste.value; }' +
+          'else {' +
+            'try { var f = document.getElementById("cap-frame"); text = f.contentDocument.body.innerText || ""; } catch(e) { text = ""; }' +
+          '}' +
+          'if (!text.trim()) {' +
+            'alert("No text captured. Try pasting the page content into the text area.");' +
+            'return;' +
+          '}' +
+          'if (window.opener && window.opener._rc) {' +
+            'window.opener._rc.receiveCaptureFromPopup(text, currentUrl);' +
+            'window.close();' +
+          '} else {' +
+            'alert("Parent window lost. Copy the text and paste it in the Research Capture panel.");' +
+          '}' +
+        '}' +
+        'document.getElementById("cap-frame").addEventListener("load", function() {' +
+          'document.getElementById("cap-url").value = this.src || currentUrl;' +
+        '});' +
+        'document.getElementById("cap-frame").addEventListener("error", function() { showBlocked(currentUrl); });' +
+        'setTimeout(function() {' +
+          'try { var f = document.getElementById("cap-frame"); if (f && !f.contentDocument.body.innerText) showBlocked(currentUrl); } catch(e) { /* cross-origin, might be fine */ }' +
+        '}, 3000);' +
+      '<\/script>' +
+    '</body></html>');
+    w.document.close();
+    return w;
+  }
+
+  // ── Tab rendering ─────────────────────────────────────
+  function renderTabs() {
+    var c = document.getElementById('rc-tabs');
+    if (!c) return;
+    c.innerHTML = '';
+    [['capture','Capture'],['sites','Sites'],['history','History']].forEach(function(t) {
+      var btn = document.createElement('button');
+      btn.className = 'rc-tab' + (state.tab === t[0] ? ' active' : '');
+      btn.textContent = t[1];
+      btn.onclick = function() { state.tab = t[0]; renderTabs(); renderContent(); };
+      c.appendChild(btn);
+    });
+  }
+
+  function renderContent() {
+    var c = document.getElementById('rc-content');
+    if (!c) return;
+    c.innerHTML = '';
+    c.className = 'rc-fade';
+    if (state.tab === 'capture') renderCapture(c);
+    else if (state.tab === 'sites') renderSites(c);
+    else if (state.tab === 'history') renderHistory(c);
+  }
+
+  // ── CAPTURE TAB ───────────────────────────────────────
+  function renderCapture(c) {
+    var schema = SCHEMAS[state.type] || {};
+    var sites = getSites(state.type);
+
+    // Quick sites row + Open Browser button
+    var html = '<div style="margin-bottom:10px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">' +
+        '<span style="font-size:9px;font-weight:600;color:var(--muted,#94A3B8);text-transform:uppercase;letter-spacing:0.06em;">Quick Launch</span>' +
+        '<button class="rc-btn" onclick="window._rc.switchTab(\'sites\')" style="font-size:9px;color:var(--primary,#0D1F3C);font-weight:600;">Edit ✎</button>' +
+      '</div>' +
+      '<div style="display:flex;gap:3px;flex-wrap:wrap;">';
+
+    // Open Browser (Google with address bar)
+    html += '<button class="rc-btn rc-site-btn" onclick="window._rc.openBrowser()" style="padding:3px 8px;border-radius:var(--radius-sm,4px);border:1px solid var(--accent,#C8923A);background:var(--surface,#FFF);font-size:10px;font-weight:600;color:var(--accent,#C8923A);display:flex;align-items:center;gap:3px;">🌐 Open Browser</button>';
+
+    sites.forEach(function(s) {
+      html += '<button class="rc-btn rc-site-btn" onclick="window._rc.openSitePopup(\'' + esc(s.u).replace(/'/g,"\\&apos;") + '\',\'' + esc(s.l).replace(/'/g,"\\&apos;") + '\')" style="padding:3px 8px;border-radius:var(--radius-sm,4px);border:1px solid var(--border,#E2E8F0);background:var(--surface,#FFF);font-size:10px;font-weight:500;color:var(--text-secondary,#475569);display:flex;align-items:center;gap:3px;">' + (s.i||'🔗') + ' ' + esc(s.l) + '</button>';
+    });
+    html += '</div>';
+
+    if (state.browsing) {
+      html += '<div style="margin-top:4px;padding:3px 8px;border-radius:var(--radius-sm,4px);background:var(--success-bg,#D1FAE5);font-size:10px;color:var(--success,#065F46);font-weight:500;display:flex;align-items:center;gap:4px;">' +
+        '<span style="animation:rc-spin 2s infinite;">●</span> Popup open — ' + esc(state.browsing) +
+        '<button class="rc-btn" onclick="window._rc.clearBrowsing()" style="margin-left:auto;font-size:10px;color:var(--success,#065F46);">✕</button></div>';
+    }
+    html += '</div>';
+
+    // AI Capture button (prominent, separate from paste)
+    if (state.aiStatus === 'idle') {
+      html += '<div style="display:flex;gap:4px;margin-bottom:10px;">' +
+        '<button class="rc-btn" onclick="window._rc.openBrowserAndCapture()" style="flex:1;padding:7px 0;border-radius:var(--radius-md,6px);background:var(--accent,#C8923A);color:#FFF;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:4px;">✦ AI Capture</button>' +
+      '</div>';
+    }
+
+    if (state.aiStatus === 'idle') {
+      html += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px;">' +
+        '<span style="font-size:9px;font-weight:600;color:var(--muted,#94A3B8);text-transform:uppercase;letter-spacing:0.06em;">Or paste text</span>' +
+        (state.pasteText ? '<button class="rc-btn" onclick="window._rc.clearPaste()" style="font-size:9px;color:var(--muted,#94A3B8);">Clear</button>' : '') +
+      '</div>' +
+      '<textarea id="rc-paste" class="rc-textarea" oninput="window._rc.updatePaste(this.value)" placeholder="Ctrl+A → Ctrl+C → Ctrl+V here." style="min-height:' + (state.pasteText ? '100' : '60') + 'px;border:1.5px ' + (state.pasteText ? 'solid var(--primary,#0D1F3C)' : 'dashed var(--border,#E2E8F0)') + ';background:' + (state.pasteText ? 'var(--surface,#FFF)' : 'var(--bg-muted,#F1F5F9)') + ';">' + esc(state.pasteText) + '</textarea>';
+      if (state.pasteText.trim()) {
+        html += '<button class="rc-btn" onclick="window._rc.extract()" style="width:100%;padding:7px 0;margin-top:6px;border-radius:var(--radius-md,6px);background:var(--primary,#0D1F3C);color:var(--text-inverse,#FFF);font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:5px;">✦ Extract with AI</button>';
+      }
+    } else if (state.aiStatus === 'thinking') {
+      html += '<div style="padding:16px 0;text-align:center;" class="rc-fade">' +
+        '<div style="width:28px;height:28px;border-radius:50%;margin:0 auto 8px;border:2px solid var(--border,#E2E8F0);border-top-color:var(--primary,#0D1F3C);animation:rc-spin 0.7s linear infinite;"></div>' +
+        '<div style="font-size:12px;font-weight:600;color:var(--primary,#0D1F3C);">Extracting...</div>' +
+        '<div style="font-size:10px;color:var(--muted,#94A3B8);margin-top:2px;">AI reading text for ' + esc(state.type) + ' fields</div>' +
+        '<div style="height:8px;border-radius:3px;margin-top:10px;width:75%;background:linear-gradient(90deg,var(--bg-muted,#F1F5F9) 25%,var(--border,#E2E8F0) 50%,var(--bg-muted,#F1F5F9) 75%);background-size:400px 100%;animation:rc-shimmer 1.5s infinite;"></div>' +
+        '<div style="height:8px;border-radius:3px;margin-top:8px;width:55%;background:linear-gradient(90deg,var(--bg-muted,#F1F5F9) 25%,var(--border,#E2E8F0) 50%,var(--bg-muted,#F1F5F9) 75%);background-size:400px 100%;animation:rc-shimmer 1.5s infinite;"></div></div>';
+    } else if (state.aiStatus === 'done' && state.edited) {
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">' +
+        '<span style="font-size:9px;font-weight:700;color:var(--primary,#0D1F3C);text-transform:uppercase;letter-spacing:0.05em;">✦ AI Extraction</span>' +
+        '<button class="rc-btn" onclick="window._rc.reset()" style="font-size:9px;color:var(--muted,#94A3B8);">Reset</button></div>';
+
+      var hasUninserted = false;
+      Object.keys(schema).forEach(function(key) {
+        var val = state.edited[key] || '';
+        if (!val) return;
+        var done = state.inserted[key];
+        if (!done) hasUninserted = true;
+        html += '<div class="rc-field' + (done ? ' inserted' : '') + '"><div class="rc-label">' +
+          '<span style="' + (done ? 'color:var(--success,#065F46)' : '') + '">' + esc(schema[key]) + (done ? ' ✓' : '') + '</span>' +
+          (!done ? '<button class="rc-insert-btn" onclick="window._rc.insertField(\'' + key + '\')">Insert ↵</button>' : '') +
+          '</div><textarea class="rc-textarea" oninput="window._rc.updateField(\'' + key + '\',this.value)" ' + (done ? 'disabled' : '') + ' rows="' + (val.length > 60 ? 2 : 1) + '" style="padding:4px 6px;border:1px solid ' + (done ? 'var(--success-bg,#D1FAE5)' : 'var(--border,#E2E8F0)') + ';background:' + (done ? 'var(--success-bg,#D1FAE5)' : 'var(--surface,#FFF)') + ';">' + esc(val) + '</textarea></div>';
+      });
+
+      if (hasUninserted) {
+        html += '<button class="rc-btn" onclick="window._rc.insertAll()" style="width:100%;padding:7px 0;margin-top:6px;border-radius:var(--radius-md,6px);background:var(--success,#065F46);color:#FFF;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:5px;">✓ Insert All Fields</button>';
+      } else if (Object.keys(state.inserted).length > 0) {
+        html += '<div style="margin-top:8px;padding:10px;border-radius:var(--radius-md,6px);background:var(--success-bg,#D1FAE5);text-align:center;" class="rc-fade">' +
+          '<div style="font-size:11px;font-weight:600;color:var(--success,#065F46);">✓ All fields inserted</div>' +
+          '<button class="rc-btn" onclick="window._rc.reset()" style="margin-top:6px;padding:4px 12px;border-radius:var(--radius-sm,4px);border:1px solid var(--border,#E2E8F0);background:var(--surface,#FFF);font-size:10px;font-weight:500;color:var(--text-secondary,#475569);">New Capture</button></div>';
+      }
+    }
+    c.innerHTML = html;
+  }
+
+  // ── SITES TAB (editable) ──────────────────────────────
+  function renderSites(c) {
+    var sites = getSites(state.type);
+    var customSites = loadCustomSites();
+    var myCustom = customSites[state.type] || [];
+
+    var html = '<div style="font-size:9px;font-weight:600;color:var(--muted,#94A3B8);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px;">Default sites — ' + esc(state.type) + '</div>';
+
+    // Default (non-editable) sites
+    (DEFAULT_SITES[state.type] || []).forEach(function(s) {
+      html += '<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:var(--radius-sm,4px);border:1px solid var(--border,#E2E8F0);margin-bottom:3px;font-size:10px;">' +
+        '<span>' + (s.i||'🔗') + '</span>' +
+        '<div style="flex:1;min-width:0;"><div style="font-weight:600;color:var(--text,#0F172A);">' + esc(s.l) + '</div>' +
+        '<div style="font-size:9px;color:var(--muted,#94A3B8);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(s.u) + '</div></div>' +
+        '<span style="font-size:8px;color:var(--muted,#94A3B8);padding:1px 4px;border:1px solid var(--border,#E2E8F0);border-radius:3px;">DEFAULT</span></div>';
+    });
+
+    // Custom sites (editable)
+    if (myCustom.length > 0) {
+      html += '<div style="font-size:9px;font-weight:600;color:var(--muted,#94A3B8);text-transform:uppercase;letter-spacing:0.06em;margin:10px 0 6px;">Custom sites</div>';
+      myCustom.forEach(function(s, idx) {
+        html += '<div style="display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:var(--radius-sm,4px);border:1px solid var(--accent,#C8923A)33;background:rgba(200,146,58,0.04);margin-bottom:3px;font-size:10px;">' +
+          '<span>' + (s.i||'🔗') + '</span>' +
+          '<div style="flex:1;min-width:0;"><div style="font-weight:600;color:var(--text,#0F172A);">' + esc(s.l) + '</div>' +
+          '<div style="font-size:9px;color:var(--muted,#94A3B8);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + esc(s.u) + '</div></div>' +
+          '<button class="rc-btn" onclick="window._rc.editSite(' + idx + ')" style="font-size:9px;color:var(--primary,#0D1F3C);">✎</button>' +
+          '<button class="rc-btn" onclick="window._rc.removeSite(' + idx + ')" style="font-size:9px;color:var(--danger,#991B1B);">✕</button></div>';
+      });
+    }
+
+    // Add new site form
+    html += '<div style="margin-top:10px;padding:10px;border-radius:var(--radius-md,6px);border:1px dashed var(--border,#E2E8F0);background:var(--bg-muted,#F1F5F9);">' +
+      '<div style="font-size:9px;font-weight:600;color:var(--muted,#94A3B8);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:6px;">Add Custom Site</div>' +
+      '<div style="display:flex;flex-direction:column;gap:4px;">' +
+        '<div style="display:flex;gap:4px;">' +
+          '<input id="rc-new-icon" class="rc-input" placeholder="🔗" style="width:36px;text-align:center;" maxlength="2" />' +
+          '<input id="rc-new-label" class="rc-input" placeholder="Site name" style="flex:1;" />' +
+        '</div>' +
+        '<input id="rc-new-url" class="rc-input" placeholder="https://..." style="width:100%;" />' +
+        '<button class="rc-btn" onclick="window._rc.addSite()" style="padding:5px 12px;border-radius:var(--radius-sm,4px);background:var(--primary,#0D1F3C);color:var(--text-inverse,#FFF);font-size:10px;font-weight:600;margin-top:2px;">+ Add Site</button>' +
+      '</div></div>';
+
+    c.innerHTML = html;
+  }
+
+  // ── HISTORY TAB ───────────────────────────────────────
+  function renderHistory(c) {
+    if (state.history.length === 0) {
+      c.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted,#94A3B8);font-size:11px;">No captures yet this session.</div>';
+      return;
+    }
+    c.innerHTML = state.history.map(function(h) {
+      var d = new Date(h.time);
+      return '<div style="padding:6px 8px;border-radius:var(--radius-sm,4px);border:1px solid var(--border,#E2E8F0);margin-bottom:4px;font-size:10px;">' +
+        '<div style="font-weight:600;color:var(--text,#0F172A);">' + esc(h.record) + '</div>' +
+        '<div style="color:var(--text-secondary,#475569);margin-top:1px;">' + h.fields + ' fields from ' + esc(h.source || 'capture') + ' &bull; ' + d.toLocaleTimeString() + '</div></div>';
+    }).join('');
+  }
+
+  // ── AI extraction ─────────────────────────────────────
+  async function callExtraction(text, recordType) {
+    return new Promise(function(resolve) {
+      fetch('/api/v1/research/extract', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text, record_type: recordType, record_name: state.name || '', matter_id: new URLSearchParams(window.location.search).get('matter_id') || '' })
+      }).then(function(r) {
+        if (r.ok) return r.json();
+        throw new Error('API error');
+      }).then(function(data) { resolve(data.fields || {}); })
+      .catch(function() {
+        var schema = SCHEMAS[recordType] || {};
+        var result = {}; var keys = Object.keys(schema);
+        var lines = text.split('\n').filter(function(l){return l.trim().length > 3;});
+        keys.forEach(function(k, i) { if (i < lines.length) result[k] = lines[i].trim().substring(0, 200); });
+        resolve(result);
+      });
+    });
+  }
+
+  // ── Public API ────────────────────────────────────────
+  window._rc = {
+    setType: function(t) { state.type = t; state.aiStatus='idle'; state.extracted=null; state.edited=null; state.inserted={}; renderContent(); },
+    switchTab: function(t) { state.tab = t; renderTabs(); renderContent(); },
+    updatePaste: function(v) { state.pasteText = v; },
+    clearPaste: function() { state.pasteText = ''; renderContent(); },
+    clearBrowsing: function() { state.browsing = null; renderContent(); },
+
+    // Open site in capture popup (with AI Capture button)
+    openSitePopup: function(url, label) {
+      openCapturePopup(url);
+      state.browsing = label;
+      toast('Capture popup opened — click ✦ AI Capture when ready');
+      renderContent();
+    },
+
+    // Open blank browser (Google) in capture popup
+    openBrowser: function() {
+      var q = (state.name || '').trim();
+      var url = q ? 'https://www.google.com/search?q=' + encodeURIComponent(q) : 'https://www.google.com';
+      openCapturePopup(url);
+      state.browsing = 'Browser';
+      toast('Browser opened — navigate anywhere, then ✦ AI Capture');
+      renderContent();
+    },
+
+    // Open browser and immediately show as AI capture mode
+    openBrowserAndCapture: function() {
+      var q = (state.name || '').trim();
+      var url = q ? 'https://www.google.com/search?q=' + encodeURIComponent(q) : 'https://www.google.com';
+      openCapturePopup(url);
+      state.browsing = 'AI Capture';
+      toast('Browse → find info → click ✦ AI Capture in the popup');
+      renderContent();
+    },
+
+    // Receive captured text from the popup window
+    receiveCaptureFromPopup: function(text, url) {
+      state.pasteText = text;
+      state.browsing = null;
+      state.aiStatus = 'thinking';
+      state.inserted = {};
+      toast('Text received from popup — extracting...');
+      renderContent();
+      callExtraction(text, state.type).then(function(fields) {
+        state.extracted = fields;
+        state.edited = Object.assign({}, fields);
+        state.aiStatus = 'done';
+        renderContent();
+      });
+    },
+
+    // Open old-style (plain window.open, no toolbar)
+    openSite: function(url, label) {
+      window.open(url, '_blank', 'width=1200,height=800,scrollbars=yes');
+      state.browsing = label;
+      toast('Opened ' + label + ' — paste text when ready');
+      renderContent();
+    },
+
+    extract: async function() {
+      if (!state.pasteText.trim()) return;
+      state.aiStatus = 'thinking'; state.inserted = {};
+      renderContent();
+      try {
+        var fields = await callExtraction(state.pasteText, state.type);
+        state.extracted = fields; state.edited = Object.assign({}, fields); state.aiStatus = 'done';
+      } catch(e) { state.aiStatus = 'idle'; toast('Extraction failed'); }
+      renderContent();
+    },
+
+    updateField: function(key, val) { if (state.edited) state.edited[key] = val; },
+
+    insertField: function(key) {
+      if (!state.edited || !state.edited[key]) return;
+      state.inserted[key] = true;
+      toast('Inserted "' + (SCHEMAS[state.type]?.[key] || key) + '"');
+      renderContent();
+    },
+
+    insertAll: function() {
+      if (!state.edited) return;
+      var count = 0;
+      Object.keys(state.edited).forEach(function(k) { if (state.edited[k]) { state.inserted[k] = true; count++; } });
+      var name = document.getElementById('rc-name')?.value || state.name || 'record';
+      state.history.unshift({ record: name, fields: count, time: new Date().toISOString(), source: state.browsing || 'Pasted text' });
+      toast(count + ' fields inserted into ' + name);
+      renderContent();
+    },
+
+    reset: function() { state.pasteText=''; state.aiStatus='idle'; state.extracted=null; state.edited=null; state.inserted={}; state.browsing=null; renderContent(); },
+
+    // ── Site management ───────────────────────────────
+    addSite: function() {
+      var icon = (document.getElementById('rc-new-icon')?.value || '🔗').trim();
+      var label = (document.getElementById('rc-new-label')?.value || '').trim();
+      var url = (document.getElementById('rc-new-url')?.value || '').trim();
+      if (!label || !url) { toast('Enter a name and URL'); return; }
+      if (!url.startsWith('http')) url = 'https://' + url;
+      var cs = loadCustomSites();
+      if (!cs[state.type]) cs[state.type] = [];
+      cs[state.type].push({ l: label, i: icon, u: url });
+      saveCustomSites(cs);
+      toast('Added "' + label + '"');
+      renderContent();
+    },
+
+    removeSite: function(idx) {
+      var cs = loadCustomSites();
+      if (cs[state.type] && cs[state.type][idx] !== undefined) {
+        var name = cs[state.type][idx].l;
+        cs[state.type].splice(idx, 1);
+        saveCustomSites(cs);
+        toast('Removed "' + name + '"');
+        renderContent();
+      }
+    },
+
+    editSite: function(idx) {
+      var cs = loadCustomSites();
+      var site = cs[state.type]?.[idx];
+      if (!site) return;
+      var newLabel = prompt('Site name:', site.l);
+      if (newLabel === null) return;
+      var newUrl = prompt('URL:', site.u);
+      if (newUrl === null) return;
+      var newIcon = prompt('Icon emoji:', site.i || '🔗');
+      if (newIcon === null) newIcon = site.i;
+      cs[state.type][idx] = { l: newLabel || site.l, u: newUrl || site.u, i: newIcon || '🔗' };
+      saveCustomSites(cs);
+      toast('Updated "' + (newLabel || site.l) + '"');
+      renderContent();
+    },
+
+    setContext: function(type, name) {
+      state.type = type || state.type; state.name = name || '';
+      var ts = document.getElementById('rc-type'); if (ts) ts.value = state.type;
+      var ni = document.getElementById('rc-name'); if (ni) ni.value = state.name;
+      state.aiStatus='idle'; state.extracted=null; state.edited=null; state.inserted={};
+      renderContent();
+    }
+  };
+
+  renderTabs();
+  renderContent();
+  var params = new URLSearchParams(window.location.search);
+  var ni = document.getElementById('rc-name');
+  if (ni && !ni.value) { var mn = params.get('matter_name') || ''; if (mn) ni.value = mn; }
+})();
+</script>

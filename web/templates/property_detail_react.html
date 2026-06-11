@@ -1,0 +1,17 @@
+{% extends "shell.html" %}
+{% block title %}Property Detail{% endblock %}
+{% block breadcrumb %}
+<a href="/matters" style="color:var(--muted);text-decoration:none;">Matters</a>
+<span class="breadcrumb-sep">/</span>
+<a href="/matters/{{ matter_id }}" style="color:var(--muted);text-decoration:none;">Matter</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">Property</span>
+{% endblock %}
+{% block content %}
+<div id="property-detail-root" style="margin: -24px;"></div>
+<script>
+  window.__MATTER_ID__ = '{{ matter_id }}';
+  window.__PROPERTY_ID__ = '{{ property_id }}';
+</script>
+<script type="module" src="/static/js/property-detail-page.js"></script>
+{% endblock %}

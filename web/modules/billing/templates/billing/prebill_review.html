@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block title %}Prebill Review — {{ brand.platform_name }}{% endblock %}
+{% block content %}
+<div class="px-6 py-4">
+  <div class="flex items-center gap-2 text-sm text-gray-400 mb-4">
+    <a href="/billing/run-bills" class="hover:text-gray-600">Run Bills</a>
+    <span>›</span>
+    <a href="/billing/run-bills/{{ bill_run_id }}" class="hover:text-gray-600">Bill Run</a>
+    <span>›</span>
+    <span class="text-gray-700">{{ matter.matter_name or matter.matter_number or 'Review' }}</span>
+  </div>
+
+  <div class="flex justify-between items-start mb-4">
+    <div>
+      <h1 class="text-xl font-semibold text-gray-900">
+        {{ matter.client_name or '' }} — {{ matter.matter_number or '' }}
+        {% if matter.matter_name %} ({{ matter.matter_name }}){% endif %}
+      </h1>
+      <p class="text-sm text-gray-500">Review and edit time entries before billing.</p>
+    </div>
+    <div class="flex gap-2">
+      <button onclick="window.print()" class="border px-3 py-1.5 rounded text-sm text-gray-600 hover:bg-gray-50">
+        🖨 Print Prebill
+      </button>
+      <button onclick="approveAndReturn()" id="approve-btn"
+              class="bg-green-600 text-white px-4 py-1.5 rounded text-sm font-semibold hover:bg-green-700">
+        ✓ Approve
+      </button>
+    </div>
+  </div>
+
+  <!-- Slip table with editable fields -->
+  <div class="bg-white border rounded overflow-hidden mb-4">
+    <table class="w-full text-sm" id="slip-table">
+      <thead class="bg-gray-50 border-b">
+        <tr>
+          <th class="px-3 py-2 text-left font-medium text-gray-600 w-8">
+            <input type="checkbox" id="select-all" onchange="toggleSelectAll(this)" />
+          </th>
+          <th class="px-3 py-2 text-left font-medium text-gray-600">Date</th>
+          <th class="px-3 py-2 text-left font-medium text-gray-600">Timekeeper</th>
+          <th class="px-3 py-2 text-right font-medium text-gray-600">Hours</th>
+          <th class="px-3 py-2 text-right font-medium text-gray-600">Rate</th>
+          <th class="px-3 py-2 text-right font-medium text-gray-600">Value</th>
+          <th class="px-3 py-2 text-left font-medium text-gray-600">Narrative</th>
+          <th class="px-3 py-2 text-left font-medium text-gray-600">UTBMS</th>
+          <th class="px-3 py-2"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in slips %}
+        <tr class="border-b hover:bg-gray-50 slip-row" data-id="{{ s.id }}" data-source="{{ s.source }}">
+          <td class="px-3 py-2"><input type="checkbox" class="slip-check" value="{{ s.id }}" /></td>
+          <td class="px-3 py-2 text-gray-700">{{ s.slip_date }}</td>
+          <td class="px-3 py-2 text-gray-600">{{ s.timekeeper_name or '—' }}</td>
+          <td class="px-3 py-2 text-right">
+            <input type="number" step="0.01" value="{{ '%.2f'|format(s.hours|float) }}"
+                   class="hours-input w-16 text-right border rounded px-1 py-0.5 text-sm"
+                   data-original="{{ s.hours }}" onchange="recalcRow(this)" />
+          </td>
+          <td class="px-3 py-2 text-right text-gray-500 font-mono">${{ '%.2f'|format(s.rate|float) }}</td>
+          <td class="px-3 py-2 text-right font-medium value-cell">${{ '%.2f'|format(s.value|float) }}</td>
+          <td class="px-3 py-2 max-w-xs">
+            <div class="narrative-display text-gray-600 cursor-pointer hover:text-gray-900 truncate"
+                 title="Click to edit" onclick="editNarrative(this)">{{ s.narrative or '—' }}</div>
+            <textarea class="narrative-edit hidden w-full border rounded px-2 py-1 text-sm"
+                      data-original="{{ s.narrative }}" rows="2">{{ s.narrative or '' }}</textarea>
+          </td>
+          <td class="px-3 py-2 text-gray-400 text-xs">{{ s.utbms_code or '' }}</td>
+          <td class="px-3 py-2">
+            <button onclick="writeOffSlip(this)" title="Write off"
+                    class="text-xs text-red-500 hover:text-red-700 border border-red-200 rounded px-1.5 py-0.5">
+              W/O
+            </button>
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="9" class="px-4 py-8 text-center text-gray-400">No unbilled slips for this period.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Batch actions -->
+  <div class="flex items-center gap-3 mb-4">
+    <button onclick="batchWriteOff()" class="text-sm border border-red-300 text-red-600 rounded px-3 py-1 hover:bg-red-50">
+      Write Off Selected
+    </button>
+    <span class="text-sm text-gray-400" id="selection-count">0 selected</span>
+  </div>
+
+  <!-- Totals -->
+  <div class="bg-white border rounded p-4 max-w-sm ml-auto mb-4">
+    <div class="flex justify-between text-sm mb-2">
+      <span class="text-gray-600">Gross Fees</span>
+      <span class="font-mono font-medium" id="gross-fees">${{ '%.2f'|format(total_fees) }}</span>
+    </div>
+    <div class="flex justify-between text-sm mb-2">
+      <span class="text-gray-600">Write-offs</span>
+      <span class="font-mono text-red-600" id="total-writeoffs">$0.00</span>
+    </div>
+    <div class="flex justify-between text-sm mb-2">
+      <span class="text-gray-600">Prior Balance</span>
+      <span class="font-mono text-gray-500" id="prior-bal">${{ '%.2f'|format(matter.prior_balance|float) }}</span>
+    </div>
+    <div class="flex justify-between text-sm font-semibold border-t pt-2">
+      <span>Net Due</span>
+      <span class="text-blue-700 text-base font-mono" id="net-due">${{ '%.2f'|format(total_fees + (matter.prior_balance|float)) }}</span>
+    </div>
+  </div>
+
+  <!-- Adjustments log -->
+  {% if adjustments %}
+  <div class="bg-white border rounded p-4 mt-4">
+    <h3 class="text-sm font-semibold text-gray-700 mb-2">Adjustments Made</h3>
+    <div class="text-xs space-y-1">
+      {% for a in adjustments %}
+      <div class="text-gray-500">
+        {{ a.adjustment_type|replace('_',' ')|title }}:
+        {% if a.original_value %}${{ '%.2f'|format(a.original_value|float) }} → ${{ '%.2f'|format(a.adjusted_value|float) }}{% endif %}
+        {% if a.reason %}— {{ a.reason }}{% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+const BRM_ID = {{ brm_id }};
+const BILL_RUN_ID = {{ bill_run_id }};
+let writeoffTotal = 0;
+
+function recalcRow(input) {
+  const row = input.closest('tr');
+  const hours = parseFloat(input.value) || 0;
+  const rate = parseFloat(row.querySelector('td:nth-child(5)').textContent.replace('$','')) || 0;
+  const value = hours * rate;
+  row.querySelector('.value-cell').textContent = '$' + value.toFixed(2);
+  recalcTotals();
+}
+
+function recalcTotals() {
+  let gross = 0;
+  document.querySelectorAll('.slip-row:not(.written-off) .value-cell').forEach(el => {
+    gross += parseFloat(el.textContent.replace('$','').replace(',','')) || 0;
+  });
+  const prior = parseFloat('{{ matter.prior_balance|float }}') || 0;
+  document.getElementById('gross-fees').textContent = '$' + gross.toFixed(2);
+  document.getElementById('total-writeoffs').textContent = '$' + writeoffTotal.toFixed(2);
+  document.getElementById('net-due').textContent = '$' + (gross - writeoffTotal + prior).toFixed(2);
+}
+
+function editNarrative(el) {
+  el.classList.add('hidden');
+  const textarea = el.nextElementSibling;
+  textarea.classList.remove('hidden');
+  textarea.focus();
+  textarea.onblur = () => {
+    el.textContent = textarea.value || '—';
+    el.classList.remove('hidden');
+    textarea.classList.add('hidden');
+  };
+}
+
+function toggleSelectAll(cb) {
+  document.querySelectorAll('.slip-check').forEach(c => c.checked = cb.checked);
+  updateSelectionCount();
+}
+
+document.addEventListener('change', e => {
+  if (e.target.classList.contains('slip-check')) updateSelectionCount();
+});
+
+function updateSelectionCount() {
+  const count = document.querySelectorAll('.slip-check:checked').length;
+  document.getElementById('selection-count').textContent = count + ' selected';
+}
+
+async function writeOffSlip(btn) {
+  const row = btn.closest('tr');
+  const slipId = row.dataset.id;
+  const source = row.dataset.source;
+  const value = parseFloat(row.querySelector('.value-cell').textContent.replace('$','')) || 0;
+  const reason = prompt('Write-off reason:');
+  if (reason === null) return;
+
+  await fetch('/api/billing/bill-run/adjust', {
+    method: 'POST', headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      bill_run_matter_id: BRM_ID,
+      adjustment_type: 'write_off',
+      [source === 'ts_slip' ? 'ts_slip_id' : 'time_entry_id']: slipId,
+      original_value: value, adjusted_value: 0, reason
+    })
+  });
+  row.classList.add('written-off');
+  row.style.opacity = '0.3';
+  row.style.textDecoration = 'line-through';
+  writeoffTotal += value;
+  recalcTotals();
+}
+
+async function batchWriteOff() {
+  const checked = document.querySelectorAll('.slip-check:checked');
+  if (!checked.length) return;
+  const reason = prompt(`Write off ${checked.length} entries. Reason:`);
+  if (reason === null) return;
+  for (const cb of checked) {
+    const row = cb.closest('tr');
+    const slipId = row.dataset.id;
+    const source = row.dataset.source;
+    const value = parseFloat(row.querySelector('.value-cell').textContent.replace('$','')) || 0;
+    await fetch('/api/billing/bill-run/adjust', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        bill_run_matter_id: BRM_ID,
+        adjustment_type: 'write_off',
+        [source === 'ts_slip' ? 'ts_slip_id' : 'time_entry_id']: slipId,
+        original_value: value, adjusted_value: 0, reason
+      })
+    });
+    row.classList.add('written-off');
+    row.style.opacity = '0.3';
+    row.style.textDecoration = 'line-through';
+    writeoffTotal += value;
+  }
+  recalcTotals();
+}
+
+async function approveAndReturn() {
+  // Save any narrative edits first
+  for (const ta of document.querySelectorAll('.narrative-edit')) {
+    if (ta.value !== ta.dataset.original) {
+      const row = ta.closest('tr');
+      const slipId = row.dataset.id;
+      const source = row.dataset.source;
+      await fetch('/api/billing/bill-run/adjust', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          bill_run_matter_id: BRM_ID,
+          adjustment_type: 'narrative_edit',
+          [source === 'ts_slip' ? 'ts_slip_id' : 'time_entry_id']: slipId,
+          original_narrative: ta.dataset.original,
+          adjusted_narrative: ta.value
+        })
+      });
+    }
+  }
+  // Save any hours edits
+  for (const inp of document.querySelectorAll('.hours-input')) {
+    if (inp.value !== inp.dataset.original) {
+      const row = inp.closest('tr');
+      const slipId = row.dataset.id;
+      const source = row.dataset.source;
+      const origHours = parseFloat(inp.dataset.original) || 0;
+      const newHours = parseFloat(inp.value) || 0;
+      const rate = parseFloat(row.querySelector('td:nth-child(5)').textContent.replace('$','')) || 0;
+      await fetch('/api/billing/bill-run/adjust', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({
+          bill_run_matter_id: BRM_ID,
+          adjustment_type: 'hours_edit',
+          [source === 'ts_slip' ? 'ts_slip_id' : 'time_entry_id']: slipId,
+          original_hours: origHours, adjusted_hours: newHours,
+          original_value: origHours * rate, adjusted_value: newHours * rate
+        })
+      });
+    }
+  }
+  // Approve
+  await fetch(`/billing/run-bills/${BILL_RUN_ID}/matter/${BRM_ID}/approve`, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: '{}'
+  });
+  location.href = `/billing/run-bills/${BILL_RUN_ID}`;
+}
+</script>
+{% endblock %}

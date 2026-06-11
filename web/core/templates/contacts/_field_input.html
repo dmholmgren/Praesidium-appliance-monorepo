@@ -1,0 +1,56 @@
+{# ── Edit-mode field input ────────────────────────────────────────────────
+   Renders one field as an input + Save/Cancel buttons.
+   POST /contacts/{id}/field/{field_name}  with form field 'value'
+   returns the read-mode label fragment (which replaces this partial).
+
+   Context required:
+     contact_id, field_name, field_spec, current_value, contact_types
+─────────────────────────────────────────────────────────────────────────── #}
+<div id="field-{{ field_name }}-{{ contact_id }}" class="inline-field-edit">
+  <form hx-post="/contacts/{{ contact_id }}/field/{{ field_name }}"
+        hx-target="#field-{{ field_name }}-{{ contact_id }}"
+        hx-swap="outerHTML"
+        style="display:flex; gap:6px; align-items:flex-start;">
+
+    {% if field_spec.type == 'enum' %}
+      <select name="value" autofocus
+              style="flex:1; padding:6px 10px; font-size:13px;
+                     border:1px solid var(--primary); border-radius:6px;
+                     font-family:'DM Sans',sans-serif;">
+        {% for ct in contact_types %}
+        <option value="{{ ct }}" {% if current_value == ct %}selected{% endif %}>{{ ct }}</option>
+        {% endfor %}
+      </select>
+    {% elif field_spec.type == 'textarea' %}
+      <textarea name="value" rows="3" autofocus
+                style="flex:1; padding:6px 10px; font-size:13px;
+                       border:1px solid var(--primary); border-radius:6px;
+                       font-family:'DM Sans',sans-serif; resize:vertical;"
+      >{{ current_value }}</textarea>
+    {% else %}
+      <input type="{% if field_spec.type == 'email' %}email{% else %}text{% endif %}"
+             name="value" autofocus
+             value="{{ current_value }}"
+             {% if field_spec.required %}required{% endif %}
+             style="flex:1; padding:6px 10px; font-size:13px;
+                    border:1px solid var(--primary); border-radius:6px;
+                    font-family:{% if field_spec.type == 'phone' %}ui-monospace,monospace{% else %}'DM Sans',sans-serif{% endif %};">
+    {% endif %}
+
+    <button type="submit"
+            style="padding:6px 12px; background:var(--primary); color:#fff;
+                   border:none; border-radius:6px; font-size:12px; font-weight:500;
+                   cursor:pointer; font-family:'DM Sans',sans-serif;">
+      Save
+    </button>
+    <button type="button"
+            hx-get="/contacts/{{ contact_id }}/field/{{ field_name }}"
+            hx-target="#field-{{ field_name }}-{{ contact_id }}"
+            hx-swap="outerHTML"
+            style="padding:6px 10px; background:transparent; color:var(--muted);
+                   border:1px solid var(--border); border-radius:6px; font-size:12px;
+                   cursor:pointer; font-family:'DM Sans',sans-serif;">
+      Cancel
+    </button>
+  </form>
+</div>

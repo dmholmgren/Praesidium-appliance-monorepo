@@ -1,0 +1,13 @@
+{% extends "shell.html" %}
+{% block title %}Onboarding — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/tenant-admin/" style="color:var(--muted);text-decoration:none;">Firm Administration</a>
+<span class="breadcrumb-sep">/</span>
+<a href="/tenant-admin/#settings" style="color:var(--muted);text-decoration:none;">Settings</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">Onboarding</span>
+{% endblock %}
+{% block content %}
+<div id="onboarding-root"></div>
+<script type="module" src="/static/js/onboarding.js?v=1"></script>
+{% endblock %}

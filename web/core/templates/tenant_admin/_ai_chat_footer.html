@@ -1,0 +1,16 @@
+{# tenant_admin/_ai_chat_footer.html — Reusable AI chat widget for admin pages #}
+<div style="margin-top:24px;">
+  <div class="card" style="padding:0; overflow:hidden;">
+    <div style="padding:10px 16px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px;">
+      <svg width="15" height="15" fill="none" stroke="var(--accent)" viewBox="0 0 24 24" stroke-width="1.75">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+      </svg>
+      <span style="font-size:13px; font-weight:500; color:var(--text);">AI Assistant</span>
+      <span style="font-size:10px; color:var(--muted); margin-left:auto;">MCP Connected</span>
+      <span style="width:6px; height:6px; border-radius:50%; background:#10B981; flex-shrink:0;"></span>
+    </div>
+    <div hx-get="/widgets/admin_ai_chat" hx-trigger="load" hx-swap="innerHTML">
+      <div style="padding:30px; text-align:center; color:var(--muted); font-size:12px;">Loading...</div>
+    </div>
+  </div>
+</div>

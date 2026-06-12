@@ -273,10 +273,12 @@ async def login(
 
     # Find or create user in local DB
     try:
-        from sqlalchemy import select
+        from sqlalchemy import select, or_
         async with AsyncSessionLocal() as session:
+            # Match by username OR email — local auth accepts either, so the
+            # find-or-create must too, or email logins mint duplicate users.
             stmt = select(User).where(
-                User.username == username,
+                or_(User.username == username, User.email == username),
                 User.tenant_id == tenant_id.strip(),
             )
             result_db = await session.execute(stmt)
@@ -305,6 +307,33 @@ async def login(
         logger.error(f"Database error during login for {username}: {e}")
         return _login_error(request, "Authentication succeeded but session creation failed.")
 
+    # Portal users (provisioned via client portal, auth_provider='magic_link')
+    # get opaque token sessions and land on the portal — never raw-uid cookies.
+    if getattr(user, "auth_provider", "") == "magic_link":
+        import secrets as _secrets
+        from datetime import timedelta as _td
+        _tok = _secrets.token_urlsafe(32)
+        async with AsyncSessionLocal() as _s:
+            await _s.execute(sa_text(
+                "DELETE FROM sessions WHERE user_id = :uid AND expires_at < NOW()"),
+                {"uid": user.id})
+            await _s.execute(sa_text(
+                "INSERT INTO sessions (token, user_id, tenant_id, expires_at) "
+                "VALUES (:tok, :uid, :tid, NOW() + INTERVAL '7 days')"),
+                {"tok": _tok, "uid": user.id, "tid": tenant_id.strip()})
+            await _s.execute(sa_text(
+                "INSERT INTO user_activity_log (tenant_id, user_id, action, ip_address) "
+                "VALUES (:tid, :uid, 'portal_login_password', :ip)"),
+                {"tid": tenant_id.strip(), "uid": user.id,
+                 "ip": (request.client.host if request.client else "")[:50]})
+            await _s.commit()
+        resp = RedirectResponse(url="/portal/", status_code=302)
+        resp.set_cookie(key=SESSION_COOKIE_NAME, value=_tok, httponly=True,
+                        secure=request.url.scheme == "https", samesite="lax",
+                        max_age=7 * 86400)
+        logger.info(f"Portal password login: {username} (user_id={user_id}) tenant={tenant_id}")
+        return resp
+
     response = RedirectResponse(url="/dms/", status_code=302)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
@@ -321,7 +350,17 @@ async def login(
 
 @router.get("/logout")
 async def logout(request: Request):
-    """Clear session and redirect to login."""
+    """Clear session and redirect to login. Token sessions are expired server-side."""
+    tok = request.cookies.get(SESSION_COOKIE_NAME)
+    if tok and not tok.isdigit():
+        try:
+            async with AsyncSessionLocal() as _s:
+                await _s.execute(sa_text(
+                    "UPDATE sessions SET expires_at = NOW() WHERE token = :tok"),
+                    {"tok": tok})
+                await _s.commit()
+        except Exception as e:
+            logger.warning(f"[auth] logout session expiry failed: {e}")
     response = RedirectResponse(url="/login", status_code=302)
     response.delete_cookie(key=SESSION_COOKIE_NAME)
     return response

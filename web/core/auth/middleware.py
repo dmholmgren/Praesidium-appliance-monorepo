@@ -30,6 +30,7 @@ PUBLIC_PATHS = {
     "/login",
     "/auth/login",
     "/auth/logout",
+    "/auth/magic",        # Portal magic-link redemption — token validated in handler
     "/auth/callback",
     "/static",
     "/admin",
@@ -102,6 +103,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if resolved_tenant_id and not request.state.tenant_id:
             request.state.tenant_id = resolved_tenant_id
 
+        # Portal confinement: magic_link users only reach portal surfaces
+        if user is not None and getattr(user, "auth_provider", "") == "magic_link":
+            p = request.url.path
+            if not p.startswith(("/portal", "/auth/", "/api/portal",
+                                 "/static", "/favicon.ico", "/manifest.json")):
+                return RedirectResponse(url="/portal/", status_code=302)
+
         return await call_next(request)
 
     async def _load_user_from_session(
@@ -123,6 +131,35 @@ class AuthMiddleware(BaseHTTPMiddleware):
         if tenant_id:
             try:
                 user_id = int(session_token)
+            except (ValueError, TypeError):
+                # Not an integer — opaque token session (portal users).
+                # Look up in sessions table, constrained to the resolved tenant.
+                try:
+                    async with AsyncSessionLocal() as session:
+                        row = await session.execute(
+                            sa_text("""
+                                SELECT s.user_id FROM sessions s
+                                WHERE s.token = :token
+                                  AND s.expires_at > NOW()
+                                  AND TRIM(s.tenant_id) = :tid
+                                LIMIT 1
+                            """),
+                            {"token": session_token, "tid": tenant_id.strip()},
+                        )
+                        sess_row = row.fetchone()
+                        if not sess_row:
+                            return None, None
+                        stmt = select(User).where(
+                            User.id == sess_row.user_id,
+                            User.is_active == True,
+                            User.tenant_id == tenant_id.strip(),
+                        )
+                        result = await session.execute(stmt)
+                        user = result.scalar_one_or_none()
+                        return user, tenant_id if user else None
+                except Exception:
+                    return None, None
+            try:
                 async with AsyncSessionLocal() as session:
                     stmt = select(User).where(
                         User.id == user_id,
@@ -132,8 +169,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     result = await session.execute(stmt)
                     user = result.scalar_one_or_none()
                     return user, tenant_id if user else None
-            except (ValueError, TypeError):
-                return None, None
             except Exception:
                 return None, None
 

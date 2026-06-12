@@ -668,6 +668,11 @@ from modules.billing.api.client_portal_api import router as client_portal_api_ro
 app.include_router(client_portal_api_router)
 # === end Client Portal API ===
 
+# === Client Portal Auth (magic link + portal sessions) ===
+from core.auth.portal_auth import router as portal_auth_router
+app.include_router(portal_auth_router)
+# === end Client Portal Auth ===
+
 # === Context Menu Registry ===
 from modules.dashboard.routes.context_menu_api import router as context_menu_api_router
 app.include_router(context_menu_api_router)

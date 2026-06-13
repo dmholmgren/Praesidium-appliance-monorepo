@@ -52,7 +52,7 @@ pytest is necessary but not sufficient. Every new endpoint surface requires an e
 
 ## Agentic guardrails (Claude Code on this box)
 
-- Scope: `/opt/praesidium-web`, `/opt/praesidium-ui`, and sibling source repos only. NEVER touch `/opt/praesidium-mail`, `/opt/praesidium-livekit`, `/opt/praesidium-onlyoffice` (live mail data, TLS keys), or any `/mnt/` data mounts.
+- Scope: `/opt/praesidium-web`, `/opt/praesidium-ui`, and sibling source repos only. NEVER touch `/opt/praesidium-mail`, `/opt/praesidium-onlyoffice` (live mail data, TLS keys), or any `/mnt/` data mounts. **LiveKit exception (2026-06-13):** `/opt/praesidium-livekit` and `livekit-egress` are IN SCOPE under the discipline in `.claude/briefs/Praesidium_LiveKit_Deposition_BuildBrief_v1.md` §0 — branch before edit; never destroy a recording, transcript, designation, or provenance row; deploy-and-verify each change.
 - Never commit `.env*` (except `*.template`), `*.bak*`, keys, or certs.
 - Commit checkpoints before and after each component. Small commits, real messages.
 - This is a production system serving a live law firm. When uncertain, stop and ask.

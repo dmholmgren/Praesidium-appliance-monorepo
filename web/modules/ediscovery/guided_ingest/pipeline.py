@@ -46,7 +46,7 @@ _TRIAGE_SYS = (
 )
 
 
-async def escalate_residue(tenant_id, matter_id, residue_groups, user_id):
+async def escalate_residue(tenant_id, matter_id, residue_groups, user_id, existing_summary=""):
     """Send the deterministic residue to the frontier model via the real AI
     layer. Returns {} when there is no residue. Never raises -- on any AI error
     every residue group falls back to 'uncertain' (human review)."""
@@ -59,6 +59,8 @@ async def escalate_residue(tenant_id, matter_id, residue_groups, user_id):
     user = ("Matter onboarding. Unmatched client-file pattern groups "
             "(name_pattern, count, example):\n"
             + json.dumps(payload, ensure_ascii=False)
+            + ("\n\nAlready ingested for this matter (do NOT propose re-ingesting these; context only): " + existing_summary
+               if existing_summary else "")
             + "\n\nReturn the labels JSON for every name_pattern.")
     ctx = AICallContext(tenant_id=tenant_id, module="ediscovery",
                         purpose="ingest_triage", matter_id=matter_id,
@@ -111,12 +113,58 @@ def _apply_split(collection, classified, escalation):
     }
 
 
+async def _existing_collections(tenant_id, matter_id):
+    """Collections already ingested / in-flight for this matter — the dedup
+    substrate so a re-run does not duplicate work."""
+    async with AsyncSessionLocal() as s:
+        rows = (await s.execute(text("""
+            SELECT id::text, COALESCE(collection_name, name) AS name, custodian,
+                   bucket, dms_source_path, stated_bates_range, total_docs, status
+              FROM ediscovery_collections
+             WHERE TRIM(tenant_id) = :tid AND matter_id = CAST(:mid AS uuid)
+               AND COALESCE(status, '') NOT IN ('failed', 'deleted')
+        """), {"tid": tenant_id, "mid": matter_id})).mappings().all()
+    return [dict(r) for r in rows]
+
+
+def _norm(p):
+    return (p or "").rstrip("/").lower()
+
+
+def _annotate_duplicates(collections, existing):
+    """Flag proposed units that match something already ingested (same custodian
+    for PST, or overlapping source path otherwise). Matches default to excluded
+    (_skip) so re-including is an explicit human choice in the confirm screen."""
+    ex_paths = {_norm(e.get("dms_source_path")) for e in existing if e.get("dms_source_path")}
+    ex_cust = {(e.get("custodian") or "").strip().lower()
+               for e in existing if e.get("bucket") == "pst" and e.get("custodian")}
+    for c in collections:
+        match = None
+        if c.get("bucket") == "pst" and (c.get("custodian") or "").strip().lower() in ex_cust:
+            match = "custodian already ingested"
+        else:
+            for sp in c.get("source_paths", []):
+                n = _norm(sp)
+                if n in ex_paths or any(n.startswith(p + "/") or p.startswith(n + "/")
+                                        for p in ex_paths if p):
+                    match = "source path already ingested"
+                    break
+        if match:
+            c["duplicate"] = True
+            c["duplicate_reason"] = match
+            c["_skip"] = True
+    return collections
+
+
 async def build_proposal(proposal_id, tenant_id, matter_id, source_paths, user_id):
     """rq job body (async). Runs the full propose pass and writes the proposal
     row. Sets status 'ready' on success, 'error' on failure."""
     try:
         obs = observe(source_paths)
         loose_files = obs.pop("loose_files_by_root", {})
+        existing = await _existing_collections(tenant_id, matter_id)
+        _existing_summary = "; ".join(
+            (e.get("name") or e.get("custodian") or "?") for e in existing[:30]) or "none"
         for c in obs["collections"]:
             if c["bucket"] != "loose":
                 continue
@@ -127,13 +175,16 @@ async def build_proposal(proposal_id, tenant_id, matter_id, source_paths, user_i
                 continue
             classified = classify_loose_files(files)
             escalation = await escalate_residue(
-                tenant_id, matter_id, classified["residue"], user_id)
+                tenant_id, matter_id, classified["residue"], user_id,
+                existing_summary=_existing_summary)
             _apply_split(c, classified, escalation)
             c["cluster_type"] = BUCKET_CLUSTER_TYPE.get(c["bucket"])
         for c in obs["collections"]:
             c.setdefault("cluster_type", BUCKET_CLUSTER_TYPE.get(c["bucket"]))
 
         proposal = {"collections": obs["collections"], "flagged": obs["flagged"]}
+        _annotate_duplicates(proposal["collections"], existing)
+        proposal["existing_ingestions"] = existing
         async with AsyncSessionLocal() as s:
             await s.execute(text("""
                 UPDATE collection_proposals

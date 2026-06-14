@@ -33,6 +33,7 @@ from core.services.stalwart_service import (
     provision_mail_account, disable_mail_account,
     enable_mail_account, update_mail_password,
 )
+from core.services.matter_mail_folders import sync_matter_folders
 
 log = logging.getLogger("praesidium.admin.user_mgmt")
 
@@ -42,6 +43,27 @@ _TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "../../templates/admin")
 templates = Jinja2Templates(directory=_TEMPLATE_DIR)
 
 ASSIGNABLE_ROLES = ["attorney", "paralegal", "staff", "admin", "read_only"]
+
+
+async def _published_matter_ids(user_id: int) -> list:
+    import json as _json
+    async with AsyncSessionLocal() as db:
+        row = await db.execute(text("SELECT user_preferences FROM users WHERE id=:uid"), {"uid": user_id})
+        r = row.fetchone()
+    prefs = (r[0] if r and r[0] else {}) or {}
+    if isinstance(prefs, str):
+        try: prefs = _json.loads(prefs)
+        except Exception: prefs = {}
+    return prefs.get("mail_matter_ids", []) or []
+
+
+async def _active_matters(tenant_id: str) -> list:
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(text(
+            "SELECT id::text, matter_number, matter_name FROM matters "
+            "WHERE trim(tenant_id)=:tid AND status='active' ORDER BY matter_number"),
+            {"tid": tenant_id})
+        return [{"id": x[0], "number": x[1], "name": x[2]} for x in rows.fetchall()]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -284,6 +306,8 @@ async def user_edit_form(
     user = await _get_user(user_id, tid)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    published_matter_ids = await _published_matter_ids(user_id)
+    active_matters = await _active_matters(tid)
     return templates.TemplateResponse(request, "user_edit.html", {
         "page": "users",
         "user": user,
@@ -291,8 +315,46 @@ async def user_edit_form(
         "roles": ASSIGNABLE_ROLES,
         "error": None,
         "form": {},
+        "published_matter_ids": published_matter_ids,
+        "active_matters": active_matters,
         "branding": getattr(request.state, "branding", None),
     })
+
+
+@router.post("/{user_id}/mail-folders")
+async def user_mail_folders(
+    request: Request,
+    user_id: int,
+    tenant_id: str = Form(...),
+    matter_ids: list[str] = Form(default=[]),
+):
+    """Save the user's published-matter selection and sync IMAP folders."""
+    import json as _json
+    sess = await _require_admin(request)
+    tid = _strip(tenant_id) or sess["tenant_id"]
+    user = await _get_user(user_id, tid)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    matters = []
+    async with AsyncSessionLocal() as db:
+        await db.execute(text(
+            "UPDATE users SET user_preferences = "
+            "COALESCE(user_preferences, '{}'::jsonb) || "
+            "jsonb_build_object('mail_matter_ids', cast(:ids as jsonb)), "
+            "updated_at = NOW() WHERE id = :uid AND tenant_id = :tid"),
+            {"ids": _json.dumps(matter_ids), "uid": user_id, "tid": tid})
+        await db.commit()
+        if matter_ids:
+            rows = await db.execute(text(
+                "SELECT matter_number, matter_name FROM matters WHERE id::text = ANY(:ids)"),
+                {"ids": matter_ids})
+            matters = [(x[0], x[1]) for x in rows.fetchall()]
+    if user.email:
+        try:
+            await sync_matter_folders(user.email, matters)
+        except Exception as e:
+            log.warning("matter folder sync failed for %s: %s", user.email, e)
+    return RedirectResponse(f"/admin/users/{user_id}?tenant_id={tid}", status_code=303)
 
 
 @router.post("/{user_id}")

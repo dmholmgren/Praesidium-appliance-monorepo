@@ -672,7 +672,7 @@ async def document_file(request: Request, doc_id: str,
     async with AsyncSessionLocal() as session:
         r = await session.execute(sa_text("""
             SELECT ed.id, ed.file_name, ed.file_path, ed.working_path,
-                   ed.native_path, ed.rendition_path,
+                   ed.native_path, ed.rendition_path, ed.page_count,
                    ed.mime_type, ed.file_hash, ec.storage_path as collection_storage_path
             FROM ediscovery_documents ed
             LEFT JOIN ediscovery_collections ec ON ec.id = ed.collection_id
@@ -738,8 +738,13 @@ async def document_file(request: Request, doc_id: str,
     # Prefer the durable pipeline rendition (renditions/{lane}/{doc_id}.pdf).
     # It is the same PDF the production export engine will emboss, so the
     # reviewer sees exactly what will be produced -- and nothing renders twice.
+    # Single-page browser-renderable images serve the ORIGINAL so the image
+    # zoom viewer works; TIFF / multi-page stitches serve the PDF rendition.
+    _m_low = (mime or "").lower()
+    _browser_img = _m_low in ("image/jpeg", "image/png", "image/gif", "image/webp")
+    _single_browser_img = _browser_img and (rec.get("page_count") or 1) <= 1
     rend = rec.get("rendition_path")
-    if rend and col_root:
+    if rend and col_root and not _single_browser_img:
         rend_path = Path(col_root) / rend
         try:
             r_resolved = rend_path.resolve()
@@ -849,13 +854,46 @@ async def document_native(request: Request, doc_id: str, download: int = Query(0
     mime = AUDIO_MIME.get(ext) or mimetypes.guess_type(str(native_path))[0] or "application/octet-stream"
 
     file_name = rec.get("file_name") or native_path.name
-    disposition = f'attachment; filename="{file_name}"' if download else "inline"
+
+    # Forced download -- always the true native, attachment disposition
+    if download:
+        return FileResponse(
+            path=str(native_path),
+            filename=file_name,
+            media_type=mime,
+            headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+        )
+
+    # NATIVE_STREAM_V1 -- stream inline. Office natives are not
+    # browser-renderable; serve a cached PDF rendering (derived artifact --
+    # the stored native is never mutated) so the viewer streams instead of
+    # triggering a download. ?download=1 still returns the true native.
+    if _needs_conversion(mime, str(native_path)):
+        file_hash = _compute_file_hash(native_path)
+        cache = _rendered_cache_path(tenant_id, file_hash)
+        if not cache.exists():
+            ok = await asyncio.to_thread(_convert_to_pdf_sync, native_path, cache)
+            if not ok or not cache.exists():
+                # Conversion failed -- fall back to attachment of the native
+                return FileResponse(
+                    path=str(native_path),
+                    filename=file_name,
+                    media_type=mime,
+                    headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+                )
+        pdf_name = native_path.stem + ".pdf"
+        return FileResponse(
+            path=str(cache),
+            filename=pdf_name,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'inline; filename="{pdf_name}"'},
+        )
 
     return FileResponse(
         path=str(native_path),
         filename=file_name,
         media_type=mime,
-        headers={"Content-Disposition": disposition},
+        headers={"Content-Disposition": f'inline; filename="{file_name}"'},
     )
 
 

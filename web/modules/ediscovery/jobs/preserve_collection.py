@@ -46,6 +46,10 @@ from modules.ediscovery.services.parsed_email import (
     parse_email_source, explode, ExplodedUnit,
 )
 
+import multiprocessing  # noqa: F401  (pool context / cpu_count)
+from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -146,6 +150,10 @@ def is_email_source(path: str) -> bool:
 
 def _should_skip(name: str) -> bool:
     if name in SKIP_NAMES:
+        return True
+    # DOTFILE_SKIP_V1: dotfiles are never original produced documents --
+    # pipeline sidecars (.extract-manifest-*.json), .DS_Store, etc.
+    if name.startswith("."):
         return True
     return any(name.endswith(s) for s in SKIP_SUFFIXES)
 
@@ -410,7 +418,8 @@ def _store_native(coll_root: Path, file_hash: str, ext: str, data: bytes,
     dest = coll_root / rel
     dest.parent.mkdir(parents=True, exist_ok=True)
     if not dest.exists():
-        tmp = dest.with_suffix(dest.suffix + ".part")
+        tmp = dest.with_suffix(
+            dest.suffix + ".%d.%s.part" % (os.getpid(), uuid.uuid4().hex))
         with open(tmp, "wb") as f:
             f.write(data)
         os.replace(tmp, dest)
@@ -420,6 +429,151 @@ def _store_native(coll_root: Path, file_hash: str, ext: str, data: bytes,
 # ---------------------------------------------------------------------------
 # core
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# parallel prepare (process pool): read -> explode -> hash -> store native.
+# DB-free, returns metadata only (no bytes). Commit stays single-writer.
+# ---------------------------------------------------------------------------
+
+PRESERVE_WORKERS = int(os.environ.get("PRESERVE_WORKERS", min(16, (os.cpu_count() or 8))))
+PRESERVE_CHUNK = int(os.environ.get("PRESERVE_CHUNK", "16"))
+
+
+@dataclass
+class PreparedUnit:
+    role: str
+    local_id: int
+    parent_local_id: "Optional[int]"
+    is_attachment: bool
+    attachment_index: "Optional[int]"
+    filename: "Optional[str]"
+    headers: "Optional[dict]"
+    file_hash: str
+    native_path: str
+    native_type: str
+    dedup_key: str
+    bytes_len: int
+
+
+@dataclass
+class PreparedTree:
+    kind: str                       # 'email' | 'loose'
+    custodian: "Optional[str]"
+    custodian_source: str
+    src: str
+    units: list
+
+
+@dataclass
+class PreparedResult:
+    src: str
+    trees: list
+    error: "Optional[str]"
+
+
+def _prepare_units(units, coll_root: Path, dry_run: bool) -> list:
+    """Hash + store native for each unit; precompute the dedup key. No DB."""
+    out = []
+    for u in units:
+        is_body = (u.role == "email_body")
+        data = u.data if u.data is not None else (
+            _email_body_native_bytes(u) if is_body else b"")
+        fh = sha256_bytes(data)
+        ext = native_ext(u.filename, is_body)
+        ntype = (u.content_type or ext)
+        dkey = _body_dedup_key(u) if is_body else fh
+        native_path = _store_native(coll_root, fh, ext, data, dry_run)
+        out.append(PreparedUnit(
+            role=u.role, local_id=u.local_id, parent_local_id=u.parent_local_id,
+            is_attachment=u.is_attachment, attachment_index=u.attachment_index,
+            filename=u.filename, headers=u.headers, file_hash=fh,
+            native_path=native_path, native_type=ntype, dedup_key=dkey,
+            bytes_len=len(data)))
+    return out
+
+
+def _prepare_source(payload) -> PreparedResult:
+    """Process-pool worker. DB-free: read -> explode -> hash -> store native.
+    Returns metadata only. Never raises; errors are captured for the committer."""
+    coll_root_str, src_str, coll_default, dry_run = payload
+    coll_root = Path(coll_root_str)
+    src = Path(src_str)
+    try:
+        trees = []
+        if is_email_source(src_str):
+            for pe in parse_email_source(src_str):
+                units = explode(pe)
+                cust, csrc = resolve_custodian(coll_default, coll_root, src, pe)
+                trees.append(PreparedTree(
+                    kind="email", custodian=cust, custodian_source=csrc,
+                    src=src_str, units=_prepare_units(units, coll_root, dry_run)))
+        else:
+            data = src.read_bytes()
+            if len(data) < MIN_LOOSE_BYTES:
+                return PreparedResult(src=src_str, trees=[], error=None)
+            unit = ExplodedUnit(
+                role="loose", local_id=0, parent_local_id=None,
+                is_attachment=False, attachment_index=None,
+                filename=_rel_original_path(coll_root, src),
+                content_type=None, data=data)
+            cust, csrc = resolve_custodian(coll_default, coll_root, src, None)
+            trees.append(PreparedTree(
+                kind="loose", custodian=cust, custodian_source=csrc,
+                src=src_str, units=_prepare_units([unit], coll_root, dry_run)))
+        return PreparedResult(src=src_str, trees=trees, error=None)
+    except Exception as e:
+        return PreparedResult(src=src_str, trees=[], error=repr(e))
+
+
+def _commit_tree(conn, cur, tenant, collection_id, tree, seen_dedup: dict,
+                 summary: dict, worker_id: str, dry_run: bool):
+    """Serial single-writer: dedup decision + row insert + family wiring.
+    Consumed in submission order so dedup matches the serial path exactly."""
+    units = tree.units
+    if not units:
+        return
+    custodian = tree.custodian
+    custodian_source = tree.custodian_source
+    id_by_local = {}
+    root_local = units[0].local_id
+
+    for pu in units:
+        dkey = pu.dedup_key
+        dgid = dedup_group_uuid(dkey)
+        is_dup = dkey in seen_dedup
+        deduped_custodians = None
+        if is_dup:
+            summary["duplicates"] += 1
+            seen_dedup[dkey].add(custodian or "")
+            deduped_custodians = json.dumps(sorted(c for c in seen_dedup[dkey] if c))
+        else:
+            seen_dedup[dkey] = {custodian or ""}
+
+        summary["bytes"] += pu.bytes_len
+
+        if dry_run:
+            doc_id = uuid.uuid4()
+        else:
+            doc_id = _insert_unit(cur, tenant, collection_id, custodian,
+                                  custodian_source, pu, pu.file_hash, pu.native_path,
+                                  pu.native_type, dgid, is_dup, deduped_custodians)
+            _stage(cur, tenant, doc_id, collection_id, "received", "done",
+                   worker_id=worker_id, input_hash=pu.file_hash)
+            _stage(cur, tenant, doc_id, collection_id, "preserved", "done",
+                   worker_id=worker_id, input_hash=pu.file_hash)
+            _stage(cur, tenant, doc_id, collection_id, "exploded", "done",
+                   worker_id=worker_id, input_hash=pu.file_hash)
+        id_by_local[pu.local_id] = doc_id
+        if pu.role == "attachment":
+            summary["attachments"] += 1
+
+    if not dry_run:
+        _wire_family(cur, id_by_local, units, root_local)
+        for pu in units:
+            _stage(cur, tenant, id_by_local[pu.local_id], collection_id,
+                   "family_link", "done", worker_id=worker_id)
+    conn.commit()
+
 
 def preserve_collection(tenant_id: str, collection_id: str,
                         rebuild: bool = True, force: bool = False,
@@ -476,26 +630,50 @@ def preserve_collection(tenant_id: str, collection_id: str,
         # in-run dedup tracking (sufficient for a fresh rebuild; see note in handoff)
         seen_dedup: dict = {}
 
-        # ---- walk originals/ ----
-        for src in sorted(_iter_files(originals)):
-            name = src.name
-            if _should_skip(name):
-                continue
-            try:
-                if is_email_source(str(src)):
-                    summary["emails"] += _process_email_source(
-                        conn, cur, tenant, collection_id, coll_default, coll_root,
-                        src, seen_dedup, summary, worker_id, dry_run)
+        # ---- parallel prepare (process pool) + serial single-writer commit ----
+        # commit at this point: workers fork from a clean (idle) connection.
+        sources = [s for s in sorted(_iter_files(originals)) if not _should_skip(s.name)]
+        total = len(sources)
+        logger.info("preserve: %d sources; %d prepare workers (chunk=%d)",
+                    total, PRESERVE_WORKERS, PRESERVE_CHUNK)
+        _coarse_log(cur, tenant, collection_id,
+                    "stage preserve: %d sources, %d workers" % (total, PRESERVE_WORKERS))
+        conn.commit()
+
+        payloads = ((str(coll_root), str(s), coll_default, dry_run) for s in sources)
+        done = 0
+        with ProcessPoolExecutor(max_workers=PRESERVE_WORKERS) as ex:
+            for res in ex.map(_prepare_source, payloads, chunksize=PRESERVE_CHUNK):
+                if res.error:
+                    summary["source_errors"] += 1
+                    logger.error("source failed: %s -- %s", res.src, res.error)
+                    _coarse_log(cur, tenant, collection_id,
+                                "source %s failed: %s" % (Path(res.src).name, res.error),
+                                level="error")
+                    conn.commit()
                 else:
-                    _process_loose(
-                        conn, cur, tenant, collection_id, coll_default, coll_root,
-                        src, seen_dedup, summary, worker_id, dry_run)
-            except Exception as e:
-                summary["source_errors"] += 1
-                logger.exception("source failed: %s", src)
-                _coarse_log(cur, tenant, collection_id,
-                            "source %s failed: %s" % (name, e), level="error")
-                conn.commit()  # keep the coarse log; move on
+                    for tree in res.trees:
+                        try:
+                            if tree.kind == "email":
+                                summary["emails"] += 1
+                            else:
+                                summary["loose"] += 1
+                            _commit_tree(conn, cur, tenant, collection_id, tree,
+                                         seen_dedup, summary, worker_id, dry_run)
+                        except Exception as e:
+                            summary["unit_errors"] += 1
+                            conn.rollback()
+                            logger.exception("commit failed: %s", res.src)
+                            _coarse_log(cur, tenant, collection_id,
+                                        "commit %s failed: %s" % (Path(res.src).name, e),
+                                        level="error")
+                            conn.commit()
+                done += 1
+                if done % 20000 == 0:
+                    logger.info("preserve: %d/%d sources committed", done, total)
+                    _coarse_log(cur, tenant, collection_id,
+                                "preserve progress: %d/%d" % (done, total))
+                    conn.commit()
 
         conn.commit()
         return summary

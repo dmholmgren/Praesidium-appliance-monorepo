@@ -871,3 +871,169 @@ async def spine_locator(request: Request, allegation_id: str):
             resp["page"] = fb["page"]
             resp["source"] = "pdf_search"
     return resp
+
+
+# ============================================================================
+# Case-seed trigger (spine page)
+# Frontier issue/allegation seeding: build_case_seed.py -> write_case_seed.py
+# Single-runner lock (builder caches + consolidated JSON are /tmp-global).
+# ============================================================================
+_SEED_LOCK = "/tmp/case_seed.lock"
+_SEED_UUID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
+_SEED_SUGGEST_RE = re.compile(
+    r"(?i)petition|complaint|answer|counter[- ]?claim|cross[- ]?claim"
+    r"|disclosure|third[- ]?party"
+)
+
+
+def _seed_paths(matter_id: str):
+    return (f"/tmp/case_seed_run_{matter_id}.log",
+            f"/tmp/case_seed_status_{matter_id}.json")
+
+
+def _seed_lock_alive() -> bool:
+    if not os.path.exists(_SEED_LOCK):
+        return False
+    try:
+        pid = int(open(_SEED_LOCK).read().split()[0])
+        os.kill(pid, 0)
+        return True
+    except (ValueError, IndexError, ProcessLookupError):
+        try:
+            os.remove(_SEED_LOCK)
+        except OSError:
+            pass
+        return False
+    except PermissionError:
+        return True
+
+
+@router.get("/spine/seed-candidates")
+async def spine_seed_candidates(request: Request, matter_id: str):
+    tid = _require(request)
+    if not _SEED_UUID_RE.match(matter_id or ""):
+        raise HTTPException(400, "matter_id must be a uuid")
+    async with AsyncSessionLocal() as db:
+        roots = (await db.execute(text("""
+            SELECT disk_root FROM matter_folders
+            WHERE matter_id = CAST(:m AS uuid)
+              AND COALESCE(disk_root, '') != ''
+        """), {"m": matter_id})).scalars().all()
+        out, seen = [], set()
+        for root in roots:
+            rows = (await db.execute(text("""
+                SELECT d.id::text AS id, d.file_path,
+                       COUNT(s.id) AS sections,
+                       COUNT(s.id) FILTER (
+                           WHERE s.section_type = 'cause_of_action'
+                       ) AS coa_sections
+                FROM dms_documents d
+                JOIN document_sections s ON s.dms_document_id = d.id
+                     AND s.superseded_by_run_id IS NULL
+                WHERE TRIM(d.tenant_id) = :tid AND d.file_path LIKE :pl
+                GROUP BY d.id, d.file_path
+                ORDER BY d.file_path
+            """), {"tid": tid,
+                   "pl": root.rstrip("/") + "/02-Pleadings/%"})).mappings().all()
+            for r in rows:
+                if r["id"] in seen:
+                    continue
+                seen.add(r["id"])
+                fname = r["file_path"].rsplit("/", 1)[-1]
+                out.append({
+                    "id": r["id"],
+                    "filename": fname,
+                    "folder": r["file_path"].rsplit("/", 2)[-2],
+                    "sections": int(r["sections"]),
+                    "suggested": bool(_SEED_SUGGEST_RE.search(fname))
+                                 or int(r["coa_sections"]) > 0,
+                })
+        return JSONResponse({"ok": True, "running": _seed_lock_alive(),
+                             "candidates": out})
+
+
+@router.post("/spine/seed")
+async def spine_seed_run(request: Request,
+                         payload: Dict[str, Any] = Body(...)):
+    import glob
+    import json as _json
+    import shutil as _sh
+    import subprocess
+    import time as _time
+    tid = _require(request)
+    matter_id = (payload.get("matter_id") or "").strip()
+    doc_ids = [str(x).strip() for x in (payload.get("doc_ids") or []) if x]
+    if not _SEED_UUID_RE.match(matter_id):
+        raise HTTPException(400, "matter_id must be a uuid")
+    if not doc_ids or any(not _SEED_UUID_RE.match(d) for d in doc_ids):
+        raise HTTPException(400, "doc_ids[] required, all uuids")
+    if not _SEED_UUID_RE.match(tid):
+        raise HTTPException(400, "tenant not resolvable")
+    if _seed_lock_alive():
+        raise HTTPException(409, "A case-seed run is already in progress")
+
+    log_path, status_path = _seed_paths(matter_id)
+    stamp = _time.strftime("%Y%m%d_%H%M%S")
+    # park stale frontier batch caches (the v17.6 stale-cache trap)
+    stale = (glob.glob("/tmp/case_seed_alleg_*.json")
+             + glob.glob("/tmp/case_seed_topics*.json")
+             + ["/tmp/case_seed_consolidated.json"])
+    for f in stale:
+        if os.path.isfile(f):
+            _sh.move(f, f + ".stale-" + stamp)
+
+    build = ["python3", "/app/jobs/build_case_seed.py",
+             "--tenant", tid, "--matter-id", matter_id]
+    for d in doc_ids:
+        build += ["--doc-id", d]
+    chain = (" ".join(build)
+             + f" && python3 /app/jobs/write_case_seed.py"
+               f" --matter-id {matter_id} --tenant {tid} --write")
+    script = (f"echo $$ > {_SEED_LOCK}; ( {chain} ) >> {log_path} 2>&1; "
+              f"rc=$?; rm -f {_SEED_LOCK}; echo \"EXIT rc=$rc\" >> {log_path}")
+
+    with open(status_path, "w") as fh:
+        _json.dump({"started_at": _time.time(), "matter_id": matter_id,
+                    "doc_count": len(doc_ids), "started_by": _uid(request)},
+                   fh)
+    with open(log_path, "w") as fh:
+        fh.write(f"=== case-seed launch {stamp} | matter {matter_id} | "
+                 f"{len(doc_ids)} docs ===\n")
+    subprocess.Popen(["bash", "-c", script], start_new_session=True)
+    log.info("case-seed launched: matter=%s docs=%d by user=%s",
+             matter_id, len(doc_ids), _uid(request))
+    return JSONResponse({"ok": True, "started": True, "docs": len(doc_ids)})
+
+
+@router.get("/spine/seed-status")
+async def spine_seed_status(request: Request, matter_id: str):
+    _require(request)
+    if not _SEED_UUID_RE.match(matter_id or ""):
+        raise HTTPException(400, "matter_id must be a uuid")
+    log_path, _status_path = _seed_paths(matter_id)
+    running = _seed_lock_alive()
+    tail = ""
+    if os.path.exists(log_path):
+        with open(log_path, "rb") as fh:
+            fh.seek(0, 2)
+            size = fh.tell()
+            fh.seek(max(0, size - 4000))
+            tail = fh.read().decode("utf-8", "replace")
+    done = (not running) and ("EXIT rc=" in tail)
+    succeeded = ("EXIT rc=0" in tail) if done else None
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(text("""
+            SELECT
+              (SELECT COUNT(*) FROM case_topics
+               WHERE matter_id = CAST(:m AS uuid)
+                 AND status != 'rejected') AS topics,
+              (SELECT COUNT(*) FROM allegations
+               WHERE matter_id = CAST(:m AS uuid)
+                 AND superseded_by_run_id IS NULL) AS allegations
+        """), {"m": matter_id})).mappings().first()
+    return JSONResponse({
+        "ok": True, "running": running, "done": done,
+        "succeeded": succeeded,
+        "topics": int(row["topics"]), "allegations": int(row["allegations"]),
+        "log_tail": tail[-2000:],
+    })

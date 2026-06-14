@@ -228,6 +228,31 @@ def _extract_image_ocr(filepath):
         return ""
 
 
+def _extract_pdf_ocr(filepath, max_pages=150):
+    """OCR a scanned/image-only PDF: raster pages at 200dpi -> tesseract.
+    Runs in worker subprocess via multiprocessing pool."""
+    try:
+        import io
+        import fitz
+        import pytesseract
+        from PIL import Image
+        doc = fitz.open(filepath)
+        out = []
+        for i, page in enumerate(doc):
+            if i >= max_pages:
+                break
+            pix = page.get_pixmap(dpi=200)
+            img = Image.open(io.BytesIO(pix.tobytes("png")))
+            t = pytesseract.image_to_string(img)
+            img.close()
+            if t and t.strip():
+                out.append(t.strip())
+        doc.close()
+        return "\n\n".join(out)
+    except Exception:
+        return ""
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Extension → extractor mapping
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -280,6 +305,11 @@ def _extract(filepath, extractors=None):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 EXT_MATCH_SQL = "lower(reverse(split_part(reverse(file_path), '.', 1))) = ANY(%s)"
+OCR_MATCH_SQL = (
+    "(" + EXT_MATCH_SQL
+    + " OR (lower(reverse(split_part(reverse(file_path), '.', 1))) = 'pdf'"
+    + " AND ocr_status = 'ocr_pending'))"
+)
 
 
 def _get_rq_queue():
@@ -338,7 +368,10 @@ def _ocr_worker(args):
     Returns (doc_id, text, error_str_or_None)."""
     doc_id, filepath = args
     try:
-        text = _extract_image_ocr(filepath)
+        if _get_ext(filepath) == "pdf":
+            text = _extract_pdf_ocr(filepath)
+        else:
+            text = _extract_image_ocr(filepath)
         return (doc_id, text, None)
     except Exception as e:
         return (doc_id, "", str(e)[:200])
@@ -438,6 +471,13 @@ def _run_batch_extract(job_id, ext_list, extractors, pass_name):
                             (text[:MAX_TEXT_LEN], doc_id)
                         )
                         extracted += 1
+                    elif _get_ext(filepath) == "pdf":
+                        # scanned/image-only PDF: leave pending, flag for OCR pass
+                        cur.execute(
+                            "UPDATE dms_documents SET ocr_status='ocr_pending', updated_at=NOW() "
+                            "WHERE id = CAST(%s AS uuid)", (doc_id,)
+                        )
+                        skipped += 1
                     else:
                         cur.execute(
                             "UPDATE dms_documents SET extraction_status='no_text', updated_at=NOW() "
@@ -529,7 +569,7 @@ def run_extract_ocr(job_id):
             "WHERE TRIM(tenant_id) = %s "
             "AND (content_text IS NULL OR content_text = '') "
             "AND extraction_status = 'pending' "
-            "AND " + EXT_MATCH_SQL,
+            "AND " + OCR_MATCH_SQL,
             (tenant_id, OCR_EXTS)
         )
         total = cur.fetchone()["cnt"]
@@ -570,7 +610,7 @@ def run_extract_ocr(job_id):
                     "WHERE TRIM(tenant_id) = %s "
                     "AND (content_text IS NULL OR content_text = '') "
                     "AND extraction_status = 'pending' "
-                    "AND " + EXT_MATCH_SQL + " "
+                    "AND " + OCR_MATCH_SQL + " "
                     "AND id > CAST(%s AS uuid) "
                     "ORDER BY id LIMIT %s",
                     (tenant_id, OCR_EXTS, last_id, BATCH_SIZE)
@@ -609,7 +649,7 @@ def run_extract_ocr(job_id):
                             skipped += 1
                         elif text and text.strip():
                             cur.execute(
-                                "UPDATE dms_documents SET content_text=%s, extraction_status='complete', "
+                                "UPDATE dms_documents SET content_text=%s, extraction_status='complete', ocr_status='complete', "
                                 "updated_at=NOW() WHERE id = CAST(%s AS uuid)",
                                 (text[:MAX_TEXT_LEN], doc_id)
                             )

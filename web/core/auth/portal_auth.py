@@ -139,13 +139,23 @@ async def _portal_context(request: Request) -> dict | None:
                 {"cid": u["portal_access_client_id"]})
             crow = cr.fetchone()
             client_name = crow.client_name if crow else ""
+        # Matters visible to this portal user:
+        #   * client portal: sub-tenant-level grants (sub_tenant_matter_scope)
+        #   * co-counsel:     per-user matter grants (external_user_scopes)
         mr = await db.execute(sa_text("""
-            SELECT m.id, m.matter_name, m.matter_number
-            FROM sub_tenant_matter_scope s
-            JOIN matters m ON m.id = s.matter_id
-            WHERE TRIM(s.tenant_id) = :tid AND s.revoked_at IS NULL
+            SELECT DISTINCT m.id, m.matter_name, m.matter_number
+            FROM matters m
+            WHERE m.id IN (
+                SELECT s.matter_id FROM sub_tenant_matter_scope s
+                 WHERE TRIM(s.tenant_id) = :tid AND s.revoked_at IS NULL
+                UNION
+                SELECT CAST(e.scope_id AS uuid) FROM external_user_scopes e
+                 WHERE TRIM(e.tenant_id) = :tid AND e.user_id = :uid
+                   AND e.scope_type = 'matter' AND e.is_active = TRUE
+                   AND (e.expires_at IS NULL OR e.expires_at > NOW())
+            )
             ORDER BY m.matter_name
-        """), {"tid": tid})
+        """), {"tid": tid, "uid": user.id})
         matters = [{"id": str(row["id"]), "name": row["matter_name"],
                     "number": row["matter_number"]} for row in mr.mappings()]
     return {"user_id": user.id, "name": u["full_name"] if u else "",
@@ -187,40 +197,18 @@ async def portal_set_password(request: Request):
 
 @router.get("/portal/", response_class=HTMLResponse)
 async def portal_home(request: Request):
-    """Minimal landing stub — proves the auth spine. Replaced by real portal UI."""
+    """Secure document portal (client + co-counsel) — serves the React app."""
     ctx = await _portal_context(request)
     if not ctx:
         return RedirectResponse(url="/login", status_code=302)
-    matters_html = "".join(
-        f"<li>{html.escape(m['name'] or '')} <span style='color:#8a93a6'>({html.escape(m['number'] or '')})</span></li>"
-        for m in ctx["matters"]) or "<li style='color:#8a93a6'>No matters shared yet.</li>"
-    pw_block = ("<p style='color:#7fb069'>✓ Password set — you can sign in at this address anytime.</p>"
-                if ctx["password_set"] else """
-      <form id="pwform" onsubmit="setpw(event)">
-        <input type="password" id="pw" placeholder="Choose a password (12+ characters)"
-               style="padding:8px;width:280px;border-radius:4px;border:1px solid #2a3a5c;background:#0e1726;color:#e8e2d5">
-        <button type="submit" style="padding:8px 16px;background:#c9a55c;border:none;border-radius:4px;cursor:pointer">Set Password</button>
-      </form>
-      <p id="pwmsg" style="font-size:13px;color:#8a93a6">Optional — lets you return without a new link.</p>
-      <script>
-      async function setpw(e){e.preventDefault();
-        const r=await fetch('/api/portal/set-password',{method:'POST',
-          headers:{'Content-Type':'application/json'},
-          body:JSON.stringify({password:document.getElementById('pw').value})});
-        const j=await r.json();
-        document.getElementById('pwmsg').textContent=j.message||j.error;
-        if(r.ok){document.getElementById('pwform').style.display='none';}}
-      </script>""")
-    return HTMLResponse(f"""<!doctype html><html><head><title>Client Portal</title>
-<style>body{{font-family:Georgia,serif;background:#0e1726;color:#e8e2d5;margin:0;padding:40px}}
-.card{{background:#16213a;border:1px solid #2a3a5c;border-radius:8px;padding:32px;max-width:640px;margin:0 auto}}
-h2{{color:#c9a55c;margin-top:0}}a{{color:#c9a55c}}</style></head><body>
-<div class="card">
-  <h2>Welcome, {html.escape(ctx['name'])}</h2>
-  <p style="color:#8a93a6">{html.escape(ctx['client_name'])} — secure client portal</p>
-  <h3>Your Matters</h3>
-  <ul>{matters_html}</ul>
-  <hr style="border-color:#2a3a5c">
-  {pw_block}
-  <p style="margin-top:24px"><a href="/auth/logout">Sign out</a></p>
-</div></body></html>""")
+    return HTMLResponse("""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Secure Document Portal</title>
+<style>html,body{margin:0;height:100%;background:#0e1726}
+#portal-root{height:100%}
+.boot{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
+color:#c9a55c;font-family:Georgia,serif;font-size:18px}</style></head>
+<body><div id="portal-root"><div class="boot">Praesidium \u2014 loading your portal\u2026</div></div>
+<script type="module" src="/static/js/portal-app.js"></script>
+</body></html>""")

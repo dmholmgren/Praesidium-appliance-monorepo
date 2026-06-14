@@ -79,6 +79,7 @@ INTERNAL_ROLES = frozenset({
 EXTERNAL_ROLES = frozenset({
     "client",
     "deal_room_guest",
+    "co_counsel",
 })
 
 # super_admin bypasses every check (break-glass).
@@ -217,6 +218,12 @@ class PermissionService:
             deal_room_ids = await cls._user_deal_room_scopes(tenant_id, user.id)
             scope_filters["deal_room_id"] = deal_room_ids
 
+        # Co-counsel: full matter scope from per-user external_user_scopes(scope_type='matter').
+        # No folder/work-product exclusion at this layer — co-counsel are collaborators.
+        elif role == "co_counsel":
+            matter_ids = await cls._user_cocounsel_matter_ids(tenant_id, user.id)
+            scope_filters["matter_id"] = matter_ids
+
         return PermissionResult(True, scope_filters=scope_filters, reason=reason)
 
     # ── Internal helpers ──────────────────────────────────────────────────
@@ -312,6 +319,28 @@ class PermissionService:
                      WHERE TRIM(tenant_id) = :tid
                        AND user_id = :uid
                        AND scope_type = 'deal_room'
+                       AND is_active = TRUE
+                       AND (expires_at IS NULL OR expires_at > NOW())
+                """),
+                {"tid": tenant_id, "uid": user_id},
+            )
+            return [row[0] for row in r.fetchall()]
+
+    @classmethod
+    async def _user_cocounsel_matter_ids(cls, tenant_id: str, user_id: int) -> list[str]:
+        """
+        Return list of matter UUIDs (as str) granted to a co_counsel user via
+        external_user_scopes(scope_type='matter'). Per-user (each co-counsel
+        sees only the matters they were individually granted).
+        """
+        async with AsyncSessionLocal() as session:
+            r = await session.execute(
+                sa_text("""
+                    SELECT scope_id
+                      FROM external_user_scopes
+                     WHERE TRIM(tenant_id) = :tid
+                       AND user_id = :uid
+                       AND scope_type = 'matter'
                        AND is_active = TRUE
                        AND (expires_at IS NULL OR expires_at > NOW())
                 """),

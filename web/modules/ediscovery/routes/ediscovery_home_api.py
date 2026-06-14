@@ -114,3 +114,61 @@ async def ediscovery_home_api(request: Request):
         "productions": productions,
         "matters": matters,
     })
+
+
+# --- Adversarial-content alerts (prompt-injection defense surfacing) --------
+# Critical integrity flags = hidden instructions / prompt-injection patterns
+# the scanner found in produced documents. This is the demo "red alert": a
+# produced document tried to manipulate the AI review, and we caught it.
+@router.get("/integrity-alerts")
+async def ediscovery_integrity_alerts(request: Request, matter_id: str = None):
+    tid = _tid(request)
+    params = {"tid": tid}
+    matter_clause = ""
+    if matter_id:
+        matter_clause = " AND col.matter_id = CAST(:mid AS uuid)"
+        params["mid"] = matter_id
+    sql = f"""
+        SELECT f.doc_id::text                          AS doc_id,
+               COUNT(*)                                AS critical_flags,
+               ARRAY_AGG(DISTINCT f.flag_type)         AS flag_types,
+               MAX(f.created_at)                       AS flagged_at,
+               d.file_name, d.bates_begin, d.custodian,
+               col.id::text                            AS collection_id,
+               col.collection_name,
+               col.matter_id::text                     AS matter_id,
+               m.matter_name, m.matter_number,
+               cl.client_name
+          FROM doc_integrity_flags f
+          JOIN ediscovery_documents d
+            ON d.id = f.doc_id AND TRIM(d.tenant_id) = TRIM(f.tenant_id)
+          JOIN ediscovery_collections col
+            ON col.id = d.collection_id AND TRIM(col.tenant_id) = TRIM(d.tenant_id)
+          LEFT JOIN matters m
+            ON m.id = col.matter_id AND TRIM(m.tenant_id) = TRIM(col.tenant_id)
+          LEFT JOIN clients cl
+            ON cl.id = m.client_id AND TRIM(cl.tenant_id) = TRIM(m.tenant_id)
+         WHERE TRIM(f.tenant_id) = TRIM(:tid)
+           AND f.corpus = 'ediscovery'
+           AND f.severity = 'critical'
+           AND f.flag_type IN ('hidden_instruction','instruction_pattern','unicode_tag_chars')
+           {matter_clause}
+         GROUP BY f.doc_id, d.file_name, d.bates_begin, d.custodian,
+                  col.id, col.collection_name, col.matter_id,
+                  m.matter_name, m.matter_number, cl.client_name
+         ORDER BY MAX(f.created_at) DESC
+         LIMIT 200
+    """
+    async with AsyncSessionLocal() as session:
+        rows = await session.execute(sa_text(sql), params)
+        alerts = []
+        for r in rows.mappings().fetchall():
+            row = dict(r)
+            row["flagged_at"] = str(row["flagged_at"])[:19] if row.get("flagged_at") else None
+            row["flag_types"] = list(row.get("flag_types") or [])
+            alerts.append(row)
+    return JSONResponse({
+        "alert_count": len(alerts),
+        "total_critical_flags": sum(a["critical_flags"] for a in alerts),
+        "alerts": alerts,
+    })

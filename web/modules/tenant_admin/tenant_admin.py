@@ -1020,7 +1020,11 @@ async def folder_recon_search_matters(request: Request, q: str = "", user=Depend
 
 @router.post("/folder-reconciliation/sync-matter/{matter_id}")
 async def folder_recon_sync_matter(request: Request, matter_id: str, user=Depends(get_current_user)):
-    """Execute folder sync using matter_sync.sync_mapping_files directly."""
+    """SYNC_QUEUE_V1 — Enqueue folder sync onto the 'migration' RQ queue.
+    One sync_mapping_files sub-job per accepted dms_folder_matches row,
+    consumed by the 16-replica proc worker fleet (4 threads each). Returns
+    parent_job_id immediately; poll sync-status/{parent_job_id} for progress.
+    Replaces the previous inline-synchronous execution in the web container."""
     if not _require_admin(user, request):
         from fastapi.responses import JSONResponse
         return JSONResponse({"error": "Unauthorized"}, status_code=403)
@@ -1036,8 +1040,6 @@ async def folder_recon_sync_matter(request: Request, matter_id: str, user=Depend
         """), {"mid": matter_id, "tid": tid})).mappings().all()
 
         log.warning(f"sync-matter: matter_id={matter_id}, tid={tid}, matches_found={len(matches)}")
-        for mm in matches:
-            log.warning(f"  match: folder_path={mm['folder_path']}, disk_path={mm['best_disk_path']}")
 
         if not matches:
             from fastapi.responses import JSONResponse
@@ -1063,73 +1065,148 @@ async def folder_recon_sync_matter(request: Request, matter_id: str, user=Depend
     except Exception:
         pass
     skip_remap = (sync_mode == "raw")
-    log.warning(f"sync-matter: sync_mode={sync_mode}, skip_remap={skip_remap}")
 
-    # Import sync module — already patched with no-op assert and graceful Redis
-    import importlib.util, sys
-    mod_path = "/app/modules/dms/jobs/matter_sync.py"
-    if "matter_sync_mod" in sys.modules:
-        del sys.modules["matter_sync_mod"]
-    if "matter_sync_mod" in sys.modules:
-        del sys.modules["matter_sync_mod"]
-    if "matter_sync_mod" not in sys.modules:
-        spec = importlib.util.spec_from_file_location("matter_sync_mod", mod_path)
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules["matter_sync_mod"] = mod
-        spec.loader.exec_module(mod)
-    else:
-        mod = sys.modules["matter_sync_mod"]
+    import os as _os
+    import json as _json
+    import uuid as _uuid
+    from datetime import datetime as _dt, timezone as _tz
+    from redis import Redis
+    from rq import Queue
 
-    parent_job_id = f"web-{matter_id[:8]}"
-    results = []
-    total_copied = 0
-    total_skipped = 0
-    total_errors = 0
+    REDIS_URL = _os.environ.get("REDIS_URL", "redis://redis:6379/0")
+    try:
+        rds = Redis.from_url(REDIS_URL, socket_timeout=5)
+        rds.ping()
+    except Exception as e:
+        from fastapi.responses import JSONResponse
+        log.error(f"sync-matter: Redis unavailable, refusing to queue: {e}")
+        return JSONResponse({"error": f"Redis unavailable: {e}"}, status_code=503)
 
-    import asyncio
+    parent_job_id = f"web-{_uuid.uuid4().hex[:12]}"
+    pkey = f"matter_sync:parent:{parent_job_id}"
+    rds.hset(pkey, mapping={
+        "tenant_id": tid.strip(),
+        "matter_id": matter_id,
+        "status": "running",
+        "started_at": _dt.now(_tz.utc).isoformat(),
+        "mapping_count": str(len(matches)),
+        "sync_mode": sync_mode,
+    })
+    rds.expire(pkey, 86400)
 
+    q = Queue("migration", connection=rds)
+    sub_jobs = []
     for idx, m in enumerate(matches):
-        try:
-            r = await asyncio.to_thread(
-                mod.sync_mapping_files,
-                tenant_id=tid.strip(),
-                matter_id=matter_id,
-                folder_path=m["folder_path"] or "",
-                disk_root=m["best_disk_path"] or "",
-                parent_job_id=parent_job_id,
-                mapping_idx=idx,
-                legacy_source_path=m["folder_path"] or legacy_path or "",
-                skip_remap=skip_remap,
-            )
-            results.append(r)
-            total_copied += int(r.get("copied") or 0)
-            total_skipped += int(r.get("skipped_existing") or 0)
-            total_errors += int(r.get("errors") or 0)
-            log.warning(f"sync mapping {idx}: result={r}")
-        except Exception as e:
-            log.error(f"sync mapping {idx} failed: {e}")
-            results.append({"error": str(e)})
-            total_errors += 1
+        mkey = f"matter_sync:mapping:{parent_job_id}:{idx}"
+        rds.hset(mkey, mapping={
+            "folder_path": m["folder_path"] or "",
+            "disk_root": m["best_disk_path"] or "",
+            "legacy_source_path": m["folder_path"] or legacy_path or "",
+            "status": "queued",
+            "copied": "0", "skipped_existing": "0",
+            "skipped_unsupported": "0", "errors": "0",
+            "ocr_queued": "0", "total_bytes": "0",
+        })
+        rds.expire(mkey, 86400)
+        sub = q.enqueue(
+            "modules.dms.jobs.matter_sync.sync_mapping_files",
+            tid.strip(), matter_id,
+            m["folder_path"] or "", m["best_disk_path"] or "",
+            parent_job_id, idx,
+            m["folder_path"] or legacy_path or "",
+            skip_remap,
+            job_timeout=14400,
+            result_ttl=86400,
+        )
+        sub_jobs.append(sub.id)
+        rds.hset(mkey, "sub_job_id", sub.id)
+
+    rds.hset(pkey, "sub_job_ids", _json.dumps(sub_jobs))
+    log.warning(
+        f"sync-matter queued: matter={matter_id} parent={parent_job_id} "
+        f"mappings={len(matches)} mode={sync_mode}"
+    )
 
     from fastapi.responses import JSONResponse
     return JSONResponse({
-        "status": "ok",
+        "status": "queued",
         "matter_id": matter_id,
-        "files_copied": total_copied,
-        "files_skipped": total_skipped,
-        "errors": total_errors,
-        "mappings_processed": len(matches),
-        "details": results,
+        "parent_job_id": parent_job_id,
+        "mappings_queued": len(matches),
         "sync_mode": sync_mode,
-        "message": f"{total_copied} copied, {total_skipped} existing, {total_errors} errors ({sync_mode} mode)",
+        "message": (
+            f"{len(matches)} mapping(s) queued on migration workers "
+            f"({sync_mode} mode). Poll sync-status/{parent_job_id} for progress."
+        ),
     })
 
 
 @router.get("/folder-reconciliation/sync-status/{job_id}")
 async def folder_recon_sync_status(request: Request, job_id: str, user=Depends(get_current_user)):
-    """Poll sync job status. For now returns immediate complete since sync is synchronous."""
+    """SYNC_QUEUE_V1 — Poll sync progress from the Redis parent/mapping hashes
+    written by sync_mapping_files workers (matter_sync:parent:* / :mapping:*)."""
     from fastapi.responses import JSONResponse
-    return JSONResponse({"status": "complete", "job_id": job_id})
+    import os as _os
+    from redis import Redis
+
+    REDIS_URL = _os.environ.get("REDIS_URL", "redis://redis:6379/0")
+    try:
+        rds = Redis.from_url(REDIS_URL, socket_timeout=3, decode_responses=True)
+        parent = rds.hgetall(f"matter_sync:parent:{job_id}")
+        if not parent:
+            return JSONResponse({
+                "status": "unknown", "job_id": job_id,
+                "message": "No parent record found (expired, or pre-queue synchronous job).",
+            })
+        n = int(parent.get("mapping_count", "0") or 0)
+        totals = {"copied": 0, "skipped_existing": 0, "skipped_unsupported": 0,
+                  "errors": 0, "ocr_queued": 0, "total_bytes": 0}
+        mappings = []
+        done = 0
+        failed = 0
+        for idx in range(n):
+            m = rds.hgetall(f"matter_sync:mapping:{job_id}:{idx}")
+            if not m:
+                mappings.append({"idx": idx, "status": "missing"})
+                continue
+            for k in totals:
+                try:
+                    totals[k] += int(m.get(k, "0") or 0)
+                except (ValueError, TypeError):
+                    pass
+            st = m.get("status", "")
+            if st in ("finished", "failed"):
+                done += 1
+            if st == "failed":
+                failed += 1
+            mappings.append({
+                "idx": idx,
+                "status": st,
+                "folder_path": m.get("folder_path"),
+                "copied": m.get("copied"),
+                "skipped_existing": m.get("skipped_existing"),
+                "errors": m.get("errors"),
+                "error": m.get("error"),
+                "enumerated_files": m.get("enumerated_files"),
+                "excluded_files": m.get("excluded_files"),
+            })
+        if n and done >= n:
+            status = "complete_with_errors" if failed else "complete"
+        else:
+            status = parent.get("status", "running")
+        return JSONResponse({
+            "status": status,
+            "job_id": job_id,
+            "matter_id": parent.get("matter_id"),
+            "sync_mode": parent.get("sync_mode"),
+            "mapping_count": n,
+            "mappings_done": done,
+            "mappings_failed": failed,
+            "totals": totals,
+            "mappings": mappings,
+        })
+    except Exception as e:
+        return JSONResponse({"status": "error", "job_id": job_id, "error": str(e)}, status_code=500)
 
 
 @router.get("/folder-reconciliation/browse")

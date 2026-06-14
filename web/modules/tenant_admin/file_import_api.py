@@ -381,7 +381,7 @@ async def api_recon_accept_batch(request: Request, user=Depends(get_current_user
                 await session.execute(text("""
                     INSERT INTO dms_folder_matches (id, tenant_id, matter_id, folder_path, score, accepted, best_disk_path, disk_file_count, computed_at)
                     VALUES (gen_random_uuid(), :tid, CAST(:mid AS uuid), :fp, 1.0, true, :bp, :fc, NOW())
-                    ON CONFLICT (tenant_id, matter_id) DO UPDATE SET
+                    ON CONFLICT (tenant_id, folder_path, matter_id) DO UPDATE SET
                         folder_path = EXCLUDED.folder_path,
                         best_disk_path = EXCLUDED.best_disk_path,
                         disk_file_count = EXCLUDED.disk_file_count,
@@ -1237,3 +1237,5 @@ async def api_cluster_create_collection(request: Request, cluster_id: str, user=
         return JSONResponse({"id": collection_id, "status": "created_no_job", "error": str(e)})
     return JSONResponse({"id": collection_id, "status": "collecting",
                          "collection_name": collection_name, "source_type": source_type})
+
+# ONCONFLICT_FPM_V1 — dms_folder_matches upserts target (tenant_id, folder_path, matter_id)

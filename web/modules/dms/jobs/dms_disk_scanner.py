@@ -137,24 +137,24 @@ async def scan_tenant(tenant_id: str, db_session) -> dict:
 
 
 async def get_unindexed_count(tenant_id: str, db_session) -> dict:
+    """UNINDEXED_DB_V1 — DB-derived counts; no disk I/O in the request path.
+
+    The previous implementation ran os.walk over every matter folder root
+    synchronously inside the async event loop. With a 400K+ file corpus this
+    blocked every request on the web tier for minutes (tenant-admin and
+    file-import page hangs, browser 499s) and held a DB session idle in
+    transaction for the duration. dms_documents is the authoritative disk
+    inventory (populated by matter_sync, file_crawler, and the scan job),
+    so count from it instead. The full disk walk still happens in
+    scan_tenant(), which runs as a background RQ job where blocking I/O
+    belongs."""
     from sqlalchemy import text
 
-    rows = (await db_session.execute(text("""
-        SELECT mf.disk_root FROM matter_folders mf
-        WHERE mf.disk_root LIKE '/mnt/praesidium%'
-          AND TRIM(mf.tenant_id) = :tid
-    """), {"tid": tenant_id.strip()})).fetchall()
-
-    disk_count = 0
-    for row in rows:
-        root = row.disk_root
-        if not os.path.isdir(root):
-            continue
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
-            for fname in filenames:
-                if not _should_skip(fname):
-                    disk_count += 1
+    disk_count = (await db_session.execute(text("""
+        SELECT COUNT(*) FROM dms_documents
+        WHERE TRIM(tenant_id) = :tid
+          AND (folder_root LIKE '/mnt/praesidium%' OR file_path LIKE '/mnt/praesidium%')
+    """), {"tid": tenant_id.strip()})).scalar() or 0
 
     indexed = (await db_session.execute(text("""
         SELECT COUNT(*) FROM documents

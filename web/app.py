@@ -259,6 +259,8 @@ app.include_router(ediscovery_partials_router)
 
 from modules.ediscovery.routes.upload import router as ediscovery_upload_router
 app.include_router(ediscovery_upload_router)
+from modules.ediscovery.routes.guided_ingest import router as ediscovery_guided_router
+app.include_router(ediscovery_guided_router)
 
 from modules.admin.platform import router as platform_router
 app.include_router(platform_router)
@@ -380,6 +382,11 @@ app.include_router(fill_me_in_api_router)
 app.include_router(fill_me_in_pages_router)
 # === end Fill Me In ===
 app.include_router(task_project_router)
+
+# === Conferencing (LiveKit) ===
+from modules.dashboard.routes.conferencing_api import router as conferencing_router
+app.include_router(conferencing_router)
+# === end Conferencing ===
 
 app.include_router(widget_router)
 
@@ -668,10 +675,22 @@ from modules.billing.api.client_portal_api import router as client_portal_api_ro
 app.include_router(client_portal_api_router)
 # === end Client Portal API ===
 
+# === Co-Counsel Access (matter-scoped external attorney access) ===
+from modules.billing.api.co_counsel_page import router as co_counsel_page_router
+app.include_router(co_counsel_page_router)
+from modules.billing.api.co_counsel_api import router as co_counsel_api_router
+app.include_router(co_counsel_api_router)
+# === end Co-Counsel Access ===
+
 # === Client Portal Auth (magic link + portal sessions) ===
 from core.auth.portal_auth import router as portal_auth_router
 app.include_router(portal_auth_router)
 # === end Client Portal Auth ===
+
+# === Portal DMS Browse (document-browsing portal for client + co-counsel) ===
+from modules.dms.services.portal_dms_api import router as portal_dms_router
+app.include_router(portal_dms_router)
+# === end Portal DMS Browse ===
 
 # === Context Menu Registry ===
 from modules.dashboard.routes.context_menu_api import router as context_menu_api_router

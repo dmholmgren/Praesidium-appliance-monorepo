@@ -233,16 +233,34 @@ def _map_name(raw, by_key, by_email):
     return raw
 
 
-def _canonicalize_rollup(cur, tenant, collection_id, by_key, by_email):
+def _canonicalize_rollup(cur, tenant, collection_id, by_key, by_email, conn=None):
     """Rewrite deduped_custodians for the collection through the registry, so the
-    cross-custodian report is canonical. Returns count of docs changed."""
+    cross-custodian report is canonical. Returns count of docs changed.
+    conn: if given, commit in bounded batches; if None (dry-run) apply uncommitted
+    so the caller's rollback discards."""
+    from psycopg2.extras import execute_values
     cur.execute(
         "SELECT id::text, deduped_custodians FROM ediscovery_documents "
         "WHERE collection_id=%s::uuid AND TRIM(tenant_id)=%s "
         "  AND deduped_custodians IS NOT NULL AND deduped_custodians NOT IN ('', '[]')",
         (str(collection_id), tenant))
+    rows = cur.fetchall()
     changed = 0
-    for did, raw_json in cur.fetchall():
+    pending = []
+
+    def _flush():
+        if not pending:
+            return
+        execute_values(
+            cur,
+            "UPDATE ediscovery_documents AS d SET deduped_custodians = v.j "
+            "FROM (VALUES %s) AS v(j, did) WHERE d.id = v.did::uuid",
+            pending, template="(%s, %s)", page_size=1000)
+        if conn is not None:
+            conn.commit()
+        pending.clear()
+
+    for did, raw_json in rows:
         try:
             names = json.loads(raw_json)
         except Exception:
@@ -257,13 +275,34 @@ def _canonicalize_rollup(cur, tenant, collection_id, by_key, by_email):
                 out.append(cn)
         new_json = json.dumps(out)
         if new_json != raw_json:
-            cur.execute("UPDATE ediscovery_documents SET deduped_custodians=%s WHERE id=%s::uuid",
-                        (new_json, did))
+            pending.append((new_json, did))
             changed += 1
+            if len(pending) >= 5000:
+                _flush()
+    _flush()
     return changed
 
 
 # --------------------------------------------------------------- the pass
+DOC_UPDATE_BATCH = 5000
+
+
+def _flush_doc_updates(cur, rows):
+    """Batch-apply (custodian_id, custodian) for many docs in one round-trip."""
+    if not rows:
+        return
+    from psycopg2.extras import execute_values
+    execute_values(
+        cur,
+        "UPDATE ediscovery_documents AS d SET custodian_id = v.cid::uuid, "
+        "custodian = v.canonical FROM (VALUES %s) AS v(cid, canonical, did) "
+        "WHERE d.id = v.did::uuid",
+        [(str(cid), canonical, did) for cid, canonical, did in rows],
+        template="(%s, %s, %s)",
+        page_size=1000,
+    )
+
+
 def canonicalize_collection(tenant_id, collection_id, dry_run=False):
     tenant = tenant_id.strip()
     conn = _connect()
@@ -279,21 +318,37 @@ def canonicalize_collection(tenant_id, collection_id, dry_run=False):
             "ORDER BY id", (str(collection_id), tenant))
         docs = cur.fetchall()
         s["docs"] = len(docs)
+        resolve_cache = {}
+        pending = []
         for did, cust, csource, dtype, efrom in docs:
             cand_email = cand_name = None
             if dtype == "email" and efrom:
                 cand_email, cand_name = extract_email(efrom), display_name(efrom)
-            cid, canonical = resolve_or_create(cur, tenant, matter_id, cust, csource,
-                                               cand_email, cand_name)
+            ckey = (cust, csource, cand_email,
+                    normalize_key(display_name(cand_name)) if cand_name else None)
+            if ckey in resolve_cache:
+                cid, canonical = resolve_cache[ckey]
+            else:
+                cid, canonical = resolve_or_create(cur, tenant, matter_id, cust, csource,
+                                                   cand_email, cand_name)
+                resolve_cache[ckey] = (cid, canonical)
             if cid is None:
                 continue
-            if not dry_run:
-                cur.execute("UPDATE ediscovery_documents SET custodian_id=%s, custodian=%s "
-                            "WHERE id=%s::uuid", (cid, canonical, did))
             s["linked"] += 1
+            if not dry_run:
+                pending.append((cid, canonical, did))
+                if len(pending) >= DOC_UPDATE_BATCH:
+                    _flush_doc_updates(cur, pending)
+                    conn.commit()
+                    pending = []
+        if not dry_run and pending:
+            _flush_doc_updates(cur, pending)
+            conn.commit()
+            pending = []
         # roll-up canonicalization (registry now fully built for this collection)
         by_key, by_email = _canonical_map(cur, tenant, matter_id)
-        s["rollup_changed"] = _canonicalize_rollup(cur, tenant, collection_id, by_key, by_email)
+        s["rollup_changed"] = _canonicalize_rollup(cur, tenant, collection_id, by_key,
+                                                    by_email, conn=None if dry_run else conn)
         if dry_run:
             conn.rollback()
         else:

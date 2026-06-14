@@ -57,6 +57,16 @@ def _serialize(obj):
     return obj
 
 
+# 'Reviewed' = looked-at-by-a-human (viewed_at), UNLESS the doc sits in a
+# formal review batch, in which case the batch workflow owns review state.
+# (v18.7 decoupling: review_status is pure responsiveness coding.)
+REVIEWED_SQL = (
+    "COALESCE((SELECT bool_and(rbd.status = 'completed') "
+    "FROM review_batch_documents rbd WHERE rbd.document_id = ed.id), "
+    "ed.viewed_at IS NOT NULL)"
+)
+
+
 @router.get("/collection/{collection_id}")
 async def review_collection_info(request: Request, collection_id: str, user=Depends(get_current_user)):
     """Collection header info + seed default tags."""
@@ -68,8 +78,10 @@ async def review_collection_info(request: Request, collection_id: str, user=Depe
                 SELECT c.id::text, c.name, c.collection_name, c.matter_id::text,
                        c.total_docs,
                        COALESCE((SELECT COUNT(*) FROM ediscovery_documents ed
-                                 WHERE ed.collection_id = c.id
-                                   AND COALESCE(ed.review_status,'unreviewed') != 'unreviewed'), 0) AS reviewed_docs,
+                                 WHERE ed.collection_id IN (
+                                       SELECT cc.id FROM ediscovery_collections cc
+                                       WHERE cc.id = c.id OR cc.parent_collection_id = c.id)
+                                   AND COALESCE((SELECT bool_and(rbd.status = 'completed') FROM review_batch_documents rbd WHERE rbd.document_id = ed.id), ed.viewed_at IS NOT NULL)), 0) AS reviewed_docs,
                        c.status, c.source_party,
                        m.matter_name, m.matter_number
                 FROM ediscovery_collections c
@@ -106,13 +118,15 @@ async def review_doc_list(
     offset = (max(1, page) - 1) * min(200, max(1, per_page))
     per_page = min(200, max(1, per_page))
 
-    where = ["trim(ed.tenant_id::text) = trim(:tid)", "ed.collection_id = CAST(:cid AS uuid)"]
+    where = ["trim(ed.tenant_id::text) = trim(:tid)",
+             "ed.collection_id IN (SELECT cc.id FROM ediscovery_collections cc "
+             "WHERE cc.id = CAST(:cid AS uuid) OR cc.parent_collection_id = CAST(:cid AS uuid))"]
     params = {"tid": tid, "cid": collection_id, "limit": per_page, "offset": offset}
 
     if status_filter == "unreviewed":
-        where.append("COALESCE(ed.review_status, 'unreviewed') = 'unreviewed'")
+        where.append(f"NOT ({REVIEWED_SQL})")
     elif status_filter == "reviewed":
-        where.append("COALESCE(ed.review_status, 'unreviewed') <> 'unreviewed'")
+        where.append(f"({REVIEWED_SQL})")
 
     if privilege_filter == "privileged":
         where.append("ed.privilege_status = 'privileged'")
@@ -138,7 +152,8 @@ async def review_doc_list(
                        ed.doc_date, ed.custodian, ed.email_from, ed.email_subject,
                        ed.page_count, ed.bates_begin, ed.bates_end,
                        ed.review_status, ed.privilege_status, ed.is_duplicate,
-                       ed.relevance_score, ed.doc_type
+                       ed.relevance_score, ed.doc_type,
+                       ed.viewed_at, ({REVIEWED_SQL}) AS is_reviewed
                 FROM ediscovery_documents ed
                 WHERE {wsql}
                 ORDER BY COALESCE(ed.doc_date, ed.ingested_at::date) DESC NULLS LAST, ed.file_name ASC
@@ -152,7 +167,8 @@ async def review_doc_list(
             rec["display_name"] = name.replace("\\", "/").rsplit("/", 1)[-1]
             rec["display_size"] = _fmt_size(rec.get("file_size"))
             rec["display_date"] = _fmt_date(rec.get("doc_date"))
-            rec["status_display"] = (rec.get("review_status") or "unreviewed").replace("_", " ")
+            _rs = rec.get("review_status")
+            rec["status_display"] = _rs.replace("_", " ") if _rs and _rs != "unreviewed" else ""
             docs.append(rec)
 
         total_pages = max(1, (total + per_page - 1) // per_page)
@@ -174,7 +190,7 @@ async def review_doc_detail(request: Request, doc_id: str, user=Depends(get_curr
             # Main doc
             r = await session.execute(sa_text("""
                 SELECT ed.id::text, ed.file_name, ed.mime_type, ed.file_size,
-                       ed.page_count, ed.working_path, ed.file_path, ed.native_path,
+                       ed.page_count, ed.working_path, ed.file_path, ed.native_path, ed.rendition_path,
                        ed.text_path, ed.bates_begin, ed.bates_end, ed.collection_id::text,
                        ed.doc_type, ed.extracted_text IS NOT NULL AS has_text,
                        ed.file_hash, ed.doc_hash, ed.doc_date, ed.ingested_at,
@@ -184,7 +200,8 @@ async def review_doc_detail(request: Request, doc_id: str, user=Depends(get_curr
                        ed.is_duplicate, ed.is_near_duplicate, ed.near_dupe_score,
                        ed.relevance_score, ed.review_tier,
                        ed.review_status, ed.privilege_status,
-                       ed.reviewed_at, ed.reviewed_by, ed.coding_notes
+                       ed.reviewed_at, ed.reviewed_by, ed.coding_notes,
+                       ed.viewed_at, ed.viewed_by
                 FROM ediscovery_documents ed
                 WHERE ed.id = CAST(:did AS uuid) AND trim(ed.tenant_id::text) = trim(:tid)
                 LIMIT 1
@@ -261,6 +278,15 @@ async def review_doc_detail(request: Request, doc_id: str, user=Depends(get_curr
         AUDIO_EXTS = {"mp3","m4a","m4r","wav","ogg","aac","flac","wma"}
         mode = "audio" if native_ext in AUDIO_EXTS else _viewer_mode(doc.get("mime_type"), doc.get("file_name"), doc.get("doc_type"), bool(doc.get("has_text")))
 
+        # Image-stitch renditions: TIFF / multi-page image docs render the
+        # stitched PDF rendition; single-page browser images keep the image
+        # zoom viewer (and /file serves them the original).
+        if doc.get("rendition_path"):
+            _m = (doc.get("mime_type") or "").lower()
+            _browser_img = _m in ("image/jpeg", "image/png", "image/gif", "image/webp")
+            if _m.startswith("image/") and (not _browser_img or (doc.get("page_count") or 1) > 1):
+                mode = "pdf"
+
         doc["display_name"] = (doc.get("file_name") or "(untitled)").replace("\\", "/").rsplit("/", 1)[-1]
         doc["display_size"] = _fmt_size(doc.get("file_size"))
         doc["display_date"] = _fmt_date(doc.get("doc_date"))
@@ -292,6 +318,35 @@ async def review_doc_detail(request: Request, doc_id: str, user=Depends(get_curr
         }))
     except Exception as e:
         logger.error("review_doc_detail: %s", e)
+        return JSONResponse({"error": str(e)}, 500)
+
+
+@router.post("/doc/{doc_id}/viewed")
+async def review_mark_viewed(request: Request, doc_id: str, user=Depends(get_current_user)):
+    """Idempotent 'I looked at this' marker - fired automatically by the viewer
+    when a document is opened. Separate from responsiveness coding. Docs
+    assigned to a review batch get viewed_at cleared by trigger; the batch
+    workflow then governs the reviewed indicator instead."""
+    tid = _tenant(request)
+    uid = user.get("id") if isinstance(user, dict) else getattr(user, "id", None)
+    try:
+        async with AsyncSessionLocal() as session:
+            if uid is not None:
+                await session.execute(sa_text("""
+                    UPDATE ediscovery_documents
+                       SET viewed_at = COALESCE(viewed_at, now()),
+                           viewed_by = COALESCE(viewed_by, CAST(:uid AS bigint))
+                     WHERE id = CAST(:did AS uuid) AND trim(tenant_id::text) = trim(:tenant)
+                """), {"did": doc_id, "tenant": tid, "uid": int(uid)})
+            else:
+                await session.execute(sa_text("""
+                    UPDATE ediscovery_documents
+                       SET viewed_at = COALESCE(viewed_at, now())
+                     WHERE id = CAST(:did AS uuid) AND trim(tenant_id::text) = trim(:tenant)
+                """), {"did": doc_id, "tenant": tid})
+            await session.commit()
+        return JSONResponse({"ok": True})
+    except Exception as e:
         return JSONResponse({"error": str(e)}, 500)
 
 
@@ -764,8 +819,7 @@ async def review_collections_list(request: Request, matter_id: str = "",
                            CAST(COALESCE(SUM(
                                (SELECT COUNT(*) FROM ediscovery_documents ed
                                 WHERE ed.collection_id = ch.id
-                                  AND ed.review_status IS NOT NULL
-                                  AND ed.review_status NOT IN ('pending', 'unreviewed'))
+                                  AND COALESCE((SELECT bool_and(rbd.status = 'completed') FROM review_batch_documents rbd WHERE rbd.document_id = ed.id), ed.viewed_at IS NOT NULL))
                            ), 0) AS bigint) AS child_reviewed
                     FROM ediscovery_collections ch
                     WHERE ch.matter_id = CAST(:mid AS uuid) AND trim(ch.tenant_id::text) = trim(:tid)
@@ -787,8 +841,7 @@ async def review_collections_list(request: Request, matter_id: str = "",
                        COALESCE(cs.child_reviewed,
                          (SELECT COUNT(*) FROM ediscovery_documents ed
                           WHERE ed.collection_id = c.id
-                            AND ed.review_status IS NOT NULL
-                            AND ed.review_status NOT IN ('pending', 'unreviewed'))
+                            AND COALESCE((SELECT bool_and(rbd.status = 'completed') FROM review_batch_documents rbd WHERE rbd.document_id = ed.id), ed.viewed_at IS NOT NULL))
                        ) AS reviewed_docs,
                        c.created_at, c.matter_id::text,
                        COALESCE(cs.child_count, 0) AS child_count,

@@ -156,4 +156,33 @@
 
   </form>
 </div>
+
+{% if user %}
+<div style="max-width:640px;margin:1.5rem auto 0;padding:1rem;border:1px solid #444;border-radius:8px;">
+  <h3 style="margin-top:0;">Mail folders &mdash; matters to publish</h3>
+  <p style="color:#999;font-size:.9em;">Selected matters appear as IMAP folders under
+     <code>Matters/</code> in {{ user.email }}'s mailbox. Save to sync.</p>
+  <form method="post" action="/admin/users/{{ user.id }}/mail-folders">
+    <input type="hidden" name="tenant_id" value="{{ tenant_id }}">
+    <input type="text" id="matterFilter" placeholder="Filter matters…" onkeyup="filterMatters()"
+           style="width:100%;box-sizing:border-box;margin-bottom:.5rem;padding:.4rem;">
+    <select name="matter_ids" multiple size="12" id="matterSelect" style="width:100%;box-sizing:border-box;">
+      {% for m in active_matters %}
+      <option value="{{ m.id }}"{% if m.id in published_matter_ids %} selected{% endif %}>{{ m.number }} &mdash; {{ m.name }}</option>
+      {% endfor %}
+    </select>
+    <div style="color:#999;font-size:.8em;margin:.25rem 0;">{{ active_matters|length }} active matters &middot; Ctrl/Cmd-click to multi-select</div>
+    <button type="submit" style="margin-top:.5rem;">Save &amp; sync folders</button>
+  </form>
+</div>
+<script>
+function filterMatters(){
+  var q=document.getElementById('matterFilter').value.toLowerCase();
+  var s=document.getElementById('matterSelect');
+  for(var i=0;i<s.options.length;i++){var o=s.options[i];
+    o.style.display=o.text.toLowerCase().indexOf(q)>-1?'':'none';}
+}
+</script>
+{% endif %}
+
 {% endblock %}

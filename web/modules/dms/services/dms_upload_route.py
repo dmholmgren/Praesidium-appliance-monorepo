@@ -1594,3 +1594,52 @@ async def link_existing_version(request: Request, body: LinkExistingVersionReque
 
     return JSONResponse({"status": "ok", "chain_root_id": root_id,
                          "source_doc_id": src, "version_number": next_ver})
+
+
+# ======================================================================
+# Detach a version from its chain -- the document becomes standalone.
+# Files are NOT moved on disk; only the logical link changes. The base
+# version (chain root) cannot be unlinked, nor can a version that has
+# its own children.
+# ======================================================================
+
+class VersionUnlinkRequest(BaseModel):
+    document_id: str
+
+
+@router.post("/disk/unlink-version")
+async def unlink_version(request: Request, body: VersionUnlinkRequest):
+    tid = _tid(request)
+    if not tid:
+        raise HTTPException(status_code=403, detail="No tenant resolved")
+    async with AsyncSessionLocal() as session:
+        r = await session.execute(sa_text("""
+            SELECT parent_doc_id::text AS parent, version_number, filename
+            FROM documents WHERE id = CAST(:did AS uuid) AND TRIM(tenant_id) = :tid
+        """), {"did": body.document_id, "tid": tid})
+        row = r.mappings().fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Document not found")
+        if row["parent"] is None:
+            raise HTTPException(status_code=409,
+                detail="This is the base version; it is not linked to anything")
+        rc = await session.execute(sa_text("""
+            SELECT count(*) AS n FROM documents
+            WHERE parent_doc_id = CAST(:did AS uuid) AND TRIM(tenant_id) = :tid
+        """), {"did": body.document_id, "tid": tid})
+        if (rc.scalar() or 0) > 0:
+            raise HTTPException(status_code=409,
+                detail="This version has its own child versions; detach those first")
+        await session.execute(sa_text("""
+            UPDATE documents
+            SET parent_doc_id = NULL, version_number = 1, updated_at = NOW()
+            WHERE id = CAST(:did AS uuid) AND TRIM(tenant_id) = :tid
+        """), {"did": body.document_id, "tid": tid})
+        await session.commit()
+    await _write_audit(tid, "document.version_unlinked", row["parent"],
+        user_uuid=_uid_uuid(request),
+        old={"document_id": body.document_id, "parent_doc_id": row["parent"],
+             "version_number": row["version_number"]},
+        new={"document_id": body.document_id, "parent_doc_id": None, "version_number": 1},
+        details={"filename": row["filename"], **_actor(request)})
+    return JSONResponse({"status": "ok", "document_id": body.document_id})

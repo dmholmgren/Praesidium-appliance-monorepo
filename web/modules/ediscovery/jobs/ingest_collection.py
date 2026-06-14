@@ -705,6 +705,29 @@ def build_dat_document_map(collection_storage_path: str) -> dict:
                 rel_path = os.path.relpath(abs_path, collection_storage_path)
                 doc_map[matched_bates]["image_path"] = rel_path
 
+    # Resolve TEXT companions by Bates-stem match against the on-disk tree.
+    # DAT path claims frequently don't survive re-rooting (an extra top-level
+    # folder from zip extraction, flattening, etc.) -- verify, else stem-match.
+    txt_idx = {}
+    for root, dirs, files in os.walk(images_dir):
+        for fname in files:
+            if fname.lower().endswith(".txt"):
+                txt_idx.setdefault(
+                    Path(fname).stem.upper(),
+                    os.path.relpath(os.path.join(root, fname), collection_storage_path),
+                )
+    _fixed_txt = 0
+    for _bates, _rec in doc_map.items():
+        _tp = _rec.get("text_path") or ""
+        if _tp and os.path.exists(os.path.join(collection_storage_path, _tp)):
+            continue
+        _hit = txt_idx.get(_bates.upper())
+        if _hit:
+            _rec["text_path"] = _hit
+            _fixed_txt += 1
+    if _fixed_txt:
+        logger.info("DAT-aware ingest: stem-matched %d text companions on disk", _fixed_txt)
+
     logger.info("DAT-aware ingest: mapped %d documents from load file", len(doc_map))
     return doc_map
 
@@ -1028,14 +1051,22 @@ def ingest_ediscovery_collection(
                         logger.info("Processed archive %s: %d files extracted",
                                     os.path.basename(entry_path), len(extracted))
                         log_progress(tenant_id, collection_id, f"Extracted {os.path.basename(entry_path)}: {len(extracted)} files")
-                    elif ext not in {".dat", ".opt", ".lfp", ".log", ".csv"}:
+                    else:
                         dst = os.path.join(originals_unpacked, os.path.basename(entry_path))
                         if entry_path != dst:
                             os.makedirs(os.path.dirname(dst), exist_ok=True)
                             shutil.copy2(entry_path, dst)
-                        files_to_process.append(dst)
+                        # Load files are preserved for build_dat_document_map but
+                        # are metadata, not documents -- never process as docs.
+                        if ext not in {".dat", ".opt", ".lfp", ".log", ".csv"}:
+                            files_to_process.append(dst)
                 elif os.path.isdir(entry_path):
-                    # Directory — walk it
+                    # Directory — walk it, preserving relative structure.
+                    # Load files (.dat/.opt/.lfp/.csv) ARE copied into unpacked/
+                    # so build_dat_document_map can find them, but are NOT added
+                    # to files_to_process (metadata, not documents). Relative
+                    # paths prevent basename collisions across subdirectories.
+                    _LOAD_FILE_EXTS = {".dat", ".opt", ".lfp", ".log", ".csv"}
                     for root, dirs, files in os.walk(entry_path):
                         if "working" in root or "unpacked" in root or "productions" in root:
                             continue
@@ -1049,12 +1080,14 @@ def ingest_ediscovery_collection(
                                 collection.original_hash = archive_hash
                                 collection.original_file_name = os.path.basename(src_abs)
                                 files_to_process.extend(extracted)
-                            elif ext not in {".dat", ".opt", ".lfp", ".log", ".csv"}:
-                                dst = os.path.join(originals_unpacked, os.path.basename(src_abs))
+                            else:
+                                rel = os.path.relpath(src_abs, entry_path)
+                                dst = os.path.join(originals_unpacked, rel)
                                 if src_abs != dst:
                                     os.makedirs(os.path.dirname(dst), exist_ok=True)
                                     shutil.copy2(src_abs, dst)
-                                files_to_process.append(dst)
+                                if ext not in _LOAD_FILE_EXTS:
+                                    files_to_process.append(dst)
                 else:
                     logger.warning("Source path not found: %s", entry_path)
 
@@ -1102,6 +1135,19 @@ def ingest_ediscovery_collection(
             # document records (one per Bates) with image/text/native paths
             # instead of treating every file as a separate document.
             dat_doc_map = build_dat_document_map(collection.storage_path)
+            if not dat_doc_map:
+                import glob as _glob
+                _stray = _glob.glob(os.path.join(collection.storage_path, "originals",
+                                                 "unpacked", "**", "*.dat"), recursive=True) \
+                       + _glob.glob(os.path.join(collection.storage_path, "originals",
+                                                 "unpacked", "**", "*.opt"), recursive=True)
+                if _stray:
+                    logger.error("LOAD FILE PRESENT BUT UNMAPPED (%s) -- falling back "
+                                 "to flat ingest. Check DAT header aliases.", _stray[:3])
+                    log_progress(tenant_id, collection_id,
+                                 f"WARNING: load file present ({os.path.basename(_stray[0])}) "
+                                 f"but 0 documents mapped -- ingesting flat. "
+                                 f"Check DAT header aliases.", "warning")
             if dat_doc_map:
                 logger.info("DAT-aware ingest: processing %d Bates records", len(dat_doc_map))
                 stats["total"] = len(dat_doc_map)
@@ -1237,6 +1283,20 @@ def ingest_ediscovery_collection(
                         stats["errors"] = stats.get("errors", 0) + 1
 
                 session.commit()
+
+                # Image productions (TIFF/JPG-per-page) have no browser-renderable
+                # primary file. Stitch each doc's page images into a multi-page
+                # PDF rendition; the review viewer prefers rendition_path.
+                try:
+                    from modules.ediscovery.jobs.image_rendition import stitch_collection_images
+                    _st = stitch_collection_images(tenant_id, str(collection_id),
+                                                   collection.storage_path)
+                    if _st.get("stitched"):
+                        log_progress(tenant_id, collection_id,
+                                     f"PDF renditions built for {_st['stitched']} image documents")
+                except Exception as _se:
+                    logger.warning("image rendition stitch failed: %s", _se)
+
                 # Skip the flat file processing below — DAT handled everything
                 files_to_process = []
 

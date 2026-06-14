@@ -1,0 +1,20 @@
+{% extends "shell.html" %}
+{% block title %}Co-Counsel Access — {{ matter_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/matters">Matters</a>
+<span class="breadcrumb-sep">&rsaquo;</span>
+<a href="/matters/{{ matter_id }}">{{ matter_name }}</a>
+<span class="breadcrumb-sep">&rsaquo;</span>
+<span class="breadcrumb-current">Co-Counsel Access</span>
+{% endblock %}
+{% block header_actions %}
+<a href="https://cocounsel.hjmmlegal.com" target="_blank" rel="noreferrer" class="header-action-btn" style="font-size:11px; color:var(--primary); text-decoration:none;">cocounsel.hjmmlegal.com ↗</a>
+{% endblock %}
+{% block content %}
+<div id="co-counsel-admin-root"></div>
+<script>
+  window.__MATTER_ID__ = "{{ matter_id }}";
+  window.__MATTER_NAME = "{{ matter_name | e }}";
+</script>
+<script type="module" src="/static/js/co-counsel-admin.js"></script>
+{% endblock %}

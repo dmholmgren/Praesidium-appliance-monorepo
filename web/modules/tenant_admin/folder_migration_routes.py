@@ -262,23 +262,52 @@ def register_folder_migration_routes(router, AsyncSessionLocal, _unused=None):
                 WHERE fm.id = CAST(:mid AS uuid) AND TRIM(fm.tenant_id) = :tid
             """), {"mid": match_id, "tid": tid})).mappings().fetchone()
         if not mr: return JSONResponse({"status": "error", "detail": "Match not found"}, status_code=404)
-        import importlib.util, sys, asyncio, uuid as _uuid
-        if "matter_sync_fm" in sys.modules: del sys.modules["matter_sync_fm"]
-        spec = importlib.util.spec_from_file_location("matter_sync_fm", "/app/modules/dms/jobs/matter_sync.py")
-        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        # SYNC_QUEUE_V1 — enqueue on 'migration' instead of inline execution
+        import os as _os
+        import json as _json
+        import uuid as _uuid
+        from datetime import datetime as _dt, timezone as _tz
+        from redis import Redis
+        from rq import Queue
+        REDIS_URL = _os.environ.get("REDIS_URL", "redis://redis:6379/0")
         try:
-            r = await asyncio.to_thread(mod.sync_mapping_files, tenant_id=tid, matter_id=matter_id,
-                folder_path=mr["folder_path"] or "", disk_root=mr["best_disk_path"] or "",
-                parent_job_id=str(_uuid.uuid4()), mapping_idx=0,
-                legacy_source_path=mr["folder_path"] or "", skip_remap=(sync_mode == "raw"))
+            rds = Redis.from_url(REDIS_URL, socket_timeout=5)
+            rds.ping()
+            parent_job_id = f"fm-{_uuid.uuid4().hex[:12]}"
+            pkey = f"matter_sync:parent:{parent_job_id}"
+            mkey = f"matter_sync:mapping:{parent_job_id}:0"
+            rds.hset(pkey, mapping={
+                "tenant_id": tid.strip(), "matter_id": matter_id,
+                "status": "running",
+                "started_at": _dt.now(_tz.utc).isoformat(),
+                "mapping_count": "1", "sync_mode": sync_mode})
+            rds.expire(pkey, 86400)
+            rds.hset(mkey, mapping={
+                "folder_path": mr["folder_path"] or "",
+                "disk_root": mr["best_disk_path"] or "",
+                "legacy_source_path": mr["folder_path"] or "",
+                "status": "queued",
+                "copied": "0", "skipped_existing": "0",
+                "skipped_unsupported": "0", "errors": "0",
+                "ocr_queued": "0", "total_bytes": "0"})
+            rds.expire(mkey, 86400)
+            sub = Queue("migration", connection=rds).enqueue(
+                "modules.dms.jobs.matter_sync.sync_mapping_files",
+                tid.strip(), matter_id,
+                mr["folder_path"] or "", mr["best_disk_path"] or "",
+                parent_job_id, 0,
+                mr["folder_path"] or "", (sync_mode == "raw"),
+                job_timeout=14400, result_ttl=86400)
+            rds.hset(mkey, "sub_job_id", sub.id)
+            rds.hset(pkey, "sub_job_ids", _json.dumps([sub.id]))
         except Exception as e:
             return JSONResponse({"status": "error", "detail": str(e)}, status_code=500)
-        copied = r.get("copied", 0); skipped = r.get("skipped", 0); errors = r.get("errors", 0)
         async with AsyncSessionLocal() as session:
-            await session.execute(sa_text("UPDATE dms_folder_matches SET synced_at = NOW(), synced_file_count = :fc WHERE id = CAST(:mid AS uuid) AND TRIM(tenant_id) = :tid"),
-                                  {"mid": match_id, "tid": tid, "fc": copied + skipped})
+            await session.execute(sa_text("UPDATE dms_folder_matches SET synced_at = NOW() WHERE id = CAST(:mid AS uuid) AND TRIM(tenant_id) = :tid"),
+                                  {"mid": match_id, "tid": tid})
             await session.commit()
-        return JSONResponse({"status": "ok", "message": f"{copied} copied, {skipped} existing, {errors} errors ({sync_mode} mode)"})
+        return JSONResponse({"status": "queued", "parent_job_id": parent_job_id,
+                             "message": f"Sync queued on migration workers ({sync_mode} mode). Poll /tenant-admin/folder-reconciliation/sync-status/{parent_job_id}."})
 
     @router.post("/folder-migration/accept-and-sync")
     async def fm_accept_and_sync(request: Request):
@@ -305,7 +334,7 @@ def register_folder_migration_routes(router, AsyncSessionLocal, _unused=None):
             match_id = (await session.execute(sa_text("""
                 INSERT INTO dms_folder_matches (id, tenant_id, matter_id, folder_path, best_disk_path, score, accepted, computed_at)
                 VALUES (gen_random_uuid(), :tid, CAST(:mid AS uuid), :fp, :bp, 1.0, true, NOW())
-                ON CONFLICT (tenant_id, matter_id) DO UPDATE SET folder_path = EXCLUDED.folder_path, best_disk_path = EXCLUDED.best_disk_path, accepted = true
+                ON CONFLICT (tenant_id, folder_path, matter_id) DO UPDATE SET folder_path = EXCLUDED.folder_path, best_disk_path = EXCLUDED.best_disk_path, accepted = true
                 RETURNING id::text"""), {"tid": tid, "mid": matter_id, "fp": fn, "bp": legacy_path})).fetchone()[0]
             await session.commit()
         if sync_mode == "none": return JSONResponse({"status": "ok", "message": "Assigned. No sync."})
@@ -313,3 +342,5 @@ def register_folder_migration_routes(router, AsyncSessionLocal, _unused=None):
         return await fm_sync(request)
 
     return router
+
+# ONCONFLICT_FPM_V1 — dms_folder_matches upserts target (tenant_id, folder_path, matter_id)

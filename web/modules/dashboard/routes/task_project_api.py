@@ -1016,3 +1016,416 @@ def _serialize_row(row):
         else:
             out[k] = v
     return out
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  PROJECT TEMPLATES + GANTT (Unit 7)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+from datetime import date as _g_date, time as _g_time, timedelta as _g_td
+from math import ceil as _g_ceil
+
+_G_HOURS_PER_DAY = 8
+
+
+def _g_next_busday(d):
+    while d.weekday() >= 5:
+        d += _g_td(days=1)
+    return d
+
+
+def _g_add_busdays(d, n):
+    while n > 0:
+        d += _g_td(days=1)
+        if d.weekday() < 5:
+            n -= 1
+    return d
+
+
+def _g_sub_busdays(d, n):
+    while n > 0:
+        d -= _g_td(days=1)
+        if d.weekday() < 5:
+            n -= 1
+    return d
+
+
+def _g_busdays_between(a, b):
+    # inclusive busday count a..b; a,b assumed busdays, a <= b
+    n, d = 0, a
+    while d <= b:
+        if d.weekday() < 5:
+            n += 1
+        d += _g_td(days=1)
+    return max(1, n)
+
+
+def _g_parse_refs(raw):
+    # dependency_refs jsonb -> [(ref_id, lag_days)]
+    if isinstance(raw, str):
+        raw = json.loads(raw or "[]")
+    out = []
+    for e in (raw or []):
+        if isinstance(e, dict):
+            out.append((e.get("ref"), int(e.get("lag_days", 0))))
+        else:
+            out.append((e, 0))
+    return out
+
+
+@router.post("/api/projects/from-template", response_class=JSONResponse)
+async def create_project_from_template(request: Request):
+    # Instantiate a project template: project + tasks + dependencies + scopes,
+    # forward-scheduled through the dependency graph (8 productive hrs/day,
+    # business days, parallel branches overlap).
+    tenant_id = _tid(request)
+    user = _user(request)
+    body = await request.json()
+
+    matter_id = body.get("matter_id")
+    if not matter_id:
+        raise HTTPException(400, "matter_id is required")
+    template_id = body.get("template_id", "a0000001-0000-0000-0000-000000000001")
+    try:
+        proj_start = (_g_date.fromisoformat(body["start_date"])
+                      if body.get("start_date") else _g_date.today())
+    except (ValueError, TypeError):
+        raise HTTPException(400, "start_date must be YYYY-MM-DD")
+    proj_start = _g_next_busday(proj_start)
+
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(sa_text("""
+            SELECT id, name, description, project_type,
+                   default_budget_hours, default_budget_dollars
+            FROM project_templates WHERE id = CAST(:tplid AS uuid)
+        """), {"tplid": template_id})
+        tpl = res.mappings().fetchone()
+        if not tpl:
+            raise HTTPException(404, "Template not found")
+
+        res = await session.execute(sa_text("""
+            SELECT id, title, description, task_type, phase, sort_order,
+                   estimated_minutes, priority, default_lag_days, dependency_refs
+            FROM project_template_tasks
+            WHERE template_id = CAST(:tplid AS uuid)
+            ORDER BY sort_order, id
+        """), {"tplid": template_id})
+        rows = res.mappings().fetchall()
+        if not rows:
+            raise HTTPException(422, "Template has no tasks")
+
+        tt = {r["id"]: dict(r) for r in rows}
+        deps = {}
+        for r in rows:
+            deps[r["id"]] = [(ref, lag) for ref, lag in _g_parse_refs(r["dependency_refs"])
+                             if ref in tt]
+
+        # Kahn topological sort (sort_order tie-break)
+        indeg = {k: len(v) for k, v in deps.items()}
+        succ = {k: [] for k in deps}
+        for k, v in deps.items():
+            for ref, _lag in v:
+                succ[ref].append(k)
+        ready = sorted([k for k, d0 in indeg.items() if d0 == 0],
+                       key=lambda k: tt[k]["sort_order"])
+        order = []
+        while ready:
+            n = ready.pop(0)
+            order.append(n)
+            for s in succ[n]:
+                indeg[s] -= 1
+                if indeg[s] == 0:
+                    ready.append(s)
+            ready.sort(key=lambda k: tt[k]["sort_order"])
+        if len(order) != len(deps):
+            raise HTTPException(422, "Template dependency graph contains a cycle")
+
+        # forward schedule
+        sched = {}
+        for n in order:
+            est = tt[n]["estimated_minutes"] or 60
+            dur = max(1, _g_ceil(est / 60 / _G_HOURS_PER_DAY))
+            start = proj_start
+            for ref, lag in deps[n]:
+                cand = _g_add_busdays(sched[ref][1], 1 + max(0, lag))
+                if cand > start:
+                    start = cand
+            start = _g_next_busday(start)
+            finish = _g_add_busdays(start, dur - 1)
+            sched[n] = (start, finish, dur)
+        proj_end = max(f for (_s, f, _d) in sched.values())
+
+        total_hours = round(sum((tt[n]["estimated_minutes"] or 60) for n in order) / 60, 2)
+        budget_hours = (float(tpl["default_budget_hours"])
+                        if tpl["default_budget_hours"] is not None else total_hours)
+        title = (body.get("title") or "").strip() or tpl["name"]
+
+        res = await session.execute(sa_text("""
+            INSERT INTO projects
+                (tenant_id, matter_id, title, description, template_type,
+                 status, priority, due_date, created_by, lead_attorney_id,
+                 members, config, sort_order, project_type, budget_hours, budget_dollars,
+                 created_at, updated_at)
+            VALUES
+                (:tid, CAST(:matter_id AS uuid), :title, :description, :template_type,
+                 'active', :priority, :due_date, :created_by, :lead_attorney_id,
+                 CAST(:members AS jsonb), CAST(:config AS jsonb), 0,
+                 :project_type, :budget_hours, :budget_dollars, NOW(), NOW())
+            RETURNING id::text
+        """), {
+            "tid": tenant_id, "matter_id": matter_id, "title": title,
+            "description": body.get("description") or tpl["description"],
+            "template_type": "pm",
+            "priority": body.get("priority", "medium"),
+            "due_date": datetime.combine(proj_end, _g_time(17, 0)),
+            "created_by": user.id if user else None,
+            "lead_attorney_id": body.get("lead_attorney_id"),
+            "members": json.dumps(body.get("members", [])),
+            "config": json.dumps({"source_template_id": str(tpl["id"]),
+                                  "scheduled_start": proj_start.isoformat(),
+                                  "hours_per_day": _G_HOURS_PER_DAY}),
+            "project_type": tpl["project_type"] or "litigation",
+            "budget_hours": budget_hours,
+            "budget_dollars": (float(tpl["default_budget_dollars"])
+                               if tpl["default_budget_dollars"] is not None else None),
+        })
+        project_id = res.fetchone()[0]
+
+        ref_to_id = {}
+        for n in order:
+            t = tt[n]
+            start, finish, _dur = sched[n]
+            res = await session.execute(sa_text("""
+                INSERT INTO tasks
+                    (tenant_id, matter_id, project_id, title, description,
+                     source, source_ref, priority, status, due_date, start_date,
+                     estimated_minutes, task_type, sort_order, tags, created_by,
+                     created_at, updated_at)
+                VALUES
+                    (:tid, CAST(:matter_id AS uuid), CAST(:pid AS uuid), :title, :description,
+                     'template', :source_ref, :priority, 'open', :due_date, :start_date,
+                     :est, :task_type, :sort_order, CAST(:tags AS jsonb), :created_by,
+                     NOW(), NOW())
+                RETURNING id
+            """), {
+                "tid": tenant_id, "matter_id": matter_id, "pid": project_id,
+                "title": t["title"], "description": t["description"],
+                "source_ref": "tpl:" + str(n),
+                "priority": t["priority"] or "medium",
+                "due_date": datetime.combine(finish, _g_time(17, 0)),
+                "start_date": start,
+                "est": t["estimated_minutes"],
+                "task_type": t["task_type"] or "general",
+                "sort_order": t["sort_order"],
+                "tags": json.dumps({"phase": t["phase"]} if t["phase"] else {}),
+                "created_by": user.id if user else None,
+            })
+            new_id = res.fetchone()[0]
+            ref_to_id[n] = new_id
+            await session.execute(sa_text("""
+                INSERT INTO task_scopes
+                    (tenant_id, task_id, scope_type, scope_id, is_primary, created_at)
+                VALUES (:tid, :task_id, 'project', :scope_id, true, NOW())
+                ON CONFLICT DO NOTHING
+            """), {"tid": tenant_id, "task_id": new_id, "scope_id": str(project_id)})
+
+        dep_count = 0
+        for n in order:
+            for ref, lag in deps[n]:
+                await session.execute(sa_text("""
+                    INSERT INTO task_dependencies
+                        (tenant_id, task_id, depends_on_id, dependency_type, lag_days, created_at)
+                    VALUES (:tid, :task_id, :dep_id, 'finish_start', :lag, NOW())
+                    ON CONFLICT DO NOTHING
+                """), {"tid": tenant_id, "task_id": ref_to_id[n],
+                       "dep_id": ref_to_id[ref], "lag": lag})
+                dep_count += 1
+
+        await session.commit()
+
+    return {
+        "id": project_id,
+        "title": title,
+        "tasks_created": len(order),
+        "dependencies_created": dep_count,
+        "scheduled_start": proj_start.isoformat(),
+        "scheduled_end": proj_end.isoformat(),
+        "budget_hours": budget_hours,
+        "total_estimated_hours": total_hours,
+    }
+
+
+@router.get("/api/projects/{project_id}/gantt", response_class=JSONResponse)
+async def project_gantt(request: Request, project_id: str):
+    # Gantt payload: dated task bars + dependency edges + CPM critical path.
+    # Bars render from stored start_date/due_date; criticality is computed by
+    # classic CPM over estimated durations + lags (business days), so hand-edited
+    # dates do not corrupt the critical path.
+    tenant_id = _tid(request)
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(sa_text("""
+            SELECT p.id::text AS id, p.title, p.status, p.due_date, p.created_at,
+                   p.budget_hours, p.config, m.matter_name
+            FROM projects p
+            LEFT JOIN matters m ON p.matter_id = m.id AND TRIM(p.tenant_id) = TRIM(m.tenant_id)
+            WHERE p.id = CAST(:pid AS uuid) AND TRIM(p.tenant_id) = TRIM(:tid)
+        """), {"pid": project_id, "tid": tenant_id})
+        proj = res.mappings().fetchone()
+        if not proj:
+            raise HTTPException(404, "Project not found")
+
+        res = await session.execute(sa_text("""
+            SELECT id, title, status, priority, completion_pct, sort_order,
+                   start_date, due_date, estimated_minutes, tags
+            FROM tasks
+            WHERE project_id = CAST(:pid AS uuid) AND TRIM(tenant_id) = TRIM(:tid)
+              AND status NOT IN ('deleted', 'cancelled')
+            ORDER BY sort_order, id
+        """), {"pid": project_id, "tid": tenant_id})
+        trows = [dict(r) for r in res.mappings().fetchall()]
+
+        edges = []
+        if trows:
+            ids = [t["id"] for t in trows]
+            res = await session.execute(sa_text("""
+                SELECT task_id, depends_on_id, dependency_type, lag_days
+                FROM task_dependencies
+                WHERE TRIM(tenant_id) = TRIM(:tid)
+                  AND task_id = ANY(:ids) AND depends_on_id = ANY(:ids)
+            """), {"tid": tenant_id, "ids": ids})
+            edges = [dict(r) for r in res.mappings().fetchall()]
+
+    today = _g_date.today()
+    nodes = {}
+    for t in trows:
+        est = t["estimated_minutes"] or 60
+        dur = max(1, _g_ceil(est / 60 / _G_HOURS_PER_DAY))
+        start = t["start_date"]
+        end = t["due_date"].date() if t["due_date"] else None
+        if start and end and end >= start:
+            dur = _g_busdays_between(start, end)
+        elif start and not end:
+            end = _g_add_busdays(start, dur - 1)
+        elif end and not start:
+            start = _g_sub_busdays(end, dur - 1)
+        elif not start and not end:
+            start = _g_next_busday(today)
+            end = _g_add_busdays(start, dur - 1)
+        nodes[t["id"]] = {"task": t, "start": start, "end": end, "dur": dur}
+
+    # CPM over durations + lags
+    preds = {tid: [] for tid in nodes}
+    succs = {tid: [] for tid in nodes}
+    for e in edges:
+        preds[e["task_id"]].append((e["depends_on_id"], e["lag_days"] or 0))
+        succs[e["depends_on_id"]].append((e["task_id"], e["lag_days"] or 0))
+
+    indeg = {tid: len(v) for tid, v in preds.items()}
+    ready = [tid for tid, d0 in indeg.items() if d0 == 0]
+    topo = []
+    while ready:
+        n = ready.pop(0)
+        topo.append(n)
+        for s, _lag in succs[n]:
+            indeg[s] -= 1
+            if indeg[s] == 0:
+                ready.append(s)
+    has_cycle = len(topo) != len(nodes)
+
+    critical_tasks, critical_edges = set(), set()
+    if not has_cycle and topo:
+        ES, EF = {}, {}
+        for n in topo:
+            es = 0
+            for p, lag in preds[n]:
+                es = max(es, EF[p] + max(0, lag))
+            ES[n] = es
+            EF[n] = es + nodes[n]["dur"]
+        makespan = max(EF.values())
+        LF, LS = {}, {}
+        for n in reversed(topo):
+            lf = makespan
+            for s, lag in succs[n]:
+                lf = min(lf, LS[s] - max(0, lag))
+            LF[n] = lf
+            LS[n] = lf - nodes[n]["dur"]
+        critical_tasks = {n for n in topo if LS[n] - ES[n] == 0}
+        for e in edges:
+            a, b, lag = e["depends_on_id"], e["task_id"], e["lag_days"] or 0
+            if a in critical_tasks and b in critical_tasks and EF[a] + max(0, lag) == ES[b]:
+                critical_edges.add((a, b))
+
+    out_tasks = []
+    for tid_, nd in nodes.items():
+        t = nd["task"]
+        tags = t["tags"]
+        if isinstance(tags, str):
+            try:
+                tags = json.loads(tags)
+            except (ValueError, TypeError):
+                tags = {}
+        phase = tags.get("phase") if isinstance(tags, dict) else None
+        out_tasks.append({
+            "id": t["id"],
+            "title": t["title"],
+            "status": t["status"],
+            "priority": t["priority"],
+            "completion_pct": t["completion_pct"],
+            "sort_order": t["sort_order"],
+            "phase": phase,
+            "start": nd["start"].isoformat(),
+            "end": nd["end"].isoformat(),
+            "duration_days": nd["dur"],
+            "is_critical": tid_ in critical_tasks,
+            "is_overdue": (t["status"] not in ("complete",)
+                           and nd["end"] < today),
+        })
+    out_tasks.sort(key=lambda x: (x["start"], x["sort_order"]))
+
+    span_start = min((n["start"] for n in nodes.values()), default=today)
+    span_end = max((n["end"] for n in nodes.values()), default=today)
+
+    return {
+        "project": {
+            "id": proj["id"], "title": proj["title"], "status": proj["status"],
+            "matter_name": proj["matter_name"],
+            "budget_hours": float(proj["budget_hours"]) if proj["budget_hours"] else None,
+        },
+        "span": {"start": span_start.isoformat(), "end": span_end.isoformat(),
+                 "today": today.isoformat()},
+        "has_cycle": has_cycle,
+        "tasks": out_tasks,
+        "edges": [{
+            "from": e["depends_on_id"], "to": e["task_id"],
+            "type": e["dependency_type"], "lag_days": e["lag_days"] or 0,
+            "is_critical": (e["depends_on_id"], e["task_id"]) in critical_edges,
+        } for e in edges],
+    }
+
+
+@router.get("/api/project-templates", response_class=JSONResponse)
+async def list_project_templates(request: Request):
+    # Active project templates visible to this tenant (global = tenant_id NULL).
+    tenant_id = _tid(request)
+    async with AsyncSessionLocal() as session:
+        res = await session.execute(sa_text("""
+            SELECT pt.id::text AS id, pt.name, pt.description, pt.project_type,
+                   pt.matter_type, pt.default_budget_hours, pt.default_budget_dollars,
+                   COUNT(ptt.id) AS task_count,
+                   COUNT(DISTINCT ptt.phase) AS phase_count,
+                   COALESCE(SUM(ptt.estimated_minutes), 0) AS total_estimated_minutes
+            FROM project_templates pt
+            LEFT JOIN project_template_tasks ptt ON ptt.template_id = pt.id
+            WHERE pt.is_active = true
+              AND (pt.tenant_id IS NULL OR TRIM(pt.tenant_id) = TRIM(:tid))
+            GROUP BY pt.id
+            ORDER BY pt.name
+        """), {"tid": tenant_id})
+        rows = [dict(r) for r in res.mappings().fetchall()]
+    for r in rows:
+        r["total_estimated_hours"] = round((r.pop("total_estimated_minutes") or 0) / 60, 1)
+        if r["default_budget_hours"] is not None:
+            r["default_budget_hours"] = float(r["default_budget_hours"])
+        if r["default_budget_dollars"] is not None:
+            r["default_budget_dollars"] = float(r["default_budget_dollars"])
+    return {"templates": rows, "count": len(rows)}

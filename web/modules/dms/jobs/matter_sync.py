@@ -205,6 +205,71 @@ def _load_legacy_folder_map() -> dict:
 LEGACY_FOLDER_MAP = _load_legacy_folder_map()
 
 
+# REMAP_PREFIX_V1 — prefix matching for cause-suffixed legacy folder names.
+#
+# Exact alias matching misses folders like "Pleadings Tarrant County
+# 017-361909-25" or "Pleading Hood County C2024348", leaving them stranded at
+# the matter root. When the first path component STARTS WITH one of these keys
+# (followed by a space or dash), it maps into the standard tree and the
+# remainder is preserved as a subfolder:
+#   "Pleadings Tarrant County 017-361909-25"
+#       -> "02-Pleadings/Tarrant County 017-361909-25"
+# Keys are deliberately conservative — generic words (client, email, letters,
+# research, court) are excluded to avoid false positives. Checked in list
+# order (longest/most-specific first).
+LEGACY_FOLDER_PREFIX_MAP = [
+    ("pleadings and motion practice", "02-Pleadings"),
+    ("pleadings and motions",         "02-Pleadings"),
+    ("document productions",          "12-eDiscovery"),
+    ("document production",           "12-eDiscovery"),
+    ("productions received",          "12-eDiscovery"),
+    ("discovery responses",           "03-Discovery"),
+    ("discovery requests",            "03-Discovery"),
+    ("motion practice",               "02-Pleadings"),
+    ("court filings",                 "06-Court Filings"),
+    ("working docs",                  "11-Working Docs"),
+    ("work product",                  "11-Working Docs"),
+    ("depositions",                   "07-Depositions"),
+    ("deposition",                    "07-Depositions"),
+    ("productions",                   "12-eDiscovery"),
+    ("production",                    "12-eDiscovery"),
+    ("settlement",                    "09-Mediation"),
+    ("pleadings",                     "02-Pleadings"),
+    ("pleading",                      "02-Pleadings"),
+    ("discovery",                     "03-Discovery"),
+    ("mediation",                     "09-Mediation"),
+    ("correspondence",                "04-Correspondence"),
+    ("invoices",                      "13-Billing"),
+    ("experts",                       "08-Experts"),
+    ("billing",                       "13-Billing"),
+    ("motions",                       "02-Pleadings"),
+    ("expert",                        "08-Experts"),
+    ("orders",                        "10-Orders"),
+    ("drafts",                        "11-Working Docs"),
+    ("trial",                         "14-Trial Preparation"),
+]
+
+
+def _match_legacy_component(component: str):
+    """Resolve one top-level legacy folder name to (mapped_target, remainder).
+
+    Exact alias match -> (target, ""). Prefix match (key followed by a space
+    or dash) -> (target, remainder with original casing). No match ->
+    (None, "")."""
+    norm_orig = " ".join((component or "").strip().split())
+    low = norm_orig.lower()
+    if not low:
+        return None, ""
+    exact = LEGACY_FOLDER_MAP.get(low)
+    if exact:
+        return exact, ""
+    for key, target in LEGACY_FOLDER_PREFIX_MAP:
+        if low.startswith(key + " ") or low.startswith(key + "-"):
+            remainder = norm_orig[len(key):].strip(" -\u2013\u2014").strip()
+            return target, remainder
+    return None, ""
+
+
 # ─── C1 onboarding-cluster exclusion fixture ──────────────────────────────────
 # Productions, client documents, and mailstores are NOT DMS working files.
 # They are partitioned out of matter_sync and recorded as onboarding_clusters
@@ -263,7 +328,7 @@ def _partition_onboarding_clusters(source_dir, files):
     except Exception:
         children = []
     for child in children:
-        mapped = LEGACY_FOLDER_MAP.get(child.name.strip().lower())
+        mapped, _rem = _match_legacy_component(child.name)  # REMAP_PREFIX_V1
         if mapped in EXCLUDED_DEST_FOLDERS:
             ctype = "client_documents" if mapped.startswith("01-") else "production"
             _get(child, ctype, "alias")
@@ -367,16 +432,14 @@ def _remap_legacy_folder(rel_path: str) -> str:
         return rel_path
     rel_path = rel_path.replace("\\", "/")
     parts = rel_path.split("/", 1)
-    first = parts[0].strip().lower()
-    # Normalize whitespace (collapse runs)
-    first_norm = " ".join(first.split())
-    mapped = LEGACY_FOLDER_MAP.get(first_norm)
+    mapped, remainder = _match_legacy_component(parts[0])
     if not mapped:
         return rel_path
+    head = f"{mapped}/{remainder}" if remainder else mapped
     if len(parts) == 1:
         # The source-relative path IS a bare folder — unlikely for files but handle it
-        return mapped
-    return f"{mapped}/{parts[1]}"
+        return head
+    return f"{head}/{parts[1]}"
 
 # Path tokens that, when present anywhere in the source path (case-insensitive),
 # mark the file with ocr_status='skipped_production' instead of queuing OCR.

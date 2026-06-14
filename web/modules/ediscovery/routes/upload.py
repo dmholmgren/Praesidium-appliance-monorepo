@@ -205,10 +205,28 @@ def _check_zip_password(file_path):
 
 # ── File upload ingest ────────────────────────────────────────────────────────
 
+def _safe_rel_path(rel, filename):
+    """Sanitized relative path for folder-drop uploads.
+
+    Normalizes separators, strips '', '.', '..' parts (zip-slip /
+    traversal-proof). Falls back to the upload's basename.
+    """
+    from pathlib import PurePosixPath
+    fallback = Path(filename or "upload.bin").name
+    if not rel:
+        return fallback
+    parts = [p for p in PurePosixPath(str(rel).replace("\\", "/")).parts
+             if p not in ("", ".", "..", "/")]
+    if not parts:
+        return fallback
+    return os.path.join(*parts)
+
+
 @router.post("/upload")
 async def upload_files(
     request: Request,
     files: List[UploadFile] = File(...),
+    paths: Optional[List[str]] = Form(None),
     collection_name: str = Form(...),
     matter_id: str = Form(...),
     source_type: str = Form("opposing_production"),
@@ -234,7 +252,7 @@ async def upload_files(
     os.makedirs(incoming_dir, exist_ok=True)
     saved_files = []
     total_bytes = 0
-    for upload in files:
+    for i, upload in enumerate(files):
         try:
             content = await upload.read()
             file_size = len(content)
@@ -244,8 +262,13 @@ async def upload_files(
                     {"error": "Upload exceeds 5GB. Use Bitvise to put large files on server directly."},
                     status_code=413
                 )
-            safe_filename = Path(upload.filename).name
+            safe_filename = _safe_rel_path(
+                paths[i] if paths and i < len(paths) else None,
+                upload.filename,
+            )
             dest_path = os.path.join(incoming_dir, safe_filename)
+            os.makedirs(os.path.dirname(dest_path) or incoming_dir,
+                        exist_ok=True)
             with open(dest_path, "wb") as fout:
                 fout.write(content)
             saved_files.append(safe_filename)

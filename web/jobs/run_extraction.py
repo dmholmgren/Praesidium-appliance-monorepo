@@ -337,6 +337,9 @@ def main():
     parser.add_argument("--type", default=None, help="Only process this document type")
     parser.add_argument("--re-extract", action="store_true",
                         help="Re-extract even if already extracted")
+    parser.add_argument("--path-like", default=None,
+                        help="SQL LIKE pattern to scope by file_path "
+                             "(e.g. '%%/matters/Weir/Victory/%%')")
     args = parser.parse_args()
 
     tid = args.tenant.strip()
@@ -359,6 +362,10 @@ def main():
     # Find documents with text
     where = ["TRIM(tenant_id) = %s", "content_text IS NOT NULL", "length(content_text) > 50"]
     params = [tid]
+
+    if args.path_like:
+        where.append("file_path LIKE %s")
+        params.append(args.path_like)
 
     if not args.re_extract:
         # Skip docs that already have extraction data

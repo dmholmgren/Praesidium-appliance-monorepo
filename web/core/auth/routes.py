@@ -34,6 +34,40 @@ SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "praesidium_session"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# Stalwart single-password mail sync — push the just-validated login password
+# to the user's mailbox so mail auth == app login. Best-effort; never blocks.
+# ═══════════════════════════════════════════════════════════════════════════
+
+STALWART_MAIL_DOMAIN = os.environ.get("STALWART_MAIL_DOMAIN", "hjmmlegal.com")
+_mail_sync_tasks: set = set()
+
+
+async def _sync_stalwart_mail_password(email: str, password: str):
+    try:
+        from core.services.stalwart_service import (
+            update_mail_password, provision_mail_account,
+        )
+        res = await update_mail_password(email, password)
+        if not res.get("success") and "No Stalwart account" in str(res.get("error", "")):
+            await provision_mail_account(email=email, password=password)
+    except Exception as e:
+        logger.warning(f"[auth] stalwart mail sync failed for {email}: {e}")
+
+
+def _kick_mail_sync(email: str, password: str):
+    """Fire-and-forget mail-password sync for firm-domain users."""
+    if not email or not email.lower().endswith("@" + STALWART_MAIL_DOMAIN):
+        return
+    try:
+        import asyncio
+        t = asyncio.create_task(_sync_stalwart_mail_password(email, password))
+        _mail_sync_tasks.add(t)
+        t.add_done_callback(_mail_sync_tasks.discard)
+    except Exception as e:
+        logger.warning(f"[auth] could not schedule mail sync: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Tenant auth config resolver — the multi-tenant refactor core
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -303,6 +337,7 @@ async def login(
             await session.commit()
             await session.refresh(user)
             user_id = str(user.id)
+            _kick_mail_sync(user.email, password)
     except Exception as e:
         logger.error(f"Database error during login for {username}: {e}")
         return _login_error(request, "Authentication succeeded but session creation failed.")

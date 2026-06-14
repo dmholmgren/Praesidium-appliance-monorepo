@@ -523,20 +523,88 @@ async def matter_move(request: Request, matter_id: str):
     if not os.path.isfile(src_path): raise HTTPException(status_code=404, detail="Source file not found")
     dst_dir = _safe_path(root, dst_folder) if dst_folder else root
     if not os.path.isdir(dst_dir): raise HTTPException(status_code=404, detail="Destination folder not found")
-    dst_path = os.path.join(dst_dir, os.path.basename(src_path))
-    if os.path.exists(dst_path):
-        # Auto-rename: file (1).ext
-        base, ext = os.path.splitext(os.path.basename(src_path))
-        i = 1
-        while os.path.exists(dst_path):
-            dst_path = os.path.join(dst_dir, f"{base} ({i}){ext}")
-            i += 1
+
+    def _move_one(sp):
+        dp = os.path.join(dst_dir, os.path.basename(sp))
+        if os.path.exists(dp):
+            # Auto-rename: file (1).ext
+            base, ext = os.path.splitext(os.path.basename(sp))
+            i = 1
+            while os.path.exists(dp):
+                dp = os.path.join(dst_dir, f"{base} ({i}){ext}")
+                i += 1
+        shutil.move(sp, dp)
+        return dp
+
+    # Collect the document row and any version descendants BEFORE moving,
+    # so a version chain travels with its parent and storage_path stays accurate.
+    src_doc_id = None
+    extra_moves = []  # (doc_id, old_abs_path) for descendant versions
     try:
-        shutil.move(src_path, dst_path)
+        async with AsyncSessionLocal() as session:
+            r = await session.execute(sa_text("""
+                SELECT id::text AS id FROM documents
+                WHERE storage_path = :sp AND TRIM(tenant_id) = :tid
+            """), {"sp": src_path, "tid": tid})
+            src_doc_id = r.scalar()
+            if src_doc_id:
+                r2 = await session.execute(sa_text("""
+                    WITH RECURSIVE chain AS (
+                        SELECT id, storage_path FROM documents
+                        WHERE id = CAST(:did AS uuid) AND TRIM(tenant_id) = :tid
+                        UNION ALL
+                        SELECT d.id, d.storage_path FROM documents d
+                        JOIN chain c ON d.parent_doc_id = c.id WHERE TRIM(d.tenant_id) = :tid
+                    )
+                    SELECT id::text AS id, storage_path FROM chain
+                    WHERE id::text <> :did
+                """), {"did": src_doc_id, "tid": tid})
+                for row in r2.mappings().fetchall():
+                    sp = row["storage_path"]
+                    if sp and os.path.isfile(sp) and os.path.dirname(sp) != dst_dir:
+                        extra_moves.append((row["id"], sp))
+    except Exception as e:
+        logger.warning("Version-chain lookup failed; moving single file only: %s", e)
+        extra_moves = []
+
+    try:
+        dst_path = _move_one(src_path)
     except Exception as e:
         logger.error("Move failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Move failed: {e}")
-    return JSONResponse({"status": "ok", "moved_to": os.path.relpath(dst_path, root)})
+
+    moved_docs = []  # (doc_id, old_abs_path, new_abs_path)
+    if src_doc_id:
+        moved_docs.append((src_doc_id, src_path, dst_path))
+    versions_moved = 0
+    for did, sp in extra_moves:
+        try:
+            np = _move_one(sp)
+            moved_docs.append((did, sp, np))
+            versions_moved += 1
+        except Exception as e:
+            logger.error("Version move failed for %s: %s", sp, e)
+
+    # Keep documents.storage_path/filename (and dms_documents.file_path) in sync.
+    if moved_docs:
+        try:
+            async with AsyncSessionLocal() as session:
+                for did, op, np in moved_docs:
+                    await session.execute(sa_text("""
+                        UPDATE documents
+                        SET storage_path = :np, filename = :fn, updated_at = NOW()
+                        WHERE id = CAST(:did AS uuid) AND TRIM(tenant_id) = :tid
+                    """), {"np": np, "fn": os.path.basename(np), "did": did, "tid": tid})
+                    await session.execute(sa_text("""
+                        UPDATE dms_documents SET file_path = :np
+                        WHERE file_path = :op AND TRIM(tenant_id) = :tid
+                    """), {"np": np, "op": op, "tid": tid})
+                await session.commit()
+        except Exception as e:
+            logger.error("storage_path sync after move failed: %s", e)
+
+    return JSONResponse({"status": "ok", "moved_to": os.path.relpath(dst_path, root),
+                         "versions_moved": versions_moved})
 
 
 # ── Email metadata (for reply pre-population) ────────────────────────

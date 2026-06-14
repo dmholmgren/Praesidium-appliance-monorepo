@@ -138,6 +138,17 @@ class AICapBreach(AILayerError):
         self.context = context
 
 
+class AIIntegrityGateSkip(AILayerError):
+    """The integrity gate refused this AI pass: the document carries a critical
+    adversarial-content flag (hidden instruction / injection) that could not be
+    surgically removed from the prompt. No model ever saw the text. Carries the
+    GateDecision context for audit + UI surfacing."""
+
+    def __init__(self, message: str, context: dict):
+        super().__init__(message)
+        self.context = context
+
+
 # ---------------------------------------------------------------------------
 # Data classes
 # ---------------------------------------------------------------------------
@@ -1017,6 +1028,35 @@ async def call(
         user_prompt = raw_user_prompt
         template_id = None
         template_version = None
+
+    # --- Adversarial-content gate (eDiscovery only) -----------------------
+    # Before any document text reaches the model, neutralize injection spans
+    # the integrity scanner flagged at ingestion. The transient prompt copy is
+    # sanitized; the §0 canonical string is never touched. Document-less calls
+    # (dashboards, drafting) and non-eDiscovery sources pass straight through.
+    if ctx.document_id and ctx.document_source:
+        from modules.intelligence import integrity_gate as _gate
+        _gd = await _gate.evaluate(
+            tenant_id=ctx.tenant_id,
+            document_source=ctx.document_source,
+            document_id=ctx.document_id,
+            prompt_text=user_prompt or "",
+        )
+        if _gd.should_skip:
+            raise AIIntegrityGateSkip(
+                "Integrity gate refused AI pass: unremovable critical "
+                "adversarial content in source document.",
+                context={
+                    "document_id": ctx.document_id,
+                    "document_source": ctx.document_source,
+                    "critical_count": _gd.critical_count,
+                    "flag_types": _gd.flag_types,
+                    "reason": _gd.reason,
+                    "gate_version": _gate.GATE_VERSION,
+                },
+            )
+        if _gd.action == "sanitized" and _gd.sanitized_text is not None:
+            user_prompt = _gd.sanitized_text
 
     # Per-call token cap (either routing.per_call_token_cap or max_tokens)
     effective_max_tokens = (

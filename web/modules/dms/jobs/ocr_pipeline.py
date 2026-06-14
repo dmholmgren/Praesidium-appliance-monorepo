@@ -30,7 +30,7 @@ def ocr_document(tenant_id: str, document_id: str):
     import httpx
 
     session = TenantSession(get_session_factory()(), tenant_id)
-    cifs_url = os.environ["CIFS_URL"]
+    cifs_url = os.environ.get("CIFS_URL") or "http://10.10.60.13:8080"
 
     # Get document record
     doc = session.execute(

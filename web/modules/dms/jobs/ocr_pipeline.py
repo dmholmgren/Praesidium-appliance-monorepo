@@ -30,11 +30,10 @@ def ocr_document(tenant_id: str, document_id: str):
     import httpx
 
     session = TenantSession(get_session_factory()(), tenant_id)
-    cifs_url = os.environ.get("CIFS_URL") or "http://10.10.60.13:8080"
 
     # Get document record
     doc = session.execute(
-        sa_text("SELECT id, storage_path, file_type, name FROM documents "
+        sa_text("SELECT id, storage_path, doc_type, filename FROM documents "
         "WHERE id = :id AND tenant_id = :tid"),
         {"id": document_id, "tid": tenant_id},
     ).fetchone()
@@ -43,22 +42,20 @@ def ocr_document(tenant_id: str, document_id: str):
         logger.error(f"Document {document_id} not found for tenant {tenant_id}")
         return
 
-    file_type = (doc["doc_type"] or "").lower()
     storage_path = doc["storage_path"]
+    file_type = (os.path.splitext(storage_path or "")[1].lstrip(".").lower()
+                 or (doc["doc_type"] or "").lower())
 
     logger.info(f"OCR starting: doc={document_id} type={file_type} path={storage_path}")
 
-    # Download file from file-bridge
+    # Read the file from the locally-mounted share. The platform migrated off
+    # the FBRG-01 / CIFS_URL HTTP bridge to direct mount reads
+    # (modules/dms/adapters/local_mount_storage.py); the old bridge host is gone.
     try:
-        resp = httpx.get(
-            f"{cifs_url}/api/v1/files/download",
-            params={"tenant_id": tenant_id, "path": storage_path},
-            timeout=120,
-        )
-        resp.raise_for_status()
-        content = resp.content
+        with open(storage_path, "rb") as _fh:
+            content = _fh.read()
     except Exception as e:
-        logger.error(f"Failed to download {storage_path}: {e}")
+        logger.error(f"Failed to read {storage_path}: {e}")
         _update_ocr_status(session, tenant_id, document_id, "download_failed", str(e))
         return
 

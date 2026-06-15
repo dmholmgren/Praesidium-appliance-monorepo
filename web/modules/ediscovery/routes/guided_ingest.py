@@ -44,7 +44,8 @@ def _uid(user):
 
 async def _log_triage_turn(*, tenant_id, matter_id, proposal_id, plan_snapshot,
                            actions, source, user_message=None, ai_call_id=None,
-                           custodian=None, applied=False, user_id=None):
+                           custodian=None, applied=False, user_id=None,
+                           assistant_reply=None, assistant_thinking=None):
     """Persist one plan-review decision as a learnable example.
 
     Each row pairs the plan as the human saw it (plan_snapshot) with what they
@@ -59,11 +60,11 @@ async def _log_triage_turn(*, tenant_id, matter_id, proposal_id, plan_snapshot,
                 INSERT INTO triage_turns
                   (tenant_id, matter_id, proposal_id, custodian, source,
                    user_message, plan_snapshot, actions, ai_call_id,
-                   applied, user_id)
+                   applied, user_id, assistant_reply, assistant_thinking)
                 VALUES
                   (:tid, CAST(:mid AS uuid), CAST(:pid AS uuid), :cust, :src,
                    :msg, CAST(:plan AS jsonb), CAST(:acts AS jsonb), :cid,
-                   :applied, :uid)
+                   :applied, :uid, :areply, :athink)
             """), {
                 "tid": tenant_id, "mid": matter_id or None,
                 "pid": proposal_id or None, "cust": custodian, "src": source,
@@ -71,6 +72,7 @@ async def _log_triage_turn(*, tenant_id, matter_id, proposal_id, plan_snapshot,
                 "plan": _json.dumps(plan_snapshot or []),
                 "acts": _json.dumps(actions or []),
                 "cid": ai_call_id, "applied": applied, "uid": user_id,
+                "areply": assistant_reply, "athink": assistant_thinking,
             })
             await s.commit()
     except Exception:
@@ -246,10 +248,14 @@ async def chat(proposal_id: str, request: Request,
         "plan below; never invent collections or files. You may PROPOSE "
         "include/exclude changes for the user to confirm — never apply them "
         "yourself.\n\n"
-        'Respond with ONLY a JSON object: {"reply": "<concise prose>", '
+        'Respond with ONLY a JSON object with three keys: '
+        '{"thinking": "<your step-by-step reasoning about the plan — which '
+        'collections are implicated, duplicates, productions vs. custodial '
+        'data, etc.>", "reply": "<the concise answer to show the attorney>", '
         '"actions": [{"op": "include"|"exclude", "name": "<exact collection '
-        'name>", "reason": "<short>"}]}. Use an empty actions list when no '
-        "change is warranted.\n\n=== INGESTION PLAN ===\n" + plan_ctx
+        'name>", "reason": "<short>"}]}. Keep reasoning in "thinking" and the '
+        'final answer in "reply" — do not mix them. Use an empty actions list '
+        "when no change is warranted.\n\n=== INGESTION PLAN ===\n" + plan_ctx
     )
     convo = "\n".join(
         f"{m.get('role', 'user')}: {m.get('content', '')}"
@@ -270,22 +276,37 @@ async def chat(proposal_id: str, request: Request,
             if raw[:4].lower() == "json":
                 raw = raw[4:]
             raw = raw.strip()
+        # Extract the JSON object even when the model wraps it in prose, so
+        # reasoning never leaks into the answer and actions are never lost.
+        parsed = None
         try:
             parsed = _json.loads(raw)
         except Exception:
-            parsed = {"reply": res.text, "actions": []}
+            lo, hi = raw.find("{"), raw.rfind("}")
+            if lo != -1 and hi > lo:
+                try:
+                    parsed = _json.loads(raw[lo:hi + 1])
+                except Exception:
+                    parsed = None
+        if not isinstance(parsed, dict):
+            # Last resort: treat the whole thing as the reply (no thinking),
+            # rather than dumping a raw JSON blob into the chat.
+            parsed = {"thinking": "", "reply": res.text, "actions": []}
+        thinking = parsed.get("thinking") or ""
+        reply = parsed.get("reply") or ""
         actions = parsed.get("actions") or []
         # Capture the turn as a learnable example (plan -> instruction ->
-        # proposed change), linked to the ai_api_calls spend row.
+        # reasoning -> proposed change), linked to the ai_api_calls spend row.
         await _log_triage_turn(
             tenant_id=tenant_id, matter_id=row["matter_id"],
             proposal_id=proposal_id, plan_snapshot=cols, actions=actions,
             source="chat", user_message=message,
             ai_call_id=getattr(res, "call_id", None), user_id=_uid(user),
-            applied=False,
+            applied=False, assistant_reply=reply, assistant_thinking=thinking,
         )
         return JSONResponse({
-            "reply": parsed.get("reply") or "",
+            "thinking": thinking,
+            "reply": reply,
             "actions": actions,
             "model": res.model_used,
             "cost_usd": float(res.cost_usd),

@@ -123,6 +123,26 @@ def _clean_cols(cols):
     return out
 
 
+def find_load_file_path(path):
+    """Absolute on-disk path of the load file (.dat/.opt/...) under `path`, or
+    None when it only exists inside a zip (caller falls back to the DAG)."""
+    p = path or ""
+    if os.path.isfile(p) and p.lower().endswith(LOAD_EXTS):
+        return p
+    if os.path.isdir(p):
+        best = None
+        for dp, _d, fns in os.walk(p):
+            for fn in fns:
+                e = os.path.splitext(fn.lower())[1]
+                if e in LOAD_EXTS:
+                    rank = LOAD_EXTS.index(e)
+                    if best is None or rank < best[0]:
+                        best = (rank, os.path.join(dp, fn))
+        if best:
+            return best[1]
+    return None
+
+
 def automap_for_path(path):
     fn, raw = find_load_file(path)
     if not fn:

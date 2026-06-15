@@ -264,6 +264,55 @@ async def _create_unit_collection(session, tenant_id, matter_id, proposal_id,
     return cid
 
 
+async def _create_production_unit(session, tenant_id, matter_id, col, user_id):
+    """Route a load-file unit to the Bates-aware production importer: create a
+    productions row (on-disk .dat + confirmed/auto field_map, status running) and
+    return its id, or None if no loose load file is found."""
+    import os
+    import uuid as _uuid
+    from modules.ediscovery.guided_ingest.automap import (
+        find_load_file_path, automap_for_path)
+    from modules.ediscovery.production_import import _detect_format
+    src = (col.get("source_paths") or [None])[0]
+    dat = find_load_file_path(src) if src else None
+    if not dat:
+        return None
+    fmap = col.get("field_map") or (automap_for_path(src).get("suggested") or {})
+    try:
+        sz = os.path.getsize(dat)
+    except OSError:
+        sz = None
+    pid_prod = str(_uuid.uuid4())
+    await session.execute(text("""
+        INSERT INTO productions
+            (id, tenant_id, matter_id, production_name, producing_party,
+             load_file_format, status, load_file_path, load_file_name,
+             load_file_size_bytes, imported_by, field_map, started_at)
+        VALUES
+            (CAST(:id AS uuid), :tid, CAST(:mid AS uuid), :name, :party,
+             :fmt, 'running', :fpath, :fname, :fsize, :uid,
+             CAST(:fmap AS jsonb), NOW())
+    """), {
+        "id": pid_prod, "tid": tenant_id, "mid": matter_id,
+        "name": col.get("name") or os.path.basename(dat),
+        "party": col.get("custodian"), "fmt": _detect_format(dat),
+        "fpath": dat, "fname": os.path.basename(dat), "fsize": sz,
+        "uid": user_id, "fmap": json.dumps(fmap),
+    })
+    return pid_prod
+
+
+def _enqueue_production_import(tenant_id, production_id):
+    import os
+    import redis as redis_lib
+    from rq import Queue
+    redis_url = os.environ.get("REDIS_URL", "redis://10.10.60.12:6379/0")
+    q = Queue("ediscovery", connection=redis_lib.Redis.from_url(redis_url))
+    q.enqueue("jobs.import_production.run", production_id, tenant_id,
+              job_timeout=7200, result_ttl=3600)
+    logger.info("Enqueued production import %s", production_id)
+
+
 async def confirm_proposal(tenant_id, proposal_id, edited_proposal, user_id):
     """Create one collection per confirmed unit and enqueue the DAG for each.
     Client-files units are enqueued first, eDiscovery units second (files-first
@@ -278,9 +327,14 @@ async def confirm_proposal(tenant_id, proposal_id, edited_proposal, user_id):
         for col in ordered:
             if col.get("_skip"):
                 continue
+            mid = matter_id_of(col, edited_proposal)
+            if col.get("bucket") == "loadfile":
+                pid_prod = await _create_production_unit(s, tenant_id, mid, col, user_id)
+                if pid_prod:
+                    created.setdefault("productions", []).append(pid_prod)
+                    continue
             cid = await _create_unit_collection(
-                s, tenant_id, matter_id_of(col, edited_proposal), proposal_id,
-                col, user_id)
+                s, tenant_id, mid, proposal_id, col, user_id)
             created.setdefault(col.get("track", "ediscovery"), []).append(cid)
         await s.execute(text("""
             UPDATE collection_proposals SET status='executed',
@@ -292,6 +346,8 @@ async def confirm_proposal(tenant_id, proposal_id, edited_proposal, user_id):
     for track in ("client_files", "ediscovery"):
         for cid in created.get(track, []):
             _enqueue_ingest(tenant_id, str(cid), user_id)
+    for pid_prod in created.get("productions", []):
+        _enqueue_production_import(tenant_id, pid_prod)
     return created
 
 

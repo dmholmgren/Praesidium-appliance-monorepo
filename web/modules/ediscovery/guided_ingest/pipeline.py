@@ -283,9 +283,10 @@ async def confirm_proposal(tenant_id, proposal_id, edited_proposal, user_id):
                 col, user_id)
             created.setdefault(col.get("track", "ediscovery"), []).append(cid)
         await s.execute(text("""
-            UPDATE collection_proposals SET status='executed', updated_at=now()
+            UPDATE collection_proposals SET status='executed',
+                   proposal = CAST(:prop AS jsonb), updated_at=now()
              WHERE id = CAST(:pid AS uuid)
-        """), {"pid": proposal_id})
+        """), {"pid": proposal_id, "prop": json.dumps(edited_proposal)})
         await s.commit()
     # enqueue after commit so the rows are visible to the worker
     for track in ("client_files", "ediscovery"):

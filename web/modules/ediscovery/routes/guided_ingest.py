@@ -103,6 +103,17 @@ async def get_proposal(proposal_id: str, request: Request,
     return JSONResponse(d)
 
 
+@router.get("/automap")
+async def automap(path: str, request: Request, user=Depends(get_current_user)):
+    """Sniff a load-file unit's columns and suggest a field map for confirmation."""
+    from modules.ediscovery.guided_ingest.automap import automap_for_path
+    try:
+        return JSONResponse(automap_for_path(path))
+    except Exception as e:
+        logger.warning("automap failed for %s: %s", path, e)
+        return JSONResponse({"found": False, "error": str(e)})
+
+
 @router.post("/confirm/{proposal_id}")
 async def confirm(proposal_id: str, request: Request,
                   user=Depends(get_current_user)):

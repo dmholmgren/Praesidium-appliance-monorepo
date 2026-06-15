@@ -908,7 +908,8 @@ def ingest_ediscovery_collection(
         if (len(source_paths_check) == 1
             and os.path.isdir(source_paths_check[0])
             and collection.source_type in ("opposing_production", "client_documents",
-                                            "third_party_subpoena", "internal_collection")):
+                                            "third_party_subpoena", "internal_collection",
+                                            "our_production")):
 
             scan = scan_folder_source(source_paths_check[0])
             # ── Load-file production guard ──────────────────────────────────
@@ -1047,6 +1048,7 @@ def ingest_ediscovery_collection(
             "opposing_production",
             "third_party_subpoena",
             "client_documents",
+            "our_production",
         ):
             # Preserve original archive, then extract
             raw_source = collection.dms_source_path or collection.storage_path
@@ -1272,7 +1274,7 @@ def ingest_ediscovery_collection(
                             INSERT INTO ediscovery_documents (
                                 tenant_id, collection_id, file_path, original_path,
                                 working_path, native_path, text_path, file_name,
-                                file_size, file_hash, mime_type, doc_type,
+                                file_size, file_hash, native_file_hash, mime_type, doc_type,
                                 extracted_text, bates_begin, bates_end, custodian,
                                 doc_date, email_from, email_to, email_subject,
                                 normalized_text, normalized_metadata, detected_language,
@@ -1281,7 +1283,7 @@ def ingest_ediscovery_collection(
                             ) VALUES (
                                 :tenant_id, CAST(:collection_id AS uuid), :file_path, :original_path,
                                 :working_path, :native_path, :text_path, :file_name,
-                                :file_size, :file_hash, :mime_type, :doc_type,
+                                :file_size, :file_hash, :native_file_hash, :mime_type, :doc_type,
                                 :extracted_text, :bates_begin, :bates_end, :custodian,
                                 :doc_date, :email_from, :email_to, :email_subject,
                                 :norm_text, CAST(:norm_meta AS jsonb), :det_lang,
@@ -1299,6 +1301,7 @@ def ingest_ediscovery_collection(
                             "file_name":      file_name,
                             "file_size":      file_size,
                             "file_hash":      file_hash,
+                            "native_file_hash": (rec.get("md5_hash") or "").strip().lower() or None,
                             "mime_type":      mime,
                             "doc_type":       doc_type,
                             "extracted_text": extracted_text,

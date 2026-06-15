@@ -5,11 +5,19 @@ Load-file field auto-mapping for the guided confirm screen. Finds the load file
 (.dat/.opt/.dii/.lfp/.csv) under a proposed unit's source path (dir, zip, or
 file), sniffs its column headers (reusing production_import._sniff_columns), and
 proposes a deterministic header -> target-field map for human confirmation.
+
+Split/spanned archives (Relativity name.001.zip / WinZip name.z01..name.zip)
+can't be column-sniffed without full reassembly, so they're reported as a
+"deferred" load file: the panel confirms the load file is present and that the
+field map is applied automatically at ingest, instead of showing blank.
 """
 import os
 import zipfile
 
 from modules.ediscovery.production_import import _detect_format, _sniff_columns
+from modules.ediscovery.jobs.split_zip_reassemble import (
+    detect_split_zip, SPLIT_ZIP_PATTERN, WINZIP_SEG_PATTERN,
+)
 
 LOAD_EXTS = (".dat", ".opt", ".dii", ".lfp", ".csv")
 
@@ -78,26 +86,39 @@ def suggest_map(columns):
     return m
 
 
+def _load_in_zip(zip_path):
+    """(name, first 8k bytes) for the top-priority load file inside a single,
+    self-contained zip, or (None, None)."""
+    try:
+        with zipfile.ZipFile(zip_path) as z:
+            names = [n for n in z.namelist()
+                     if (not n.endswith("/")) and n.lower().endswith(LOAD_EXTS)]
+            names.sort(key=lambda n: LOAD_EXTS.index(os.path.splitext(n.lower())[1]))
+            if names:
+                with z.open(names[0]) as fh:
+                    return os.path.basename(names[0]), fh.read(8192)
+    except Exception:
+        return None, None
+    return None, None
+
+
 def find_load_file(path):
-    """Return (filename, first_8k_bytes) for the load file at/under path."""
+    """Return (filename, first_8k_bytes) for the load file at/under path.
+
+    Handles: a load file directly, a single self-contained .zip (load file
+    inside), and a directory (loose load file, else a single self-contained
+    .zip sitting in it). Split/spanned sets are not handled here — see
+    _split_set_info / automap_for_path.
+    """
     p = path or ""
     if p.lower().endswith(".zip") and os.path.isfile(p):
-        try:
-            with zipfile.ZipFile(p) as z:
-                names = [n for n in z.namelist()
-                         if (not n.endswith("/")) and n.lower().endswith(LOAD_EXTS)]
-                names.sort(key=lambda n: LOAD_EXTS.index(os.path.splitext(n.lower())[1]))
-                if names:
-                    with z.open(names[0]) as fh:
-                        return os.path.basename(names[0]), fh.read(8192)
-        except Exception:
-            return None, None
-        return None, None
+        return _load_in_zip(p)
     if os.path.isfile(p) and p.lower().endswith(LOAD_EXTS):
         with open(p, "rb") as fh:
             return os.path.basename(p), fh.read(8192)
     if os.path.isdir(p):
         best = None
+        zips = []
         for dp, _d, fns in os.walk(p):
             for fn in fns:
                 e = os.path.splitext(fn.lower())[1]
@@ -105,19 +126,89 @@ def find_load_file(path):
                     rank = LOAD_EXTS.index(e)
                     if best is None or rank < best[0]:
                         best = (rank, os.path.join(dp, fn))
+                elif fn.lower().endswith(".zip"):
+                    zips.append(os.path.join(dp, fn))
         if best:
             with open(best[1], "rb") as fh:
                 return os.path.basename(best[1]), fh.read(8192)
+        # No loose load file — if exactly one self-contained zip lives here and
+        # it isn't part of a split set, peek inside it.
+        if len(zips) == 1 and not _is_split_member(os.path.basename(zips[0])):
+            return _load_in_zip(zips[0])
     return None, None
+
+
+def _is_split_member(name):
+    return bool(SPLIT_ZIP_PATTERN.match(name) or WINZIP_SEG_PATTERN.match(name))
+
+
+def _family_base(name):
+    m = SPLIT_ZIP_PATTERN.match(name)
+    if m:
+        return m.group(1)
+    m = WINZIP_SEG_PATTERN.match(name)
+    if m:
+        return m.group(1)
+    if name.lower().endswith(".zip"):
+        return name[:-4]
+    return None
+
+
+def _split_set_info(path):
+    """If `path` (a directory or one segment of a set) belongs to a split/
+    spanned archive, return {label, parts} describing it, else None."""
+    p = path or ""
+    d = p if os.path.isdir(p) else os.path.dirname(p)
+    if not os.path.isdir(d):
+        return None
+    try:
+        names = [n for n in os.listdir(d) if os.path.isfile(os.path.join(d, n))]
+    except OSError:
+        return None
+
+    # Restrict to the family implied by `path` when a specific file was given,
+    # so a directory holding several productions doesn't confuse detection.
+    target_base = None
+    if not os.path.isdir(p):
+        target_base = _family_base(os.path.basename(p))
+
+    families = {}
+    for n in names:
+        if not (_is_split_member(n) or n.lower().endswith(".zip")):
+            continue
+        b = _family_base(n)
+        if b is None:
+            continue
+        if target_base is not None and b != target_base:
+            continue
+        families.setdefault(b, []).append(os.path.join(d, n))
+
+    # Detect each format on its OWN member subset so an unrelated sibling (e.g.
+    # a plain name.zip next to name.001.zip/.002.zip) can't break detection.
+    for base, members in families.items():
+        relativity = [m for m in members
+                      if SPLIT_ZIP_PATTERN.match(os.path.basename(m))]
+        winzip = [m for m in members
+                  if WINZIP_SEG_PATTERN.match(os.path.basename(m))]
+        plain = [m for m in members if m.lower().endswith(".zip")
+                 and not SPLIT_ZIP_PATTERN.match(os.path.basename(m))]
+        for candidate in (relativity, winzip + plain[:1] if winzip else []):
+            if len(candidate) < 2:
+                continue
+            ok, _b, ordered = detect_split_zip(candidate)
+            if ok:
+                return {"label": f"{base} (split archive, {len(ordered)} parts)",
+                        "parts": len(ordered)}
+    return None
 
 
 def _clean_cols(cols):
     """Drop BOM / control-char-only tokens and strip stray control chars so the
     confirm screen shows clean header names (some .dat files use 0x14 as quote)."""
-    ctrl = "".join(chr(i) for i in range(0x20)) + "\ufeff"
+    ctrl = "".join(chr(i) for i in range(0x20)) + "﻿"
     out = []
     for c in cols:
-        cc = c.replace("\ufeff", "").strip(ctrl).strip()
+        cc = c.replace("﻿", "").strip(ctrl).strip()
         if cc and not all(ord(ch) < 0x20 for ch in cc):
             out.append(cc)
     return out
@@ -145,10 +236,20 @@ def find_load_file_path(path):
 
 def automap_for_path(path):
     fn, raw = find_load_file(path)
-    if not fn:
-        return {"found": False, "columns": [], "suggested": {},
-                "target_fields": TARGET_FIELDS}
-    fmt = _detect_format(fn)
-    cols = _clean_cols(_sniff_columns(raw, fmt))
-    return {"found": True, "load_file": fn, "format": fmt, "columns": cols,
-            "suggested": suggest_map(cols), "target_fields": TARGET_FIELDS}
+    if fn:
+        fmt = _detect_format(fn)
+        cols = _clean_cols(_sniff_columns(raw, fmt))
+        return {"found": True, "load_file": fn, "format": fmt, "columns": cols,
+                "suggested": suggest_map(cols), "target_fields": TARGET_FIELDS}
+    # Couldn't read a load file directly — is this a split/spanned set we can at
+    # least name? Report it as deferred (mapped automatically at ingest).
+    info = _split_set_info(path)
+    if info:
+        return {"found": True, "deferred": True, "load_file": info["label"],
+                "columns": [], "suggested": {}, "target_fields": TARGET_FIELDS,
+                "message": ("Load file is inside a split archive (%d parts). "
+                            "Columns can't be previewed here; the field map is "
+                            "detected and applied automatically at ingest."
+                            % info["parts"])}
+    return {"found": False, "columns": [], "suggested": {},
+            "target_fields": TARGET_FIELDS}

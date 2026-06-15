@@ -1,9 +1,15 @@
 """
 split_zip_reassemble.py — Split Relativity ZIP support for eDiscovery ingest.
 
-Handles multi-part Relativity exports (e.g., Production.001.zip,
-Production.002.zip, Production.003.zip). These are split at fixed byte
-boundaries; reassembly is binary concatenation in segment order.
+Handles multi-part Relativity/WinZip exports. Two layouts are recognized:
+
+  A. Relativity byte-split:  Production.001.zip, .002.zip, .003.zip
+  B. WinZip split:           Production.z01, .z02, ..., Production.zip
+                             (the .zip is the LAST part, holding the EOCD)
+
+Both are split at fixed byte boundaries; reassembly is binary concatenation in
+segment order. (True multi-disk *spanned* archives carrying a PK\\x07\\x08
+spanning marker are not produced by these vendor exports and are out of scope.)
 
 Patent Pending — 64/020,027
 """
@@ -16,12 +22,35 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-SPLIT_ZIP_PATTERN = re.compile(r'^(.+)\.(\d{3})\.zip$', re.IGNORECASE)
+SPLIT_ZIP_PATTERN = re.compile(r'^(.+)\.(\d{3})\.zip$', re.IGNORECASE)   # name.001.zip
+WINZIP_SEG_PATTERN = re.compile(r'^(.+)\.z(\d{2,})$', re.IGNORECASE)     # name.z01 ... name.z1008
+
+
+def _winzip_split(source_paths: list[str]) -> tuple[bool, str, list[str]]:
+    """WinZip-style split set: name.z01, name.z02, ..., name.zip.
+
+    The .zip is the final segment (holds the end-of-central-directory);
+    reassembly order is z01..zNN then .zip.
+    """
+    zips = [p for p in source_paths if p.lower().endswith(".zip")]
+    segs = []
+    for p in source_paths:
+        m = WINZIP_SEG_PATTERN.match(os.path.basename(p))
+        if m:
+            segs.append((int(m.group(2)), m.group(1), p))
+    # exactly one .zip terminator, at least one .zNN, and nothing else
+    if len(zips) != 1 or not segs or (len(zips) + len(segs) != len(source_paths)):
+        return False, "", []
+    base = os.path.splitext(os.path.basename(zips[0]))[0]
+    if any(s[1] != base for s in segs):
+        return False, "", []
+    ordered = [p for _, _, p in sorted(segs, key=lambda x: x[0])] + [zips[0]]
+    return True, base, ordered
 
 
 def detect_split_zip(source_paths: list[str]) -> tuple[bool, str, list[str]]:
     """
-    Detect whether a list of source paths represents a split Relativity ZIP.
+    Detect whether a list of source paths represents a split ZIP set.
 
     Returns:
         (is_split, base_name, sorted_segments)
@@ -29,25 +58,22 @@ def detect_split_zip(source_paths: list[str]) -> tuple[bool, str, list[str]]:
     if len(source_paths) < 2:
         return False, "", []
 
+    # Format A — Relativity byte-split: name.001.zip / name.002.zip / ...
     bases = {}
+    matched_all = True
     for p in source_paths:
-        fname = os.path.basename(p)
-        m = SPLIT_ZIP_PATTERN.match(fname)
+        m = SPLIT_ZIP_PATTERN.match(os.path.basename(p))
         if not m:
-            return False, "", []
-        base = m.group(1)
-        seg_num = int(m.group(2))
-        bases.setdefault(base, []).append((seg_num, p))
+            matched_all = False
+            break
+        bases.setdefault(m.group(1), []).append((int(m.group(2)), p))
+    if matched_all and len(bases) == 1:
+        base_name = list(bases.keys())[0]
+        segments = sorted(bases[base_name], key=lambda x: x[0])
+        return True, base_name, [s[1] for s in segments]
 
-    if len(bases) != 1:
-        return False, "", []
-
-    base_name = list(bases.keys())[0]
-    segments = bases[base_name]
-    segments.sort(key=lambda x: x[0])
-
-    sorted_paths = [s[1] for s in segments]
-    return True, base_name, sorted_paths
+    # Format B — WinZip split: name.z01 ... name.zip
+    return _winzip_split(source_paths)
 
 
 def reassemble_split_zip(

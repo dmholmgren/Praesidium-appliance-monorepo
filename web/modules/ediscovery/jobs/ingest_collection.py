@@ -911,6 +911,23 @@ def ingest_ediscovery_collection(
                                             "third_party_subpoena", "internal_collection")):
 
             scan = scan_folder_source(source_paths_check[0])
+            # ── Load-file production guard ──────────────────────────────────
+            # A .dat/.opt anywhere under the source means the whole tree is
+            # ONE Concordance/Relativity production keyed by a single load
+            # file. Never decompose it: per-VOL children have no load file and
+            # fall back to a flat walk that double-counts IMAGES + TEXT (the
+            # historic 788k-vs-391k doubling). Force a single DAT-aware ingest.
+            import glob as _gl_lf
+            if (_gl_lf.glob(os.path.join(source_paths_check[0], "**", "*.dat"), recursive=True)
+                    or _gl_lf.glob(os.path.join(source_paths_check[0], "**", "*.opt"), recursive=True)):
+                if scan["should_decompose"]:
+                    jlog.info("Load file present — overriding decompose (was %s); "
+                              "ingesting as one DAT-aware collection.", scan["reason"])
+                    log_progress(tenant_id, collection_id,
+                                 "Load file detected — ingesting as one production "
+                                 "(no decompose)")
+                scan["should_decompose"] = False
+                scan["reason"] = "load_file_present"
             jlog.info("Folder scan: %s — %d archives, %d subfolders, %d loose files, %s total",
                        scan["reason"], len(scan["archives"]), len(scan["subfolders"]),
                        len(scan["loose_files"]),
@@ -1154,6 +1171,17 @@ def ingest_ediscovery_collection(
                 collection.total_docs = len(dat_doc_map)
                 session.commit()
 
+                # psycopg2 rejects NUL (0x00) in any text field; strip it from
+                # every string we insert so one poisoned record can't kill the run.
+                def _nz(v):
+                    return v.replace("\x00", "") if isinstance(v, str) else v
+
+                # Incremental commits: a SAVEPOINT per record + a batch commit
+                # every N, so a mid-run crash keeps partial progress instead of
+                # rolling back everything (the old single end-of-loop commit).
+                _dat_since_commit = 0
+                _DAT_BATCH = 500
+
                 for bates, rec in dat_doc_map.items():
                     try:
                         # Image path is the primary file_path (what we show first)
@@ -1189,8 +1217,13 @@ def ingest_ediscovery_collection(
                             try:
                                 with open(txt_abs, encoding="utf-8", errors="replace") as tf:
                                     extracted_text = tf.read()
-                                # Copy to working/ for consistency
-                                working_text_rel = "working/" + Path(file_name).stem + ".txt"
+                                # Copy to working/. Name by Bates (sanitized,
+                                # capped) — deriving the name from file_name/
+                                # subject blew past the 255-char fs limit
+                                # (Errno 36) and that exception killed the run.
+                                import re as _re_wn
+                                _safe_bates = _re_wn.sub(r"[^A-Za-z0-9._-]", "_", bates)[:120] or "doc"
+                                working_text_rel = "working/" + _safe_bates + ".txt"
                                 working_text_abs = os.path.join(
                                     collection.storage_path, working_text_rel
                                 )
@@ -1228,7 +1261,13 @@ def ingest_ediscovery_collection(
                             except Exception as _ne:
                                 logger.warning("DAT normalize failed for %s: %s", bates, _ne)
 
+                        # Strip NUL (0x00) from body-text fields before insert.
+                        extracted_text = _nz(extracted_text)
+                        _norm_text_dat = _nz(_norm_text_dat)
+                        _norm_meta_dat = _nz(_norm_meta_dat)
+                        file_name = _nz(file_name)
                         from sqlalchemy import text as _text
+                        _dat_sp = session.begin_nested()
                         session.execute(_text("""
                             INSERT INTO ediscovery_documents (
                                 tenant_id, collection_id, file_path, original_path,
@@ -1265,20 +1304,34 @@ def ingest_ediscovery_collection(
                             "extracted_text": extracted_text,
                             "bates_begin":    bates,
                             "bates_end":      rec.get("bates_end") or bates,
-                            "custodian":      rec.get("custodian") or collection.source_party,
+                            "custodian":      _nz(rec.get("custodian") or collection.source_party),
                             "doc_date":       _parse_dat_date(rec.get("doc_date_str")),
-                            "email_from":     rec.get("email_from"),
-                            "email_to":       rec.get("email_to"),
-                            "email_subject":  rec.get("subject"),
+                            "email_from":     _nz(rec.get("email_from")),
+                            "email_to":       _nz(rec.get("email_to")),
+                            "email_subject":  _nz(rec.get("subject")),
                             "norm_text":      _norm_text_dat,
                             "norm_meta":      _norm_meta_dat,
                             "det_lang":       _det_lang_dat,
                             "ocr_status":     _ocr_status_dat,
                             "trans_status":   _trans_status_dat,
                         })
+                        _dat_sp.commit()
                         stats["processed"] = stats.get("processed", 0) + 1
+                        _dat_since_commit += 1
+                        if _dat_since_commit >= _DAT_BATCH:
+                            session.commit()
+                            collection.processed_docs = stats["processed"]
+                            session.commit()
+                            _dat_since_commit = 0
+                            log_progress(tenant_id, collection_id,
+                                         f"Ingested {stats['processed']}/{stats['total']} "
+                                         f"documents ({stats.get('errors', 0)} errors)")
 
                     except Exception as de:
+                        try:
+                            _dat_sp.rollback()
+                        except Exception:
+                            pass
                         logger.error("DAT record %s ingest error: %s", bates, de)
                         stats["errors"] = stats.get("errors", 0) + 1
 

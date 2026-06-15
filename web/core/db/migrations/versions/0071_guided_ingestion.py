@@ -27,7 +27,7 @@ def upgrade():
             proposal      jsonb NOT NULL DEFAULT '{}'::jsonb,
             status        varchar NOT NULL DEFAULT 'pending',
             origin        varchar,
-            created_by    uuid,
+            created_by    bigint,
             created_at    timestamptz NOT NULL DEFAULT now(),
             updated_at    timestamptz NOT NULL DEFAULT now()
         )

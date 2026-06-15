@@ -1,0 +1,6 @@
+{% extends "shell.html" %}
+{% block title %}Imports — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block content %}
+<div id="ediscovery-imports-root"></div>
+<script type="module" src="/static/js/ediscovery-imports.js?v=22"></script>
+{% endblock %}

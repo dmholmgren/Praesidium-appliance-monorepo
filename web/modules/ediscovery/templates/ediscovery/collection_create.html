@@ -121,6 +121,20 @@
       </div>
     </div>
 
+    <!-- Fast embedding (RunPod burst) -->
+    <div style="margin-bottom:16px;">
+      <div class="card">
+        <div style="display:flex; align-items:flex-start; gap:10px;">
+          <input id="embed_fast" name="embed_backend" type="checkbox" value="runpod"
+                 style="margin-top:2px; width:14px; height:14px; flex-shrink:0; cursor:pointer;">
+          <div>
+            <label for="embed_fast" style="font-size:13px; font-weight:500; color:var(--text); cursor:pointer;">Fast embedding (RunPod burst)</label>
+            <p style="font-size:11px; color:var(--muted); margin-top:3px;">For large / bulk productions: embeds on the RunPod GPU fleet instead of the local V100. Identical model and vectors &mdash; just faster for big collections. Leave off for normal-sized collections.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Actions -->
     <div style="display:flex; align-items:center; justify-content:flex-end; gap:10px; padding-top:4px;">
       <span id="submit-spinner" class="htmx-indicator spinner"></span>

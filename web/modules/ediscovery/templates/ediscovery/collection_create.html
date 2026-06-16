@@ -121,15 +121,17 @@
       </div>
     </div>
 
-    <!-- Fast embedding (RunPod burst) -->
+    <!-- Fast embedding (RunPod burst, third-party API) -->
     <div style="margin-bottom:16px;">
-      <div class="card">
+      <div class="card" style="background:#FFFBEB; border-color:#FDE68A;">
         <div style="display:flex; align-items:flex-start; gap:10px;">
           <input id="embed_fast" name="embed_backend" type="checkbox" value="runpod"
-                 style="margin-top:2px; width:14px; height:14px; flex-shrink:0; cursor:pointer;">
+                 style="margin-top:2px; width:14px; height:14px; flex-shrink:0; cursor:pointer;"
+                 onchange="if(this.checked){if(!confirm('Fast embedding sends document text to RunPod, a third-party API, and incurs usage costs. Continue?')){this.checked=false;}}">
           <div>
-            <label for="embed_fast" style="font-size:13px; font-weight:500; color:var(--text); cursor:pointer;">Fast embedding (RunPod burst)</label>
-            <p style="font-size:11px; color:var(--muted); margin-top:3px;">For large / bulk productions: embeds on the RunPod GPU fleet instead of the local V100. Identical model and vectors &mdash; just faster for big collections. Leave off for normal-sized collections.</p>
+            <label for="embed_fast" style="font-size:13px; font-weight:500; color:var(--text); cursor:pointer;">Fast embedding</label>
+            <p style="font-size:11px; color:var(--muted); margin-top:3px;">Embeds on the RunPod GPU fleet instead of the local V100 &mdash; much faster for large / bulk productions. Identical model and vectors.</p>
+            <p style="font-size:11px; color:#B45309; font-weight:600; margin-top:4px;">⚠ Uses RunPod, a third-party API &mdash; incurs usage costs.</p>
           </div>
         </div>
       </div>

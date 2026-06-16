@@ -76,6 +76,7 @@ async def create_collection(
     import_from_dms: Optional[str] = Form(None),
     dms_folder_path: Optional[str] = Form(None),
     dedicated_source_path: Optional[str] = Form(None),
+    embed_backend: Optional[str] = Form("v100"),
 ):
     class _Req:
         pass
@@ -90,6 +91,8 @@ async def create_collection(
     req.import_from_dms = import_from_dms == 'on' or import_from_dms == 'true'
     req.dms_folder_path = dms_folder_path
     req.dedicated_source_path = dedicated_source_path
+    _eb = (embed_backend or "v100").strip().lower()
+    req.embed_backend = _eb if _eb in ("v100", "runpod") else "v100"
     """Create a new eDiscovery collection and dispatch ingestion job."""
     tenant_id = getattr(request.state, "tenant_id", None)
     if not tenant_id:
@@ -125,6 +128,7 @@ async def create_collection(
             received_by=getattr(user, "id", None),
             stated_bates_range=req.stated_bates_range,
             dms_source_path=dms_source_path,
+            embed_backend=req.embed_backend,
             status=CollectionStatus.collecting,
         )
         session.add(collection)

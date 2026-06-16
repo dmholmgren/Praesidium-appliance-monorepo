@@ -446,7 +446,20 @@ def _embed_batch(conn, rows):
     for tenant, trows in by_tenant.items():
         ids = [r[2] for r in trows]
         try:
-            embed_collection(tenant, docs=ids, batch_size=EMBED_BATCH)
+            from modules.ediscovery.jobs.embed_text_collection import resolve_embed_url
+            _ec = conn.cursor()
+            _ec.execute("SELECT id::text, collection_id::text FROM ediscovery_documents "
+                        "WHERE id = ANY(%s::uuid[])", (ids,))
+            _coll = dict(_ec.fetchall())
+            _by = {}
+            for _d in ids:
+                _by.setdefault(_coll.get(_d), []).append(_d)
+            for _cid, _dids in _by.items():
+                _kw = {"docs": _dids, "batch_size": EMBED_BATCH}
+                _url = resolve_embed_url(_cid)
+                if _url:
+                    _kw["embed_url"] = _url
+                embed_collection(tenant, **_kw)
             dur = int((time.time() - t0) * 1000 / max(len(trows), 1))
             for r in trows:
                 _finish(conn, r[0], "done", duration_ms=dur)

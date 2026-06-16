@@ -71,6 +71,7 @@ class EdiscoveryCollection(Base):
     original_file_name = Column(String(500))  # "Smith_Jones_Production_001.zip"
     stated_bates_range = Column(String(255))  # "SJ000001 - SJ045832"
     dms_source_path = Column(String(2000))  # where on DMS file share these came from
+    embed_backend = Column(String(16), nullable=False, server_default="v100")  # 'v100' | 'runpod' (burst)
 
     # --- Collection stats ---
     total_docs = Column(BIGINT(unsigned=True), default=0)

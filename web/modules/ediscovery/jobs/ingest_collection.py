@@ -863,6 +863,7 @@ def ingest_ediscovery_collection(
     tenant_id: str,
     collection_id: int,
     user_id: int,
+    force: bool = False,
 ) -> dict:
     """
     Main ingestion RQ job — dispatched to MAIN-PRD-PROC-01.
@@ -894,6 +895,23 @@ def ingest_ediscovery_collection(
         jlog.info("Source: %s", collection.dms_source_path or collection.storage_path)
         jlog.info("Storage: %s", collection.storage_path)
         jlog.info("=" * 60)
+
+        # ── Idempotency guard ─────────────────────────────────────
+        # run_collection_full / the modal create path call intake
+        # unconditionally. The DAT and file-walk inserts have no ON CONFLICT,
+        # so a re-fire on a populated collection appends a duplicate document
+        # layer (and has nulled Bates). Refuse re-intake unless explicitly
+        # forced. To deliberately re-ingest, pass force=True or INGEST_FORCE=1.
+        _force = bool(force) or os.environ.get("INGEST_FORCE") == "1"
+        _existing_docs = session.query(EdiscoveryDocument).filter(
+            EdiscoveryDocument.collection_id == collection_id).count()
+        if _existing_docs > 0 and not _force:
+            jlog.info("Idempotency guard: collection already has %d document(s) "
+                      "— skipping intake (pass force=True to override).", _existing_docs)
+            log_progress(tenant_id, collection_id,
+                         f"Already ingested ({_existing_docs} docs) — skipping re-intake")
+            return {"total": _existing_docs, "processed": 0, "duplicates": 0,
+                    "errors": 0, "skipped": "already_ingested"}
 
         collection.status = "processing"
         session.commit()
@@ -938,6 +956,18 @@ def ingest_ediscovery_collection(
                          f"{scan['total_size_bytes'] / (1024**3):.1f}GB — {scan['reason']}")
 
             if scan["should_decompose"]:
+                from sqlalchemy import text as _sa_text_guard
+                _existing_children = session.execute(_sa_text_guard(
+                    "SELECT count(*) FROM ediscovery_collections "
+                    "WHERE parent_collection_id = CAST(:p AS uuid)"),
+                    {"p": str(collection_id)}).scalar()
+                if _existing_children and not (bool(force) or os.environ.get("INGEST_FORCE") == "1"):
+                    jlog.info("Idempotency guard: %d child collection(s) already "
+                              "exist — skipping decomposition.", _existing_children)
+                    log_progress(tenant_id, collection_id,
+                                 f"Already decomposed ({_existing_children} children) — skipping")
+                    return {"total": 0, "processed": 0, "duplicates": 0, "errors": 0,
+                            "skipped": "already_decomposed", "children": _existing_children}
                 child_specs = build_child_specs(scan, collection.collection_name or collection.name)
                 jlog.info("Decomposing into %d child collections", len(child_specs))
                 log_progress(tenant_id, collection_id,

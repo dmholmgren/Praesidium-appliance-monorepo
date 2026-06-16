@@ -72,6 +72,11 @@ EMBED_DIM = 768
 TARGET = 2000
 OVERLAP = 200
 MINCHARS = 200
+# eDiscovery-only: merge runs of small adjacent sections up to ~this many
+# chars before chunking (email bodies get segmented per-line, which would
+# otherwise yield one micro-chunk per line). 0 disables. Gated to
+# corpus=='ediscovery' in process_doc; depositions/DMS are unaffected.
+EDISCOVERY_PACK = int(os.environ.get("EDISCOVERY_CHUNK_PACK", "1500"))
 
 PAGE_BREAK = "\f"
 _BREAKS = ("\n", ". ", "; ", ", ", " ")
@@ -177,12 +182,47 @@ def _live_sections(cur, corpus, doc_id):
     return cur.fetchall()
 
 
-def build_chunks(canonical, sections):
+def build_chunks(canonical, sections, pack_target=None):
     """Shared core: sections -> §0-true chunk dicts (corpus-agnostic).
     Returns (chunks, errors). Each chunk carries canonical offsets + primitive
     linkage. content is sliced from canonical so §0 holds by construction."""
     chunks, errors = [], []
     cidx = 0
+    if pack_target:
+        valid = []
+        for (sid, sindex, stype, slabel, scontent, scs, sce, ps, pe) in sections:
+            if scs is None or sce is None:
+                errors.append((sindex, "null_section_offsets")); continue
+            if canonical[scs:sce] != scontent:
+                errors.append((sindex, "section_canonical_drift")); continue
+            valid.append((sid, sindex, stype, slabel, scs, sce, ps, pe))
+        i = 0
+        while i < len(valid):
+            g = valid[i]; gstart, gend = g[4], g[5]; members = [g]; j = i + 1
+            while j < len(valid) and (valid[j][5] - gstart) <= pack_target:
+                gend = valid[j][5]; members.append(valid[j]); j += 1
+            gcontent = canonical[gstart:gend]; first = members[0]
+            sidxs = [m[1] for m in members]
+            for (ls, le) in chunk_section(gcontent):
+                cs, ce = gstart + ls, gstart + le
+                content = canonical[cs:ce]
+                if content != gcontent[ls:le]:
+                    errors.append((first[1], "chunk_slice_mismatch")); continue
+                chunks.append({
+                    "chunk_index": cidx,
+                    "char_start": cs, "char_end": ce,
+                    "content": content,
+                    "section_id": first[0], "primitive_id": first[0],
+                    "primitive_type": "section",
+                    "section_label": first[3],
+                    "token_count": max(1, len(content) // 4),
+                    "meta": {"section_index": first[1], "section_type": first[2],
+                             "page_start": first[6], "page_end": members[-1][7],
+                             "merged_sections": sidxs, "chunker": CHUNKER_VERSION},
+                })
+                cidx += 1
+            i = j
+        return chunks, errors
     for (sid, sindex, stype, slabel, scontent, scs, sce, ps, pe) in sections:
         if scs is None or sce is None:
             errors.append((sindex, "null_section_offsets"))
@@ -337,7 +377,8 @@ def process_doc(cur, corpus, tenant_id, doc_id, dry_run, force):
     if not sections:
         return {"doc": doc_id, "status": "no_spine"}
 
-    chunks, errors = build_chunks(canonical, sections)
+    _pack = EDISCOVERY_PACK if (corpus == "ediscovery" and EDISCOVERY_PACK > 0) else None
+    chunks, errors = build_chunks(canonical, sections, pack_target=_pack)
     if errors:
         return {"doc": doc_id, "status": "chunk_errors",
                 "errors": errors[:10], "error_count": len(errors)}

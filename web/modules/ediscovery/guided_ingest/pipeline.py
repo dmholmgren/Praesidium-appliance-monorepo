@@ -239,11 +239,11 @@ async def _create_unit_collection(session, tenant_id, matter_id, proposal_id,
         INSERT INTO ediscovery_collections
             (tenant_id, matter_id, name, collection_name, status,
              source_type, source_party, custodian, bucket, proposal_id,
-             received_by, created_at, updated_at)
+             received_by, embed_backend, created_at, updated_at)
         VALUES
             (:tid, CAST(:mid AS uuid), :name, :name, 'collecting',
              :src_type, :src_party, :cust, :bucket, CAST(:pid AS uuid),
-             :uid, NOW(), NOW())
+             :uid, :eb, NOW(), NOW())
         RETURNING id::text
     """), {
         "tid": tenant_id, "mid": matter_id, "name": col["name"],
@@ -252,6 +252,7 @@ async def _create_unit_collection(session, tenant_id, matter_id, proposal_id,
         "src_party": col.get("custodian"),
         "cust": col.get("custodian"), "bucket": col.get("bucket"),
         "pid": proposal_id, "uid": user_id,
+        "eb": (col.get("embed_backend") if col.get("embed_backend") in ("runpod", "v100") else "v100"),
     })
     cid = result.scalar()
     dms_source_path = _stage_sources(tenant_id, matter_id, cid, col["source_paths"])

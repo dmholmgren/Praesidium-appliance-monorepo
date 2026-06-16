@@ -284,7 +284,7 @@ async def record_docs(request: Request, cid: str):
     tenant = _tenant(request)
     async with AsyncSessionLocal() as session:
         r = await session.execute(sa_text(
-            "SELECT record_kind, is_record, label, page_first, page_last, page_count, "
+            "SELECT id::text, record_kind, is_record, label, page_first, page_last, page_count, "
             "       geometry_status, status, rr_transcript_id::text FROM record_documents "
             "WHERE appellate_case_id=CAST(:c AS uuid) AND TRIM(tenant_id)=TRIM(:t) "
             "ORDER BY is_record DESC, record_kind, label"), {"c": cid, "t": tenant})
@@ -355,6 +355,175 @@ async def matter_record(request: Request, matter_id: str):
         "clerks_record": cr,
         "record_complete": bool(rr) and bool(cr),
     })
+
+
+@router.get("/matters/{matter_id}/dashboard")
+async def matter_dashboard(request: Request, matter_id: str):
+    """Composed payload for the appellate matter homepage 6-card grid:
+    Alerts, Matter Summary, Briefing Deadline, Court & Counsel, Briefs, Open Tasks.
+    Every card is backed by a real primitive; empty cards render as empty-state."""
+    tenant = _tenant(request)
+
+    def _s(v):
+        return str(v) if v is not None else None
+
+    async with AsyncSessionLocal() as session:
+        r = await session.execute(sa_text(
+            "SELECT m.matter_number, m.matter_name, m.matter_type, m.cause_number, m.court, "
+            "       ac.id::text AS appellate_case_id, ac.style, ac.appellant, ac.appellee, "
+            "       ac.court_of_appeals, ac.appellate_cause_number, ac.trial_court, "
+            "       ac.trial_cause_number, ac.brief_deadline, ac.status "
+            "FROM matters m LEFT JOIN appellate_cases ac "
+            "  ON ac.matter_id=m.id AND TRIM(ac.tenant_id)=TRIM(m.tenant_id) "
+            "WHERE m.id=CAST(:m AS uuid) AND TRIM(m.tenant_id)=TRIM(:t)"),
+            {"m": matter_id, "t": tenant})
+        meta = r.mappings().fetchone()
+        if not meta:
+            return JSONResponse({"error": "matter not found"}, status_code=404)
+        meta = dict(meta)
+        cid = meta.get("appellate_case_id")
+
+        r = await session.execute(sa_text(
+            "SELECT ml.to_matter_id::text AS trial_matter_id, tm.matter_number, tm.matter_name "
+            "FROM matter_links ml JOIN matters tm ON tm.id=ml.to_matter_id "
+            "WHERE ml.from_matter_id=CAST(:m AS uuid) AND ml.relation='appeal_of' "
+            "  AND TRIM(ml.tenant_id)=TRIM(:t) LIMIT 1"), {"m": matter_id, "t": tenant})
+        tl = r.mappings().fetchone()
+        trial_link = dict(tl) if tl else None
+
+        r = await session.execute(sa_text(
+            "SELECT alert_type, count, message, COALESCE(status,'open') AS status "
+            "FROM onboarding_alerts WHERE matter_id=CAST(:m AS uuid) AND TRIM(tenant_id)=TRIM(:t) "
+            "  AND COALESCE(status,'open') NOT IN ('dismissed','resolved') "
+            "ORDER BY created_at DESC LIMIT 12"), {"m": matter_id, "t": tenant})
+        alerts = [dict(x) for x in r.mappings().all()]
+
+        r = await session.execute(sa_text(
+            "SELECT overview_paragraph, critical_issues_paragraph, generated_at, status "
+            "FROM matter_summaries WHERE matter_id=CAST(:m AS uuid) AND TRIM(tenant_id)=TRIM(:t) "
+            "ORDER BY generated_at DESC NULLS LAST, created_at DESC LIMIT 1"),
+            {"m": matter_id, "t": tenant})
+        srow = r.mappings().fetchone()
+        summary = None
+        if srow:
+            summary = dict(srow)
+            summary["generated_at"] = _s(summary.get("generated_at"))
+
+        r = await session.execute(sa_text(
+            "SELECT title, deadline_date FROM deadlines "
+            "WHERE matter_id=CAST(:m AS uuid) AND TRIM(tenant_id)=TRIM(:t) "
+            "  AND COALESCE(superseded,false)=false AND deadline_date IS NOT NULL "
+            "ORDER BY deadline_date ASC LIMIT 6"), {"m": matter_id, "t": tenant})
+        deadlines = [{"title": d["title"], "deadline_date": _s(d["deadline_date"])}
+                     for d in r.mappings().all()]
+
+        r = await session.execute(sa_text(
+            "SELECT c.full_name AS name, COALESCE(c.firm_name, c.company) AS org, "
+            "       c.bar_number, mc.role, mc.is_client_side "
+            "FROM matter_contacts mc JOIN contacts c ON c.id=mc.contact_id "
+            "WHERE mc.matter_id=CAST(:m AS uuid) AND TRIM(mc.tenant_id)=TRIM(:t) "
+            "ORDER BY mc.is_primary DESC NULLS LAST, mc.role LIMIT 20"), {"m": matter_id, "t": tenant})
+        contacts = [dict(x) for x in r.mappings().all()]
+
+        briefs = {"appellate_case_id": cid, "total_sections": 0, "drafted_sections": 0, "word_count": 0}
+        if cid:
+            r = await session.execute(sa_text(
+                "SELECT COUNT(*) AS total, "
+                "  COUNT(*) FILTER (WHERE drafting_output_id IS NOT NULL OR COALESCE(word_count,0)>0) AS drafted, "
+                "  COALESCE(SUM(word_count),0) AS words "
+                "FROM brief_sections WHERE appellate_case_id=CAST(:c AS uuid) AND TRIM(tenant_id)=TRIM(:t)"),
+                {"c": cid, "t": tenant})
+            b = r.mappings().fetchone()
+            if b:
+                briefs = {"appellate_case_id": cid, "total_sections": int(b["total"] or 0),
+                          "drafted_sections": int(b["drafted"] or 0), "word_count": int(b["words"] or 0)}
+
+        r = await session.execute(sa_text(
+            "SELECT title, due_date, status, priority FROM tasks "
+            "WHERE matter_id=CAST(:m AS uuid) AND TRIM(tenant_id)=TRIM(:t) "
+            "  AND status NOT IN ('done','completed','cancelled') "
+            "ORDER BY due_date ASC NULLS LAST LIMIT 10"), {"m": matter_id, "t": tenant})
+        tasks = [{"title": t["title"], "due_date": _s(t["due_date"]), "status": t["status"]}
+                 for t in r.mappings().all()]
+
+        # Primary Reporter's Record transcript — drives the homepage "Record" nav tab
+        # deep-link into the page:line transcript viewer (/depositions/transcript/{id}).
+        record = {"rr_transcript_id": None, "rec_id": None}
+        if cid:
+            r = await session.execute(sa_text(
+                "SELECT id::text AS rec_id, rr_transcript_id::text AS rr_transcript_id "
+                "FROM record_documents "
+                "WHERE appellate_case_id=CAST(:c AS uuid) AND TRIM(tenant_id)=TRIM(:t) "
+                "  AND record_kind='RR' AND rr_transcript_id IS NOT NULL "
+                "ORDER BY volume ASC NULLS LAST LIMIT 1"), {"c": cid, "t": tenant})
+            rr = r.mappings().fetchone()
+            if rr:
+                record = {"rr_transcript_id": rr["rr_transcript_id"], "rec_id": rr["rec_id"]}
+
+    return JSONResponse({
+        "matter": {k: (_s(v) if k == "brief_deadline" else v) for k, v in meta.items()},
+        "appellate_case_id": cid,
+        "record": record,
+        "trial_link": trial_link,
+        "alerts": alerts,
+        "summary": summary,
+        "briefing": {"brief_deadline": _s(meta.get("brief_deadline")), "deadlines": deadlines},
+        "court_counsel": {"court_of_appeals": meta.get("court_of_appeals") or meta.get("court"),
+                          "trial_court": meta.get("trial_court"), "contacts": contacts},
+        "briefs": briefs,
+        "tasks": tasks,
+    })
+
+
+@router.get("/cases/{cid}/exhibits")
+async def case_exhibits(request: Request, cid: str):
+    """Exhibits physically bound in the record (with RR page ranges) plus every place
+    each is used in the testimony (page:line loci), for the exhibit viewer."""
+    tenant = _tenant(request)
+    SUB = ("SELECT rr_transcript_id FROM record_documents "
+           "WHERE appellate_case_id=CAST(:c AS uuid) AND record_kind IN ('RR','SUPP_RR') "
+           "  AND rr_transcript_id IS NOT NULL")
+    async with AsyncSessionLocal() as session:
+        r = await session.execute(sa_text(
+            "SELECT te.id::text AS id, te.party, te.exhibit_number, te.exhibit_label, te.admitted, "
+            "       te.rr_record_id::text AS rr_record_id, te.rr_page_first, te.rr_page_last, te.rr_page_label "
+            "FROM trial_exhibits te "
+            "WHERE te.transcript_id IN (" + SUB + ") "
+            "  AND te.rr_page_first IS NOT NULL AND TRIM(te.tenant_id)=TRIM(:t) "
+            "ORDER BY te.rr_page_first"), {"c": cid, "t": tenant})
+        exs = [dict(x) for x in r.mappings().all()]
+        r = await session.execute(sa_text(
+            "SELECT exhibit_id::text AS eid, page, line, locus, usage_kind, snippet "
+            "FROM trial_exhibit_usages "
+            "WHERE transcript_id IN (" + SUB + ") ORDER BY page, line"), {"c": cid})
+        usages = {}
+        for u in r.mappings().all():
+            usages.setdefault(u["eid"], []).append(
+                {"locus": u["locus"], "page": u["page"], "line": u["line"],
+                 "kind": u["usage_kind"], "snippet": u["snippet"]})
+        for e in exs:
+            e["usages"] = usages.get(e["id"], [])
+    return JSONResponse({"exhibits": exs})
+
+
+@router.get("/cases/{cid}/record-file/{rec_id}")
+async def case_record_file(request: Request, cid: str, rec_id: str):
+    """Stream a record PDF for inline viewing in the brief workspace (cid-keyed).
+    Path is read from record_documents.storage_path, scoped to the case + tenant."""
+    tenant = _tenant(request)
+    async with AsyncSessionLocal() as session:
+        r = await session.execute(sa_text(
+            "SELECT rd.storage_path, rd.label FROM record_documents rd "
+            "WHERE rd.id=CAST(:r AS uuid) AND rd.appellate_case_id=CAST(:c AS uuid) "
+            "  AND TRIM(rd.tenant_id)=TRIM(:t)"),
+            {"r": rec_id, "c": cid, "t": tenant})
+        row = r.mappings().fetchone()
+    if not row:
+        return JSONResponse({"error": "record document not found"}, status_code=404)
+    path = row["storage_path"]
+    if not path or not os.path.isfile(path):
+        return JSONResponse({"error": "file missing on disk"}, status_code=404)
+    return FileResponse(path, media_type="application/pdf", filename=row["label"])
 
 
 @router.get("/matters/{matter_id}/record-file/{rec_id}")

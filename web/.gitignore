@@ -47,3 +47,12 @@ htmlcov/
 .env*
 !.env*.template
 *~
+
+# --- Vite build output (regenerate via ui/build.sh) ---
+static/js/
+
+# --- local scratch / one-off scripts ---
+/scratch/
+
+# --- runtime secrets (never commit) ---
+certs/

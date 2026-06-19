@@ -1,0 +1,13 @@
+{
+  "@type": "PostgreSql",
+  "host": "172.28.0.1",
+  "port": 5432,
+  "database": "praesidium",
+  "authUsername": "stalwart",
+  "authSecret": {
+    "@type": "Value",
+    "secret": "PLACEHOLDER_DB_PASSWORD"
+  },
+  "tlsEnabled": false,
+  "poolMaxConnections": 10
+}

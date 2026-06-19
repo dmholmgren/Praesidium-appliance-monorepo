@@ -1,0 +1,48 @@
+services:
+  mail:
+    image: stalwartlabs/stalwart:latest
+    container_name: praesidium-mail
+    restart: unless-stopped
+    hostname: imap.hjmmlegal.com
+    ports:
+      - "10.10.0.10:25:25"
+      - "10.10.0.10:587:587"
+      - "10.10.0.10:993:993"
+      - "10.10.0.10:143:143"
+      - "10.10.0.10:4190:4190"
+      - "10.10.0.10:8080:8080"
+      # --- DMZ publish: firm mail reachable at imap.hjmmlegal.com (10.10.40.76). WebAdmin 8080 intentionally NOT on DMZ. ---
+      - "10.10.40.76:25:25"
+      - "10.10.40.76:143:143"
+      - "10.10.40.76:587:587"
+      - "10.10.40.76:993:993"
+      - "10.10.40.76:4190:4190"
+      - "3525:3525"
+    volumes:
+      - /datapool/opt/praesidium-mail/data:/opt/stalwart-mail
+      - /datapool/opt/praesidium-mail/config-json:/etc/stalwart:ro
+      - /datapool/opt/praesidium-mail/data/certs-live:/etc/certs/hjmmlegal.com:ro
+      - /etc/letsencrypt/live/praesidium-legal.com:/etc/certs/praesidium-legal.com:ro
+      - /etc/letsencrypt/archive:/etc/letsencrypt/archive:ro
+    networks:
+      praesidium-internal:
+        ipv4_address: 172.28.0.25
+      praesidium-edge:
+        ipv4_address: 172.28.1.25
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    dns:
+      - 10.10.10.1
+      - 8.8.8.8
+    environment:
+      - TZ=America/Chicago
+      - STALWART_RECOVERY_ADMIN=admin:${RECOVERY_ADMIN_PASSWORD}
+      - STALWART_DB_PASSWORD=${STALWART_DB_PASSWORD}
+
+networks:
+  praesidium-internal:
+    name: praesidium-internal
+    external: true
+  praesidium-edge:
+    name: praesidium-edge
+    external: true

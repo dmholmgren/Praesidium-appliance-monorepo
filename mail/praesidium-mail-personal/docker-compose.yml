@@ -1,0 +1,32 @@
+services:
+  mail-personal:
+    image: stalwartlabs/stalwart:latest
+    container_name: praesidium-mail-personal
+    restart: unless-stopped
+    hostname: mail.theholmgrens.net
+    command: ["--config", "/etc/stalwart/store.json"]
+    ports:
+      - "10.10.40.10:3125:25"
+      - "10.10.40.10:993:993"
+      - "10.10.40.10:465:465"
+    volumes:
+      - /datapool/opt/praesidium-mail-personal/data:/opt/stalwart-mail
+      - /datapool/opt/praesidium-mail-personal/config:/etc/stalwart:ro
+      - /datapool/opt/praesidium/certs/theholmgrens.net:/etc/certs/theholmgrens.net:ro
+    networks:
+      praesidium-internal:
+        ipv4_address: 172.28.0.26
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    dns:
+      - 10.10.10.1
+      - 8.8.8.8
+    environment:
+      - TZ=America/Chicago
+      - STALWART_HEALTHCHECK_URL=http://127.0.0.1:8080/healthz/live
+      - STALWART_RECOVERY_ADMIN=admin:${RECOVERY_ADMIN_PASSWORD}
+
+networks:
+  praesidium-internal:
+    name: praesidium-internal
+    external: true

@@ -1,0 +1,137 @@
+# ============================================================
+# Praesidium Mail — Stalwart Configuration
+# ============================================================
+# Deploy: /opt/praesidium-mail/config/stalwart.toml
+# Docs:   https://stalw.art/docs/
+# ============================================================
+
+# --- Server identity ---
+[server]
+hostname = "mail.hjmmlegal.com"
+
+[server.listener.smtp]
+bind = ["[::]:25"]
+protocol = "smtp"
+
+[server.listener.submission]
+bind = ["[::]:587"]
+protocol = "smtp"
+tls.implicit = false
+tls.starttls = true
+
+[server.listener.imaps]
+bind = ["[::]:993"]
+protocol = "imap"
+tls.implicit = true
+
+[server.listener.imap]
+bind = ["[::]:143"]
+protocol = "imap"
+tls.implicit = false
+tls.starttls = true
+
+[server.listener.sieve]
+bind = ["[::]:4190"]
+protocol = "managesieve"
+tls.implicit = false
+tls.starttls = true
+
+[server.listener.https]
+bind = ["[::]:8443"]
+protocol = "http"
+tls.implicit = true
+
+# --- TLS ---
+[certificate.hjmmlegal]
+cert = "/etc/certs/hjmmlegal.com/fullchain.pem"
+private-key = "/etc/certs/hjmmlegal.com/privkey.pem"
+default = true
+
+[certificate.praesidium]
+cert = "/etc/certs/praesidium-legal.com/fullchain.pem"
+private-key = "/etc/certs/praesidium-legal.com/privkey.pem"
+
+# --- Encryption at rest ---
+[storage.encryption]
+enable = true
+# Stalwart encrypts mailbox content with per-account keys
+# derived from the user's password. At-rest encryption means
+# even DB access doesn't reveal message bodies.
+
+# --- Storage backend: PostgreSQL ---
+[store.praesidium-db]
+type = "postgresql"
+host = "host.docker.internal"
+port = 5432
+database = "praesidium"
+user = "stalwart"
+password = "%STALWART_DB_PASSWORD%"
+
+[storage]
+data = "praesidium-db"
+blob = "praesidium-db"
+fts = "praesidium-db"
+lookup = "praesidium-db"
+
+# --- Directory: SQL against Praesidium users table ---
+[directory.praesidium]
+type = "sql"
+store = "praesidium-db"
+
+[directory.praesidium.columns]
+name = "username"
+secret = "password_hash"
+email = "email"
+description = "full_name"
+
+# Map Praesidium users to Stalwart principals
+[directory.praesidium.query]
+# Authenticate: lookup by email (attorneys connect as dennis@hjmmlegal.com)
+name = "SELECT username, 'individual' as type, full_name as description, password_hash as secret FROM users WHERE TRIM(tenant_id) = '986c0fee-1390-43bb-ad28-8cd1db6de53f' AND is_active = true AND email = $1"
+members = "SELECT '' WHERE 1=0"
+recipients = "SELECT username FROM users WHERE TRIM(tenant_id) = '986c0fee-1390-43bb-ad28-8cd1db6de53f' AND is_active = true AND email = $1"
+emails = "SELECT email FROM users WHERE TRIM(tenant_id) = '986c0fee-1390-43bb-ad28-8cd1db6de53f' AND is_active = true AND username = $1"
+
+[storage.directory]
+default = "praesidium"
+
+# --- SMTP Outbound: relay through MailAnyone/MX25 ---
+[queue.outbound]
+hostname = "mail.hjmmlegal.com"
+
+[remote.relay]
+address = "usa.outbound1.mailanyone.net"
+port = 25
+protocol = "smtp"
+
+[queue.outbound.next-hop]
+default = "relay"
+
+# --- SMTP Inbound ---
+[session.rcpt]
+# Accept mail for hjmmlegal.com
+directory = "praesidium"
+
+[session.data.limits]
+# Match existing Postfix config — no size limit
+messages = 0
+
+# --- DKIM / SPF / DMARC ---
+[auth.dkim]
+verify = "relaxed"
+sign = true
+
+[auth.spf]
+verify = "relaxed"
+
+[auth.dmarc]
+verify = "relaxed"
+
+# --- Junk / Spam ---
+[spam.filter]
+enable = true
+
+# --- IMAP specific ---
+[imap]
+# Allow clients to see all flags including custom $Matter-* keywords
+allow-custom-flags = true

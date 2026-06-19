@@ -1,0 +1,9 @@
+# Mail data and secrets are NEVER committed — only IaC (compose + sanitized config).
+*/data/
+**/dkim/*.key
+**/privkey.pem
+**/fullchain.pem
+**/*.bak*
+**/*.new
+store-export-bak*
+.env

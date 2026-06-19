@@ -154,6 +154,16 @@ async def dms_search_page(request: Request):
 
 @router.get("/", response_class=HTMLResponse)
 async def dms_home(request: Request):
+    # Sticky default: jump to the active matter's documents unless ?pick is set
+    # (escape hatch to reach the cross-matter landing/chooser).
+    if "pick" not in request.query_params:
+        from core.services.active_matter import read_active_matter
+        _uid = getattr(getattr(request.state, "current_user", None), "id", None)
+        _tid = (getattr(request.state, "tenant_id", "") or "").strip()
+        _am = await read_active_matter(_uid, _tid)
+        if _am:
+            from fastapi.responses import RedirectResponse
+            return RedirectResponse(url="/dms/matter/" + _am["matter_id"], status_code=303)
     from core.db.base import AsyncSessionLocal
     tenant_id = request.state.tenant_id
     brand = get_brand(request)
@@ -761,8 +771,12 @@ async def document_meta(request: Request, doc_id: str):
 
 @router.get("/document/{doc_id}/stream")
 async def document_stream(request: Request, doc_id: str):
-    """Stream a native document inline by its UUID."""
+    """Stream a document inline for browser preview. PDF/images served directly;
+    Office (docx/doc/pptx/xlsx/rtf/odt) converted to PDF via LibreOffice; emails
+    (.eml / message/rfc822) rendered as HTML; anything else served raw inline.
+    Reads the absolute storage_path directly."""
     from core.db.base import AsyncSessionLocal
+    import mimetypes as _mt
     tenant_id = request.state.tenant_id
     async with AsyncSessionLocal() as session:
         r = await session.execute(sa_text("""
@@ -776,11 +790,66 @@ async def document_stream(request: Request, doc_id: str):
     spath = doc["storage_path"]
     if not spath or not os.path.isfile(spath):
         raise HTTPException(status_code=404, detail="File not accessible")
-    import mimetypes as _mt
     mime = doc["mime_type"] or _mt.guess_type(spath)[0] or "application/octet-stream"
     fname = doc["filename"] or os.path.basename(spath)
+    ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
     with open(spath, "rb") as f:
         data = f.read()
+
+    OFFICE_EXTS = {"docx", "doc", "pptx", "ppt", "xlsx", "xls", "odt", "rtf"}
+    is_office = ext in OFFICE_EXTS or mime.startswith(
+        ("application/vnd.openxmlformats", "application/msword", "application/vnd.ms-"))
+    if is_office:
+        import subprocess, tempfile
+        tmp_dir = tempfile.mkdtemp(prefix="praesidium_preview_")
+        src = fname if "." in fname else (fname + "." + (ext or "docx"))
+        tmp_in = os.path.join(tmp_dir, src)
+        tmp_pdf = os.path.join(tmp_dir, os.path.basename(tmp_in).rsplit(".", 1)[0] + ".pdf")
+        try:
+            with open(tmp_in, "wb") as fh:
+                fh.write(data)
+            res = subprocess.run(
+                ["libreoffice", "--headless", "--norestore", "--convert-to", "pdf",
+                 "--outdir", tmp_dir, tmp_in], capture_output=True, timeout=60)
+            if res.returncode == 0 and os.path.exists(tmp_pdf):
+                with open(tmp_pdf, "rb") as fh:
+                    pdf = fh.read()
+                pname = os.path.basename(tmp_pdf)
+                return Response(content=pdf, media_type="application/pdf",
+                                headers={"Content-Disposition": f'inline; filename="{pname}"'})
+            logger.error("doc preview convert failed [%s]: %s", doc_id, res.stderr.decode()[:300])
+        except Exception as exc:
+            logger.error("doc preview convert error [%s]: %s", doc_id, exc)
+        finally:
+            for p in (tmp_in, tmp_pdf):
+                try: os.unlink(p)
+                except Exception: pass
+            try: os.rmdir(tmp_dir)
+            except Exception: pass
+        # conversion failed -> fall through to raw
+
+    if ext == "eml" or mime.startswith("message/rfc822"):
+        try:
+            import email, html as _html
+            from email import policy
+            msg = email.message_from_bytes(data, policy=policy.default)
+            hdr = "".join(
+                "<div><b>%s:</b> %s</div>" % (h, _html.escape(str(msg.get(h) or "")))
+                for h in ("From", "To", "Cc", "Date", "Subject") if msg.get(h))
+            body = msg.get_body(preferencelist=("html", "plain"))
+            if body is not None and body.get_content_type() == "text/html":
+                inner = body.get_content()
+            else:
+                txt = body.get_content() if body is not None else "(no text body)"
+                inner = "<pre style='white-space:pre-wrap;font-family:inherit'>%s</pre>" % _html.escape(txt)
+            page = ("<html><body style='font-family:system-ui,-apple-system,sans-serif;"
+                    "padding:18px;color:#111'><div style='color:#555;font-size:13px;"
+                    "border-bottom:1px solid #ddd;padding-bottom:10px;margin-bottom:12px'>"
+                    "%s</div>%s</body></html>") % (hdr, inner)
+            return Response(content=page, media_type="text/html")
+        except Exception as exc:
+            logger.error("doc preview eml error [%s]: %s", doc_id, exc)
+
     return Response(content=data, media_type=mime,
                     headers={"Content-Disposition": f'inline; filename="{fname}"'})
 

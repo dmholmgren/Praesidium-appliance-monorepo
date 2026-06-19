@@ -369,10 +369,29 @@ async def login(
         logger.info(f"Portal password login: {username} (user_id={user_id}) tenant={tenant_id}")
         return resp
 
+    # AUTHFIX: firm users now get an opaque token session (sessions table),
+    # never a raw user-id cookie.
+    import secrets as _secrets
+    _tok = _secrets.token_urlsafe(32)
+    async with AsyncSessionLocal() as _s:
+        await _s.execute(sa_text(
+            "DELETE FROM sessions WHERE user_id = :uid AND expires_at < NOW()"),
+            {"uid": user.id})
+        await _s.execute(sa_text(
+            "INSERT INTO sessions (token, user_id, tenant_id, expires_at) "
+            "VALUES (:tok, :uid, :tid, NOW() + INTERVAL '1 day')"),
+            {"tok": _tok, "uid": user.id, "tid": tenant_id.strip()})
+        await _s.execute(sa_text(
+            "INSERT INTO user_activity_log (tenant_id, user_id, action, ip_address) "
+            "VALUES (:tid, :uid, 'login_password', :ip)"),
+            {"tid": tenant_id.strip(), "uid": user.id,
+             "ip": (request.client.host if request.client else "")[:50]})
+        await _s.commit()
+
     response = RedirectResponse(url="/dms/", status_code=302)
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
-        value=user_id,
+        value=_tok,
         httponly=True,
         secure=request.url.scheme == "https",
         samesite="lax",

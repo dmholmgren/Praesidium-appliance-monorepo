@@ -204,6 +204,33 @@ async def update_signatures(request: Request, body: SignaturesUpdate):
     return {"user": user}
 
 
+async def _provision_personal_mail(tid: str, uid: int):
+    """Mirror a saved 'personal_mail' connector into the live JMAP connector store
+    (tenant_connectors row + encrypted admin creds in the vault) so the Comms
+    multibox can read it. Returns an error string if it could not be wired, else None."""
+    from core.services import mail_connectors as _mc
+    user = await _get_user_row(tid, uid)
+    email = (user.get("email") or "").strip()
+    if not email:
+        return "user has no email address"
+    prefs = user.get("user_preferences") or {}
+    conn = next((c for c in prefs.get("connectors", [])
+                 if c.get("connector_type") == "personal_mail"), None)
+    cfg = (conn or {}).get("config") or {}
+    jmap_url = (cfg.get("jmap_url") or "").strip()
+    admin_user = (cfg.get("admin_user") or "").strip()
+    admin_pass = (cfg.get("admin_password") or "").strip()
+    account_address = (cfg.get("account_address") or "").strip() or email
+    color = (cfg.get("color") or "").strip() or None
+    if not (jmap_url and admin_user and admin_pass):
+        return "incomplete config (need JMAP URL, admin user, admin password)"
+    await _mc.set_personal_connector(
+        email, jmap_url=jmap_url, admin_user=admin_user, admin_pass=admin_pass,
+        account_address=account_address, color=color, tenant_id=tid,
+    )
+    return None
+
+
 # ─── Connectors Endpoints ───────────────────────────────────
 
 @router.get("/connectors")
@@ -263,6 +290,14 @@ async def save_connector(request: Request, body: ConnectorSave):
             {"tid": tid, "uid": uid, "prefs": json.dumps(prefs)},
         )
         await session.commit()
+
+    if body.connector_type == "personal_mail":
+        try:
+            warning = await _provision_personal_mail(tid, uid)
+        except Exception as e:
+            warning = f"live wiring failed: {e}"
+        if warning:
+            return {"status": "ok", "warning": warning}
     return {"status": "ok"}
 
 
@@ -282,6 +317,21 @@ async def test_connector(request: Request, body: ConnectorTest):
         return {"success": False, "error": "Connector not configured"}
     if not conn.get("config"):
         return {"success": False, "error": "No configuration saved"}
+
+    if body.connector_type == "personal_mail":
+        from core.services import mail_connectors as _mc
+        user = await _get_user_row(tid, uid)
+        email = (user.get("email") or "").strip()
+        try:
+            pc = await _mc.get_personal_connector(email)
+        except Exception as e:
+            return {"success": False, "error": f"connection error: {e}"}
+        if not pc:
+            return {"success": False, "error": "Not wired yet — save the connector first."}
+        if not pc.ok:
+            return {"success": False, "error": f"Reached server but could not resolve mailbox '{pc.account_address}'. Check the address / admin creds."}
+        return {"success": True, "message": f"Connected to {pc.account_address} (account {pc.account_id})."}
+
     return {"success": True, "message": "Configuration looks valid. Full connection test coming soon."}
 
 

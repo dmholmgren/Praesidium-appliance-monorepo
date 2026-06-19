@@ -29,7 +29,17 @@ templates = Jinja2Templates(directory=[
 
 
 def _ctx(request, **kwargs):
-    return {"request": request, "brand": get_brand(request), "page": "billing", **kwargs}
+    # Inject the DB-driven module tab strip (ui_tabs via tab_service). Graceful:
+    # [] on any failure → layout.html falls back to its hardcoded tabs.
+    try:
+        from core.services.tab_service import get_tabs_sync
+        _role = getattr(getattr(request.state, "current_user", None), "role", None)
+        _tid = (getattr(request.state, "tenant_id", "") or "").strip()
+        _tabs = get_tabs_sync("billing", _tid, _role)
+    except Exception:
+        _tabs = []
+    return {"request": request, "brand": get_brand(request), "page": "billing",
+            "module_tabs": _tabs, "active_tab": kwargs.get("bill_tab"), **kwargs}
 
 
 def _get_sync_db(tenant_id: str):
@@ -45,6 +55,20 @@ def _get_sync_db(tenant_id: str):
 @views.get("/billing/", response_class=HTMLResponse)
 @views.get("/billing", response_class=HTMLResponse)
 async def billing_home(request: Request):
+    # Sticky default: fresh navigation with no matter_id key → redirect to the
+    # user's active matter (topbar pick). The billing-home React bundle reads
+    # matter_id from the URL; explicit ?matter_id= is left as-is (URL is truth).
+    if "matter_id" not in request.query_params:
+        from core.services.active_matter import read_active_matter
+        _uid = getattr(getattr(request.state, "current_user", None), "id", None)
+        _tid = (getattr(request.state, "tenant_id", "") or "").strip()
+        _am = await read_active_matter(_uid, _tid)
+        if _am:
+            from fastapi.responses import RedirectResponse
+            from urllib.parse import urlencode
+            _qs = dict(request.query_params)
+            _qs["matter_id"] = _am["matter_id"]
+            return RedirectResponse(url="/billing?" + urlencode(_qs), status_code=303)
     user = getattr(request.state, "current_user", None)
     nav_ctx = await get_nav_context(request)
     return templates.TemplateResponse(

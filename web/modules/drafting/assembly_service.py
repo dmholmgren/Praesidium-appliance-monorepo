@@ -42,7 +42,7 @@ from core.db.base import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-sonnet-4-20250514"
+MODEL = "claude-sonnet-4-6"
 
 MAX_SOURCE_CHARS = 80_000
 MAX_EXEMPLAR_CHARS = 4_000

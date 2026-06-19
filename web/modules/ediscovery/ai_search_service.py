@@ -34,7 +34,7 @@ MCP_SERVER_URL = os.environ.get(
     "https://mcp.praesidium-legal.com/mcp"
 )
 
-AI_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+AI_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 MAX_TOKENS = 4096
 
 

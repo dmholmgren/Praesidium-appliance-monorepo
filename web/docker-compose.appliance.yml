@@ -78,6 +78,7 @@ services:
       - /mnt/legacy-qnap:/mnt/legacy-qnap:ro
       - /mnt/praesidium:/mnt/praesidium:rw
       - /mnt/ediscovery:/mnt/ediscovery:rw
+      - /datapool/cache/page_raster:/datapool/cache/page_raster:rw
       - /mnt/legacy/Clients:/mnt/clients:ro
       - /mnt/legacy/Docsend:/mnt/docsend:ro
       - /mnt/legacy:/mnt/legacy:ro
@@ -110,6 +111,28 @@ services:
     restart: unless-stopped
     ports:
       - "127.0.0.1:8091:8080"
+    networks:
+      - praesidium-internal
+
+  # Matter-intelligence scraper. Polls the appliance DB and runs scraper_main.py
+  # from /datapool/opt/praesidium-scraper (bind-mounted to /app). Previously only
+  # defined in the repo's dev docker-compose.yml, so it showed up as an orphan
+  # under this (appliance) project — defined here now so the standard bring-up
+  # owns it. Internal-only; reaches Postgres at 172.28.0.1 over praesidium-internal.
+  scraper:
+    build:
+      context: /datapool/opt/praesidium-scraper
+      dockerfile: Dockerfile
+    image: praesidium-web-scraper
+    container_name: praesidium-scraper
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://praesidium:hS8_3bJg6NImUwFpFVJ4@172.28.0.1:5432/praesidium
+      - POLL_INTERVAL=30
+      - LOG_LEVEL=INFO
+    volumes:
+      - /datapool/opt/praesidium-scraper:/app
+      - /tmp:/tmp/scraper-debug
     networks:
       - praesidium-internal
 

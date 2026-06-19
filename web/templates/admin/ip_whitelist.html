@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title_suffix %} — IP Whitelist{% endblock %}
+{% block page_title %}IP Whitelist{% endblock %}
+
+{% block content %}
+<div class="space-y-5">
+
+  <div class="bg-amber-950 border border-amber-800 rounded-lg p-3 text-amber-300 text-xs">
+    Managing the list here is safe. <span class="text-amber-200">Applying</span> the firewall set is a host-side, dead-man's-switch operation — it is not armed from this screen.
+  </div>
+
+  <!-- Add form -->
+  <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+    <h2 class="text-gray-300 font-medium text-sm mb-3">Add allowed source</h2>
+    <div class="flex gap-3 items-end flex-wrap">
+      <div>
+        <label class="block text-gray-500 text-xs mb-1">IP or CIDR</label>
+        <input id="f-cidr" placeholder="e.g. 160.79.104.0/21 or 1.2.3.4" class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 min-w-[220px]">
+      </div>
+      <div>
+        <label class="block text-gray-500 text-xs mb-1">Label</label>
+        <input id="f-label" placeholder="e.g. Office / Anthropic egress" class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 min-w-[200px]">
+      </div>
+      <div>
+        <label class="block text-gray-500 text-xs mb-1">Apply to</label>
+        <select id="f-target" class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
+          {% for val, lbl in targets.items() %}<option value="{{ val }}">{{ lbl }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="block text-gray-500 text-xs mb-1">Notes</label>
+        <input id="f-notes" class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 min-w-[180px]">
+      </div>
+      <button id="f-add" class="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium rounded px-4 py-2 transition-colors">Add</button>
+    </div>
+  </div>
+
+  <!-- Entries table -->
+  <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+    <h2 class="text-gray-300 font-medium text-sm mb-3">Allowed sources</h2>
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-gray-500 text-xs border-b border-gray-800">
+          <th class="text-left font-medium py-2">CIDR</th>
+          <th class="text-left font-medium py-2">Label</th>
+          <th class="text-left font-medium py-2">Target</th>
+          <th class="text-left font-medium py-2">Active</th>
+          <th class="text-left font-medium py-2">Last applied</th>
+          <th class="text-right font-medium py-2">Actions</th>
+        </tr>
+      </thead>
+      <tbody id="rows"><tr><td colspan="6" class="text-gray-600 py-4 text-center">Loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <!-- Preview -->
+  <div class="grid grid-cols-2 gap-4">
+    <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+      <h2 class="text-gray-300 font-medium text-sm mb-2">nginx preview</h2>
+      <pre id="prev-nginx" class="bg-black/40 text-gray-300 text-xs rounded p-3 overflow-auto whitespace-pre-wrap"></pre>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+      <h2 class="text-gray-300 font-medium text-sm mb-2">firewall preview</h2>
+      <pre id="prev-fw" class="bg-black/40 text-gray-300 text-xs rounded p-3 overflow-auto whitespace-pre-wrap"></pre>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const fmt = (s) => s ? new Date(s).toLocaleString() : "—";
+const esc = (s) => (s==null?"":String(s)).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function load() {
+  const r = await fetch("/admin/api/ip-whitelist");
+  const d = await r.json();
+  const tb = document.getElementById("rows");
+  if (!d.entries.length) { tb.innerHTML = `<tr><td colspan="6" class="text-gray-600 py-4 text-center">No entries.</td></tr>`; }
+  else tb.innerHTML = d.entries.map(e => `
+    <tr class="border-b border-gray-800/60">
+      <td class="py-2 text-gray-200 font-mono">${esc(e.cidr)}</td>
+      <td class="py-2 text-gray-400">${esc(e.label)}</td>
+      <td class="py-2 text-gray-400">${esc(e.target)}</td>
+      <td class="py-2">${e.is_active ? '<span class="text-emerald-400">yes</span>' : '<span class="text-gray-600">no</span>'}</td>
+      <td class="py-2 text-gray-500">${fmt(e.last_applied_at)}</td>
+      <td class="py-2 text-right whitespace-nowrap">
+        <button data-id="${e.id}" class="tog-btn text-xs rounded px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300">${e.is_active ? 'Disable' : 'Enable'}</button>
+        <button data-id="${e.id}" class="del-btn text-xs rounded px-3 py-1 bg-red-900 hover:bg-red-800 text-red-200 ml-1">Delete</button>
+      </td>
+    </tr>`).join("");
+  document.getElementById("prev-nginx").textContent = d.preview.nginx;
+  document.getElementById("prev-fw").textContent = d.preview.firewall;
+  document.querySelectorAll(".tog-btn").forEach(b => b.onclick = () => toggle(b.dataset.id));
+  document.querySelectorAll(".del-btn").forEach(b => b.onclick = () => del(b.dataset.id));
+}
+
+async function add() {
+  const btn = document.getElementById("f-add"); btn.disabled = true;
+  try {
+    const body = {
+      cidr: document.getElementById("f-cidr").value,
+      label: document.getElementById("f-label").value || "unnamed",
+      target: document.getElementById("f-target").value,
+      notes: document.getElementById("f-notes").value || null,
+    };
+    const r = await fetch("/admin/api/ip-whitelist", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    if (!r.ok) { alert("Add failed: " + (await r.text())); return; }
+    document.getElementById("f-cidr").value = ""; document.getElementById("f-label").value = ""; document.getElementById("f-notes").value = "";
+    await load();
+  } finally { btn.disabled = false; }
+}
+
+async function toggle(id) {
+  const r = await fetch(`/admin/api/ip-whitelist/${id}/toggle`, {method:"POST"});
+  if (!r.ok) { alert("Toggle failed"); return; } await load();
+}
+async function del(id) {
+  if (!confirm("Delete this entry?")) return;
+  const r = await fetch(`/admin/api/ip-whitelist/${id}`, {method:"DELETE"});
+  if (!r.ok) { alert("Delete failed"); return; } await load();
+}
+
+document.getElementById("f-add").onclick = add;
+load();
+</script>
+{% endblock %}

@@ -1,0 +1,15 @@
+{% extends "shell.html" %}
+{% block title %}Review — {{ collection_name }}{% endblock %}
+{% block breadcrumb %}
+<a href="/deals" style="color:var(--muted);text-decoration:none;">Deal Center</a>
+<span class="breadcrumb-sep">/</span>
+<a href="/matters/{{ matter_id }}" style="color:var(--muted);text-decoration:none;">{{ matter_name }}</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">Review</span>
+{% endblock %}
+{% block content %}
+<div id="deal-review-root" data-matter-id="{{ matter_id }}" data-collection-id="{{ collection_id }}"
+     data-matter-name="{{ matter_name }}" data-collection-name="{{ collection_name }}"
+     style="margin:-24px; height:calc(100vh - var(--header-h)); box-sizing:border-box; overflow:hidden;"></div>
+<script type="module" src="/static/js/deal-review.js?v=2"></script>
+{% endblock %}

@@ -1,0 +1,6 @@
+{% extends "shell.html" %}
+{% block title %}Depositions — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block content %}
+<div id="deposition-index-root"></div>
+<script type="module" src="/static/js/deposition-index.js?v=1"></script>
+{% endblock %}

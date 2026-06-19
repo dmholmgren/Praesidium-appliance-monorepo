@@ -60,6 +60,20 @@ _FALLBACK_NAV = {
 }
 
 
+async def _read_active_matter_safe(request: Request):
+    """Best-effort read of the user's sticky active matter for the sync seed.
+    Never raises — returns None on any failure so nav rendering can't break."""
+    try:
+        from core.services.active_matter import read_active_matter
+        tenant_id = getattr(request.state, "tenant_id", "") or ""
+        current_user = getattr(request.state, "current_user", None)
+        uid = getattr(current_user, "id", None) if current_user else None
+        return await read_active_matter(uid, tenant_id)
+    except Exception as exc:
+        logger.debug("active_matter seed read failed: %s", exc)
+        return None
+
+
 async def get_nav_context(request: Request) -> dict:
     """
     Return nav context for shell.html template rendering.
@@ -69,7 +83,12 @@ async def get_nav_context(request: Request) -> dict:
 
     Falls back to hardcoded _FALLBACK_NAV if DB query fails,
     so the UI never breaks during migrations or outages.
+
+    Also injects `active_matter` (the user's sticky topbar selection) so
+    shell.html can emit a synchronous window.__ACTIVE_MATTER__ seed and
+    avoid a first-paint flash in module pickers. Best-effort; None on failure.
     """
+    active_matter = await _read_active_matter_safe(request)
     try:
         from core.services.nav_service import get_nav_items
 
@@ -85,12 +104,12 @@ async def get_nav_context(request: Request) -> dict:
         # nav_service returns {"main": [...], "bottom": [...], "divider_positions": [...]}
         # shell.html expects nav_items with exactly that shape — verified match
         if nav_data and nav_data.get("main"):
-            return {"nav_items": nav_data}
+            return {"nav_items": nav_data, "active_matter": active_matter}
         else:
             # Empty result (no rows yet) — use fallback
             logger.info("nav_service returned empty — using fallback nav")
-            return {"nav_items": _FALLBACK_NAV}
+            return {"nav_items": _FALLBACK_NAV, "active_matter": active_matter}
 
     except Exception as exc:
         logger.warning("nav_service failed, using fallback: %s", exc)
-        return {"nav_items": _FALLBACK_NAV}
+        return {"nav_items": _FALLBACK_NAV, "active_matter": active_matter}

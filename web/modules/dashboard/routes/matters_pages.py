@@ -60,12 +60,73 @@ async def matters_home_page(request: Request):
     return await _render_shell(request, "matters_home_react.html")
 
 
+@router.get("/deals", response_class=HTMLResponse)
+async def deal_center_page(request: Request):
+    """Deal Center — transactional matters landing (the 'both sides' surface)."""
+    return await _render_shell(request, "deal_center_react.html", {"page": "dealcenter"})
+
+
 @router.get("/matters/new", response_class=HTMLResponse)
 async def matter_new_page(request: Request):
     """New Matter — create-matter form page."""
     return await _render_shell(request, "matter_dashboard_react.html", {
         "matter_id": "new",
         "matter_name": "New Matter",
+    })
+
+
+@router.get("/matters/{matter_id}/review/{collection_id}", response_class=HTMLResponse)
+async def deal_review_page(request: Request, matter_id: str, collection_id: str):
+    """Deal Review — reskinned eDiscovery viewer over a deal's DD collection (Unit C)."""
+    tid = _tid(request)
+    matter_name, coll_name = "Deal", "Collection"
+    try:
+        async with AsyncSessionLocal() as session:
+            r = await session.execute(sa_text(
+                "SELECT matter_name FROM matters WHERE id = CAST(:mid AS uuid) AND TRIM(tenant_id) = :tid"
+            ), {"mid": matter_id, "tid": tid})
+            row = r.fetchone()
+            if row:
+                matter_name = row[0] or "Deal"
+            r2 = await session.execute(sa_text(
+                "SELECT COALESCE(NULLIF(name,''), NULLIF(collection_name,''), 'Collection') "
+                "FROM ediscovery_collections WHERE id = CAST(:cid AS uuid) AND TRIM(tenant_id) = :tid"
+            ), {"cid": collection_id, "tid": tid})
+            r2row = r2.fetchone()
+            if r2row:
+                coll_name = r2row[0] or "Collection"
+    except Exception as exc:
+        logger.warning("deal_review_page fetch: %s", exc)
+    return await _render_shell(request, "deal_review_react.html", {
+        "matter_id": matter_id,
+        "collection_id": collection_id,
+        "matter_name": matter_name,
+        "collection_name": coll_name,
+        "page": "dealcenter",
+    })
+
+
+@router.get("/matters/{matter_id}/deal-room", response_class=HTMLResponse)
+async def deal_room_page(request: Request, matter_id: str):
+    """Deal Room — per-deal document data room (Unit B). Target of the
+    transactional 'Deal Room' matter tab."""
+    tid = _tid(request)
+    matter_name = "Deal"
+    try:
+        async with AsyncSessionLocal() as session:
+            r = await session.execute(sa_text("""
+                SELECT matter_name FROM matters
+                WHERE id = CAST(:mid AS uuid) AND TRIM(tenant_id) = :tid
+            """), {"mid": matter_id, "tid": tid})
+            row = r.fetchone()
+            if row:
+                matter_name = row[0] or "Deal"
+    except Exception as exc:
+        logger.warning("deal_room_page name fetch: %s", exc)
+    return await _render_shell(request, "deal_room_react.html", {
+        "matter_id": matter_id,
+        "matter_name": matter_name,
+        "page": "dealcenter",
     })
 
 

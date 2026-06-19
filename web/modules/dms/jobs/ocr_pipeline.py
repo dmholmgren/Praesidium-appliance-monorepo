@@ -116,6 +116,16 @@ def ocr_document(tenant_id: str, document_id: str):
         tenant_id, document_id,
     )
 
+    # Legal-type classification onto the curated doc (Trial Center / DMS read
+    # documents.legal_category; the classifier is structural-first, best-effort).
+    try:
+        q.enqueue(
+            "modules.intelligence.document_legal_classifier.classify_and_route_one_sync",
+            tenant_id, document_id,
+        )
+    except Exception:
+        logger.exception("enqueue legal classify failed for %s", document_id)
+
     logger.info(
         f"OCR complete: doc={document_id} "
         f"chars={len(extracted) if extracted else 0}"

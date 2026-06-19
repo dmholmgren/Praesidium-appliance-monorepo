@@ -133,7 +133,7 @@ async def provision_user(request: Request, client_id: str):
             if sid:
                 for fk in STANDARD_FOLDERS.get("default",[]):
                     await db.execute(sa_text("INSERT INTO portal_folder_scope (scope_id,folder_key,is_visible,granted_by) VALUES (:sid,:fk,:vis,:gby) ON CONFLICT (scope_id,folder_key) DO NOTHING"),{"sid":sid.id,"fk":fk,"vis":fk not in DEFAULT_EXCLUDED,"gby":uid})
-        token=secrets.token_urlsafe(48); expires=datetime.now(timezone.utc)+timedelta(hours=72)
+        token=secrets.token_urlsafe(48); expires=datetime.now(timezone.utc)+timedelta(hours=24 * 365)
         await db.execute(sa_text("INSERT INTO portal_magic_links (tenant_id,user_id,token,expires_at,created_by) VALUES (:ptid,:uid,:tok,:exp,:gby)"),{"ptid":ptid,"uid":new_uid,"tok":token,"exp":expires,"gby":uid})
         await db.commit()
     return JSONResponse({"status":"provisioned","user_id":new_uid,"email":email,"magic_link":f"https://{portal['domain']}/auth/magic?token={token}","expires_at":expires.isoformat()})
@@ -147,7 +147,7 @@ async def gen_magic_link(request: Request, client_id: str, user_id: int):
         if not portal: return JSONResponse({"error":"No portal"},status_code=400)
         ptid=portal["id"]
         await db.execute(sa_text("UPDATE portal_magic_links SET expires_at=NOW() WHERE user_id=:uid AND used_at IS NULL AND expires_at>NOW()"),{"uid":user_id})
-        token=secrets.token_urlsafe(48); expires=datetime.now(timezone.utc)+timedelta(hours=72)
+        token=secrets.token_urlsafe(48); expires=datetime.now(timezone.utc)+timedelta(hours=24 * 365)
         await db.execute(sa_text("INSERT INTO portal_magic_links (tenant_id,user_id,token,expires_at,created_by) VALUES (:ptid,:uid,:tok,:exp,:gby)"),{"ptid":ptid,"uid":user_id,"tok":token,"exp":expires,"gby":admin_uid})
         await db.commit()
     return JSONResponse({"magic_link":f"https://{portal['domain']}/auth/magic?token={token}","expires_at":expires.isoformat()})

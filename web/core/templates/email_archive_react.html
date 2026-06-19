@@ -1,0 +1,11 @@
+{% extends "shell.html" %}
+{% block title %}Email Archive — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/tenant-admin/" style="color:var(--muted);text-decoration:none;">Firm Administration</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">Email Archive</span>
+{% endblock %}
+{% block content %}
+<div id="email-archive-root"></div>
+<script type="module" src="/static/js/email-archive.js?v=1"></script>
+{% endblock %}

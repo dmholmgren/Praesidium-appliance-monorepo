@@ -316,7 +316,7 @@ async def desktop_drafting_chat(
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-sonnet-4-20250514",
+                    "model": "claude-sonnet-4-6",
                     "max_tokens": 4096,
                     "system": system_prompt,
                     "messages": messages,
@@ -351,7 +351,7 @@ async def desktop_drafting_chat(
                         "id": str(uuid.uuid4()),
                         "tid": tid,
                         "uid": claims.user_id,
-                        "model": data.get("model", "claude-sonnet-4-20250514"),
+                        "model": data.get("model", "claude-sonnet-4-6"),
                         "inp": usage.get("input_tokens", 0),
                         "out": usage.get("output_tokens", 0),
                         "mid": body.matter_id,

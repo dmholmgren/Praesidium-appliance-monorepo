@@ -1,0 +1,6 @@
+{% extends "shell.html" %}
+{% block title %}Transcripts — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block content %}
+<div id="transcripts-home-root"></div>
+<script type="module" src="/static/js/transcripts-home.js?v=1"></script>
+{% endblock %}

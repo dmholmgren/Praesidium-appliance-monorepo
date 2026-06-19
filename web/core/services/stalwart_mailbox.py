@@ -44,12 +44,16 @@ ENVELOPE_PROPS = [
 
 
 async def _jmap(method_calls: list[list], *, auth=None, using=None,
-                timeout: float = 15.0) -> dict:
-    """Execute a JMAP mail request against Stalwart."""
+                url=None, timeout: float = 15.0) -> dict:
+    """Execute a JMAP mail request against Stalwart.
+
+    `url` overrides the target server (e.g. a user's personal Stalwart box);
+    defaults to the firm STALWART_JMAP_URL.
+    """
     payload = {"using": using or MAIL_USING, "methodCalls": method_calls}
     async with httpx.AsyncClient(timeout=timeout) as client:
         resp = await client.post(
-            STALWART_JMAP_URL,
+            url or STALWART_JMAP_URL,
             json=payload,
             auth=auth or (STALWART_ADMIN_USER, STALWART_ADMIN_PASS),
             headers={"Content-Type": "application/json"},
@@ -71,7 +75,7 @@ def _resp(result: dict, idx: int = 0) -> dict:
 
 # -- Mailboxes (folders) --
 
-async def list_mailboxes(account_id: str, *, auth=None) -> list[dict]:
+async def list_mailboxes(account_id: str, *, auth=None, url=None) -> list[dict]:
     """Return the full mailbox (folder) tree for an account."""
     result = await _jmap([
         ["Mailbox/get", {
@@ -79,20 +83,20 @@ async def list_mailboxes(account_id: str, *, auth=None) -> list[dict]:
             "properties": ["id", "name", "role", "parentId", "sortOrder",
                            "totalEmails", "unreadEmails"],
         }, "m"],
-    ], auth=auth)
+    ], auth=auth, url=url)
     return _resp(result).get("list", [])
 
 
 async def create_mailbox(account_id: str, name: str, *,
                          parent_id: Optional[str] = None,
-                         role: Optional[str] = None, auth=None) -> dict:
+                         role: Optional[str] = None, auth=None, url=None) -> dict:
     """Create a folder. Returns {'success': True, 'id': ...} or error."""
     obj: dict[str, Any] = {"name": name, "parentId": parent_id}
     if role:
         obj["role"] = role
     result = await _jmap([
         ["Mailbox/set", {"accountId": account_id, "create": {"new": obj}}, "c"],
-    ], auth=auth)
+    ], auth=auth, url=url)
     args = _resp(result)
     if "new" in args.get("created", {}):
         return {"success": True, "id": args["created"]["new"]["id"]}
@@ -101,13 +105,13 @@ async def create_mailbox(account_id: str, name: str, *,
 
 async def find_or_create_mailbox(account_id: str, name: str, *,
                                  parent_id: Optional[str] = None,
-                                 role: Optional[str] = None, auth=None) -> str:
+                                 role: Optional[str] = None, auth=None, url=None) -> str:
     """Idempotent: return existing folder id matching (name, parent) or create it."""
-    for b in await list_mailboxes(account_id, auth=auth):
+    for b in await list_mailboxes(account_id, auth=auth, url=url):
         if b.get("name") == name and b.get("parentId") == parent_id:
             return b["id"]
     res = await create_mailbox(account_id, name, parent_id=parent_id,
-                               role=role, auth=auth)
+                               role=role, auth=auth, url=url)
     if not res.get("success"):
         raise RuntimeError(f"create_mailbox({name}) failed: {res.get('error')}")
     return res["id"]
@@ -150,7 +154,7 @@ async def query_messages(account_id: str, *, mailbox_id: Optional[str] = None,
             "messages": gr.get("list", [])}
 
 
-async def get_message(account_id: str, email_id: str, *, auth=None) -> Optional[dict]:
+async def get_message(account_id: str, email_id: str, *, auth=None, url=None) -> Optional[dict]:
     """Fetch a single message including body values."""
     result = await _jmap([
         ["Email/get", {
@@ -159,7 +163,7 @@ async def get_message(account_id: str, email_id: str, *, auth=None) -> Optional[
                                             "attachments"],
             "fetchAllBodyValues": True, "maxBodyValueBytes": 500000,
         }, "g"],
-    ], auth=auth)
+    ], auth=auth, url=url)
     lst = _resp(result).get("list", [])
     return lst[0] if lst else None
 
@@ -167,7 +171,7 @@ async def get_message(account_id: str, email_id: str, *, auth=None) -> Optional[
 # -- Folder membership (matter-projection primitive) --
 
 async def add_message_to_mailbox(account_id: str, email_id: str,
-                                 mailbox_id: str, *, auth=None) -> dict:
+                                 mailbox_id: str, *, auth=None, url=None) -> dict:
     """
     Add a mailbox to a message WITHOUT removing existing ones (JMAP patch), so a
     message can live in INBOX *and* Matters/<name> at once. This is the projection
@@ -176,7 +180,7 @@ async def add_message_to_mailbox(account_id: str, email_id: str,
     result = await _jmap([
         ["Email/set", {"accountId": account_id,
                        "update": {email_id: {f"mailboxIds/{mailbox_id}": True}}}, "u"],
-    ], auth=auth)
+    ], auth=auth, url=url)
     args = _resp(result)
     if email_id in (args.get("updated") or {}):
         return {"success": True}
@@ -330,3 +334,34 @@ async def _resolve_identity(account_id: str, from_addr: str, *, auth=None):
             "create": {"id1": {"name": from_addr.split("@")[0], "email": from_addr}}}, "ic"]],
             using=SUBMISSION_USING, auth=auth)
     return _resp(cr).get("created", {}).get("id1", {}).get("id")
+
+
+# -- Raw message download (.eml) for DMS filing --
+
+async def get_blob_id(account_id: str, email_id: str, *, auth=None,
+                      url=None) -> Optional[str]:
+    """Return the RFC822 blobId for a message (the full .eml blob)."""
+    result = await _jmap([
+        ["Email/get", {"accountId": account_id, "ids": [email_id],
+                       "properties": ["blobId", "subject"]}, "g"],
+    ], auth=auth, url=url)
+    lst = _resp(result).get("list", [])
+    return lst[0].get("blobId") if lst else None
+
+
+async def download_eml(account_id: str, email_id: str, *, auth=None,
+                       url=None, timeout: float = 60.0) -> Optional[bytes]:
+    """Download the raw RFC822 (.eml) bytes for a message via the JMAP blob
+    download endpoint. Derives the download base from the JMAP url."""
+    blob_id = await get_blob_id(account_id, email_id, auth=auth, url=url)
+    if not blob_id:
+        return None
+    base = (url or STALWART_JMAP_URL)
+    if base.endswith("/jmap"):
+        base = base[:-len("/jmap")]
+    dl = f"{base}/jmap/download/{account_id}/{blob_id}/message.eml?accept=message/rfc822"
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.get(
+            dl, auth=auth or (STALWART_ADMIN_USER, STALWART_ADMIN_PASS))
+        resp.raise_for_status()
+        return resp.content

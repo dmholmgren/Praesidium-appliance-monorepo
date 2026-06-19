@@ -29,7 +29,7 @@ from core.db.base import AsyncSessionLocal
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/matters/{matter_id}/co-counsel", tags=["co-counsel"])
 
-LINK_TTL_HOURS = 72
+LINK_TTL_HOURS = 24 * 365
 
 
 def _tid(r): return (getattr(r.state, "tenant_id", "") or "").strip()
@@ -51,6 +51,62 @@ async def _matter(tid, matter_id, db):
         "FROM matters WHERE id = CAST(:mid AS uuid) AND TRIM(tenant_id) = :tid"),
         {"mid": matter_id, "tid": tid})
     return r.mappings().fetchone()
+
+
+async def _reconcile_cocounsel(db, ptid, actor_uid=None):
+    """Keep matter_shares + the Chinese wall consistent for the co-counsel tenant.
+
+    * Share (project) every matter with >= 1 ACTIVE co-counsel grant into the
+      co-counsel tenant; unshare the rest. The cocounsel schema views read
+      matter_shares, so this is what makes the matter visible in the real app.
+    * Wall each active co-counsel user off every shared matter they were NOT
+      granted, so one co-counsel tenant safely holds many matters/users
+      (per-user matter scoping via the existing Chinese wall).
+    """
+    gm = await db.execute(sa_text(
+        "SELECT DISTINCT CAST(scope_id AS uuid) AS mid FROM external_user_scopes "
+        "WHERE TRIM(tenant_id) = :ptid AND scope_type = 'matter' AND is_active = true"),
+        {"ptid": ptid})
+    granted = [r.mid for r in gm.fetchall()]
+
+    # shares: deactivate all, then (re)activate the granted set
+    await db.execute(sa_text(
+        "UPDATE matter_shares SET is_active = false WHERE TRIM(tenant_id) = :ptid"),
+        {"ptid": ptid})
+    for mid in granted:
+        await db.execute(sa_text(
+            "INSERT INTO matter_shares (matter_id, tenant_id, shared_by, is_active) "
+            "VALUES (CAST(:m AS uuid), :ptid, :by, true) "
+            "ON CONFLICT (matter_id, tenant_id) DO UPDATE SET is_active = true, shared_by = :by"),
+            {"m": str(mid), "ptid": ptid, "by": actor_uid})
+
+    # wall: per active co-counsel user, wall off matters they were not granted
+    us = await db.execute(sa_text(
+        "SELECT id FROM users WHERE TRIM(tenant_id) = :ptid "
+        "AND role = 'co_counsel' AND is_active = true"), {"ptid": ptid})
+    for u in us.fetchall():
+        uid = u.id
+        um = await db.execute(sa_text(
+            "SELECT CAST(scope_id AS uuid) AS mid FROM external_user_scopes "
+            "WHERE TRIM(tenant_id) = :ptid AND user_id = :uid "
+            "AND scope_type = 'matter' AND is_active = true"), {"ptid": ptid, "uid": uid})
+        u_matters = {r.mid for r in um.fetchall()}
+        for mid in granted:
+            if mid in u_matters:
+                await db.execute(sa_text(
+                    "UPDATE chinese_wall_exclusions SET is_active = false "
+                    "WHERE TRIM(tenant_id) = :ptid AND user_id = :uid AND matter_id = CAST(:m AS uuid)"),
+                    {"ptid": ptid, "uid": uid, "m": str(mid)})
+            else:
+                await db.execute(sa_text(
+                    "INSERT INTO chinese_wall_exclusions "
+                    "(tenant_id, user_id, matter_id, reason, created_by, created_at, is_active) "
+                    "VALUES (:ptid, :uid, CAST(:m AS uuid), :reason, :by, NOW(), true) "
+                    "ON CONFLICT (tenant_id, user_id, matter_id) "
+                    "DO UPDATE SET is_active = true"),
+                    {"ptid": ptid, "uid": uid, "m": str(mid),
+                     "reason": "co-counsel scope: matter not granted to this user",
+                     "by": actor_uid})
 
 
 @router.get("")
@@ -148,6 +204,50 @@ async def _new_magic_link(db, ptid, user_id, created_by):
     return token, expires
 
 
+async def _send_invite_email(tid, portal_domain, to_email, to_name,
+                             matter_label, sender, token, expires):
+    """Send the co-counsel invite email via the firm provider (Stalwart per
+    _detect_provider ordering). Non-fatal: returns (email_sent, email_error)."""
+    magic_url = f"https://{portal_domain}/auth/magic?token={token}"
+    from_email = (sender and sender["email"]) or "dennis@hjmmlegal.com"
+    from_name = (sender and sender["full_name"]) or "HJMM Legal"
+    try:
+        from core.services.email_send_connector import send_email
+        subject = f"Secure access to {matter_label} \u2014 HJMM Legal"
+        body_html = (
+            "<div style=\"font-family:Georgia,serif;color:#1a1a1a;line-height:1.6\">"
+            f"<p>Dear {to_name or 'Counsel'},</p>"
+            f"<p>{from_name} at HJMM Legal has granted you secure access to "
+            f"<strong>{matter_label}</strong> through the firm's co-counsel portal.</p>"
+            f"<p style=\"margin:28px 0\"><a href=\"{magic_url}\" "
+            "style=\"background:#0D1F3C;color:#ffffff;padding:12px 22px;border-radius:6px;"
+            "text-decoration:none;display:inline-block\">Open the secure portal</a></p>"
+            f"<p style=\"color:#555;font-size:13px\">This link is single-use and expires on "
+            f"{expires.strftime('%B %d, %Y')}. You can set a password inside the portal for "
+            f"return visits. If the link has expired, ask {from_name} to resend it.</p>"
+            "<p style=\"color:#999;font-size:12px\">If you did not expect this, you can ignore "
+            "this message.</p></div>")
+        body_text = (
+            f"Dear {to_name or 'Counsel'},\n\n"
+            f"{from_name} at HJMM Legal has granted you secure access to {matter_label} "
+            "through the firm's co-counsel portal.\n\n"
+            f"Open the secure portal:\n{magic_url}\n\n"
+            f"This link is single-use and expires on {expires.strftime('%B %d, %Y')}.\n"
+            "You can set a password inside the portal for return visits.\n")
+        result = await send_email(
+            tenant_id=tid, from_email=from_email, to=to_email,
+            subject=subject, body_html=body_html, body_text=body_text)
+        if result and result.get("status") in ("ok", "sent", "queued", "success"):
+            return True, None
+        return False, (result or {}).get("error") or "send returned no success status"
+    except Exception as e:
+        import logging
+        err = str(e)[:300]
+        logging.getLogger("praesidium.co_counsel").warning(
+            "[co_counsel] invite email to %s failed: %s", to_email, err)
+        return False, err
+
+
 @router.post("/provision")
 async def provision(request: Request, matter_id: str):
     tid = _tid(request); uid = _uid(request); body = await request.json()
@@ -201,11 +301,24 @@ async def provision(request: Request, matter_id: str):
                 "(:ptid, :uid, 'matter', :mid, 'full', :gby, true)"),
                 {"ptid": ptid, "uid": user_id, "mid": matter_id, "gby": uid})
 
+        # Project the matter into the co-counsel tenant + reconcile the wall.
+        await _reconcile_cocounsel(db, ptid, uid)
+
         token, expires = await _new_magic_link(db, ptid, user_id, uid)
+        sr = await db.execute(sa_text(
+            "SELECT email, full_name FROM users WHERE id = :uid"), {"uid": uid})
+        sender = sr.mappings().fetchone()
         await db.commit()
+
+    magic_url = f"https://{portal['domain']}/auth/magic?token={token}"
+    matter_label = matter["matter_name"] or matter["matter_number"] or "a matter"
+    email_sent, email_error = await _send_invite_email(
+        tid, portal["domain"], email, full_name, matter_label, sender, token, expires)
+
     return JSONResponse({"status": "provisioned", "user_id": user_id, "email": email,
-                         "magic_link": f"https://{portal['domain']}/auth/magic?token={token}",
-                         "expires_at": expires.isoformat()})
+                         "magic_link": magic_url,
+                         "expires_at": expires.isoformat(),
+                         "email_sent": email_sent, "email_error": email_error})
 
 
 @router.post("/magic-link/{user_id}")
@@ -215,15 +328,30 @@ async def magic_link(request: Request, matter_id: str, user_id: int):
         portal = await _portal(tid, db)
         if not portal: return JSONResponse({"error": "No co-counsel portal"}, status_code=400)
         ptid = portal["id"]
+        matter = await _matter(tid, matter_id, db)
+        ru = await db.execute(sa_text(
+            "SELECT email, full_name FROM users WHERE id = :uid"), {"uid": user_id})
+        recipient = ru.mappings().fetchone()
+        sr = await db.execute(sa_text(
+            "SELECT email, full_name FROM users WHERE id = :uid"), {"uid": admin_uid})
+        sender = sr.mappings().fetchone()
         token, expires = await _new_magic_link(db, ptid, user_id, admin_uid)
         await db.commit()
+
+    if not recipient:
+        return JSONResponse({"error": "User not found"}, status_code=404)
+    matter_label = (matter and (matter["matter_name"] or matter["matter_number"])) or "a matter"
+    email_sent, email_error = await _send_invite_email(
+        tid, portal["domain"], recipient["email"], recipient["full_name"],
+        matter_label, sender, token, expires)
     return JSONResponse({"magic_link": f"https://{portal['domain']}/auth/magic?token={token}",
-                         "expires_at": expires.isoformat()})
+                         "expires_at": expires.isoformat(),
+                         "email_sent": email_sent, "email_error": email_error})
 
 
 @router.post("/user/{user_id}/revoke")
 async def revoke(request: Request, matter_id: str, user_id: int):
-    tid = _tid(request)
+    tid = _tid(request); actor = _uid(request)
     async with AsyncSessionLocal() as db:
         portal = await _portal(tid, db)
         if not portal: return JSONResponse({"error": "No co-counsel portal"}, status_code=400)
@@ -243,13 +371,14 @@ async def revoke(request: Request, matter_id: str, user_id: int):
         if (rem.scalar() or 0) == 0:
             await db.execute(sa_text(
                 "UPDATE users SET is_active = false WHERE id = :uid"), {"uid": user_id})
+        await _reconcile_cocounsel(db, ptid, actor)
         await db.commit()
     return JSONResponse({"status": "revoked"})
 
 
 @router.post("/user/{user_id}/reinstate")
 async def reinstate(request: Request, matter_id: str, user_id: int):
-    tid = _tid(request)
+    tid = _tid(request); actor = _uid(request)
     async with AsyncSessionLocal() as db:
         portal = await _portal(tid, db)
         if not portal: return JSONResponse({"error": "No co-counsel portal"}, status_code=400)
@@ -260,6 +389,7 @@ async def reinstate(request: Request, matter_id: str, user_id: int):
             "AND scope_id = :mid"), {"ptid": ptid, "uid": user_id, "mid": matter_id})
         await db.execute(sa_text(
             "UPDATE users SET is_active = true WHERE id = :uid"), {"uid": user_id})
+        await _reconcile_cocounsel(db, ptid, actor)
         await db.commit()
     return JSONResponse({"status": "reinstated"})
 

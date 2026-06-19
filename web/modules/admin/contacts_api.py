@@ -117,11 +117,19 @@ async def _require_admin(request: Request) -> Dict[str, Any]:
 def _ctx(request: Request, sess: Dict[str, Any], **kwargs) -> Dict[str, Any]:
     from modules.billing.brand_helper import get_brand
     user = getattr(request.state, "current_user", None)
+    # DB-driven tab strip (canonical layout_tabs via tab_service); [] falls back.
+    try:
+        from core.services.tab_service import get_tabs_sync
+        _tabs = get_tabs_sync("billing", sess.get("tenant_id"), sess.get("role"))
+    except Exception:
+        _tabs = []
     return {
         "request": request,
         "brand": get_brand(request),
         "page": "billing",
         "bill_tab": "contacts",
+        "module_tabs": _tabs,
+        "active_tab": "contacts",
         "user": user,
         "current_user": user,
         **kwargs,

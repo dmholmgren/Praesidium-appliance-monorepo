@@ -122,13 +122,56 @@ def _doc_type(ext):
     return "word"
 
 
+def _oo_keyfile(fp):
+    d = os.path.join(OO_RECOVERY_ROOT, "ookeys")
+    os.makedirs(d, exist_ok=True)
+    return os.path.join(d, hashlib.md5(fp.encode()).hexdigest())
+
+
+def _oo_gen(fp, bump=False):
+    """Stable co-editing generation token for a file. Persists in the recovery
+    area (not the DMS folder). Bumped only on deliberate out-of-band replacement
+    (restore / reattach) so co-editors share one key during a live session but
+    get a fresh key after the base is swapped underneath them."""
+    kf = _oo_keyfile(fp)
+    if not bump and os.path.isfile(kf):
+        try:
+            return open(kf).read().strip()
+        except Exception:
+            pass
+    import uuid as _uuid
+    tok = _uuid.uuid4().hex
+    try:
+        with open(kf, "w") as f:
+            f.write(tok)
+    except Exception:
+        pass
+    return tok
+
+
+def bump_oo_gen(fp):
+    """Force a new co-editing key (call after restore/reattach overwrite)."""
+    return _oo_gen(fp, bump=True)
+
+
+def _doc_key(fp, coedit):
+    """OnlyOffice document key. For co-editing we want a key that is STABLE during
+    a session (so collaborators join the same doc) and only changes on deliberate
+    replacement -- the mtime/size key would split late joiners after any save."""
+    if coedit:
+        return hashlib.md5(("coedit:" + fp + ":" + _oo_gen(fp)).encode()).hexdigest()
+    return hashlib.md5(
+        ("%s:%s:%s" % (fp, os.path.getmtime(fp), os.path.getsize(fp))).encode()
+    ).hexdigest()
+
+
 # ═══════════════════════════════════════════════════════════════
 # EDITOR CONFIG (browser-facing, has auth)
 # ═══════════════════════════════════════════════════════════════
 
 @router.get("/{matter_id}/oo-config")
 async def oo_editor_config(request: Request, matter_id: str, path: str = "",
-                            mode: str = "edit"):
+                            mode: str = "edit", coedit: str = ""):
     tid = _tid(request)
     if not path:
         raise HTTPException(status_code=400, detail="path required")
@@ -145,9 +188,7 @@ async def oo_editor_config(request: Request, matter_id: str, path: str = "",
 
     ext = _file_ext(fp)
     filename = os.path.basename(fp)
-    file_key = hashlib.md5(
-        f"{fp}:{os.path.getmtime(fp)}:{os.path.getsize(fp)}".encode()
-    ).hexdigest()
+    file_key = _doc_key(fp, coedit)
 
     enc_path = urllib.parse.quote(path, safe="")
     download_url = f"{WEB_INTERNAL}/api/v1/dms/matter/{matter_id}/oo-download?path={enc_path}"
@@ -194,6 +235,8 @@ async def oo_editor_config(request: Request, matter_id: str, path: str = "",
         "width": "100%",
     }
 
+    if coedit:
+        config["editorConfig"]["coediting"] = {"mode": "fast", "change": True}
     token = _sign_jwt(config)
     config["token"] = token
 
@@ -316,7 +359,27 @@ async def oo_callback(request: Request, matter_id: str, path: str = ""):
     # autosave / force-save (status 6, any forcesavetype) goes to the recovery
     # temp and never touches the base. Status 2 is also the OnlyOffice
     # co-editing save point (consolidated doc when the last collaborator exits).
-    commit_to_base = (status == 2)
+    _is_brief = False
+    _brief_cid = None
+    _brief_doc_id = None
+    try:
+        async with AsyncSessionLocal() as _bs0:
+            _br0 = await _bs0.execute(sa_text(
+                "SELECT d.id::text AS doc_id, ac.id::text AS cid FROM documents d "
+                "JOIN appellate_cases ac ON ac.matter_id=d.matter_id "
+                "  AND TRIM(ac.tenant_id)=TRIM(d.tenant_id) "
+                "WHERE d.storage_path=:sp AND TRIM(d.tenant_id)=:tid "
+                "  AND d.document_type='brief' LIMIT 1"), {"sp": fp, "tid": tid})
+            _brow0 = _br0.mappings().fetchone()
+        if _brow0:
+            _is_brief = True
+            _brief_cid = _brow0["cid"]
+            _brief_doc_id = _brow0["doc_id"]
+    except Exception as _bde:
+        logger.warning("OO: brief detect failed (non-fatal): %s", _bde)
+
+    # Save-button base-commit is scoped to briefs; other DMS docs commit on exit only.
+    commit_to_base = (status == 2) or (_is_brief and status == 6 and forcesavetype == OO_FORCESAVE_BUTTON)
 
     try:
         async with httpx.AsyncClient(timeout=60, verify=False) as client:
@@ -427,6 +490,41 @@ async def oo_callback(request: Request, matter_id: str, path: str = ""):
                              "actor_name": actor_name})
     except Exception as e:
         logger.warning("OO: edit audit log failed (non-fatal): %s", e)
+
+    # Brief workspace: record a version row when a brief DOCX is committed to base.
+    if _is_brief:
+        try:
+            _actor = None
+            _us = body.get("users") or []
+            if isinstance(_us, list) and _us:
+                _u0 = _us[0]
+                _actor = _u0.get("userid") if isinstance(_u0, dict) else _u0
+            # OnlyOffice changes zip (per-author colored changes) -> kept for diffing.
+            _changes_path = None
+            _cu = body.get("changesurl")
+            if _cu:
+                try:
+                    _cu2 = _re.sub(r'https?://[^/]+/oo/', OO_INTERNAL + '/', _cu, count=1)
+                    if _cu2.startswith('https://') or _cu2.startswith('http://login') or _cu2.startswith('http://10.'):
+                        _cu2 = _re.sub(r'https?://[^/]+/', OO_INTERNAL + '/', _cu2, count=1)
+                    async with httpx.AsyncClient(timeout=60, verify=False) as _ccl:
+                        _ccr = await _ccl.get(_cu2)
+                    if _ccr.status_code == 200:
+                        _cdir = os.path.join(OO_RECOVERY_ROOT, tid, "changes")
+                        os.makedirs(_cdir, exist_ok=True)
+                        _changes_path = os.path.join(
+                            _cdir, hashlib.md5((fp + ":" + str(time.time())).encode()).hexdigest() + ".zip")
+                        with open(_changes_path, "wb") as _cf:
+                            _cf.write(_ccr.content)
+                except Exception as _cce:
+                    logger.warning("OO: changes zip fetch failed (non-fatal): %s", _cce)
+            _kind = "save" if (status == 6 and forcesavetype == OO_FORCESAVE_BUTTON) else "exit-save"
+            from fastapi.concurrency import run_in_threadpool as _ritp
+            from modules.depositions.routes.brief_workspace_api import _record_oo_version
+            await _ritp(_record_oo_version, tid, _brief_cid, _brief_doc_id, fp,
+                        _changes_path, _actor, _kind)
+        except Exception as _be:
+            logger.warning("OO: brief version record failed (non-fatal): %s", _be)
 
     # Clean close -> session done -> clear recovery temp.
     if status == 2:

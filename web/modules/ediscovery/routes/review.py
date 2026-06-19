@@ -673,7 +673,8 @@ async def document_file(request: Request, doc_id: str,
         r = await session.execute(sa_text("""
             SELECT ed.id, ed.file_name, ed.file_path, ed.working_path,
                    ed.native_path, ed.rendition_path, ed.page_count,
-                   ed.mime_type, ed.file_hash, ec.storage_path as collection_storage_path
+                   ed.mime_type, ed.file_hash, ec.storage_path as collection_storage_path,
+                   ed.collection_id::text as collection_id, ec.matter_id::text as matter_id
             FROM ediscovery_documents ed
             LEFT JOIN ediscovery_collections ec ON ec.id = ed.collection_id
             WHERE ed.id = CAST(:did AS uuid)
@@ -686,6 +687,29 @@ async def document_file(request: Request, doc_id: str,
         raise HTTPException(status_code=404, detail="Document not found")
 
     rec = dict(row)
+
+    # --- access log (Deal Center §1.10) — append-only, fire-and-forget -------
+    try:
+        from modules.ediscovery.services.access_log import (
+            log_document_access, actor_from_request, context_from_referer,
+        )
+        _uid, _email, _guest = actor_from_request(request)
+        await log_document_access(
+            tenant_id=tenant_id,
+            ediscovery_document_id=rec.get("id"),
+            matter_id=rec.get("matter_id"),
+            collection_id=rec.get("collection_id"),
+            document_name=rec.get("file_name"),
+            actor_user_id=_uid, actor_email=_email, actor_is_guest=_guest,
+            action="download" if download else "view",
+            context=context_from_referer(request.headers.get("referer")),
+            ip=(request.client.host if request.client else None),
+            user_agent=request.headers.get("user-agent"),
+        )
+    except Exception:
+        pass
+    # ------------------------------------------------------------------------
+
     # Prefer working_path (normalized location); fall back to file_path
     # FIX: file_path is the original document; working_path is extracted text (.txt)
     src = rec.get("file_path") or rec.get("native_path") or rec.get("working_path")

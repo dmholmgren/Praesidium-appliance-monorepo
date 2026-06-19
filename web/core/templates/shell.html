@@ -9,6 +9,18 @@
   {% endif %}
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Lora:wght@500;600&display=swap" rel="stylesheet">
+  <!-- Theme: apply persisted / OS-preferred color scheme before first paint (no FOUC). -->
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('praesidium-theme');
+        if (t !== 'dark' && t !== 'light') {
+          t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+        }
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* default = light */ }
+    })();
+  </script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
   <script>
@@ -85,6 +97,49 @@
       --transition-fast: {{ cv['transition-fast'] or '80ms ease' }};
       --transition-base: {{ cv['transition-base'] or '120ms ease' }};
     }
+    /* ── Dark mode ──────────────────────────────────────────────────────────
+       Phase 1: overrides the semantic tokens. Everything that reads the CSS
+       variables (the shell + all token-based React surfaces) flips.
+       TODO(darkmode-phase2): ~4,894 hardcoded hex across 106 src/**.jsx still
+       render light in dark mode — codemod the common hexes to semantic vars
+       (#fff→--surface, #f8fafc→--bg, #eff6ff→--primary-light, status tints→
+       --success-bg/--danger-bg), then spot-fix. See chatprompts punch list +
+       memory praesidium-dark-mode. */
+    :root[data-theme="dark"] {
+      --primary:        #5B8DEF;
+      --primary-hover:  #7AA4F4;
+      --primary-light:  #1E2A44;
+      --accent:         #D4A24A;
+      --accent-hover:   #E0B25E;
+      --surface:        #1E293B;
+      --surface-hover:  #273449;
+      --bg:             #0F172A;
+      --bg-muted:       #273449;
+      --border:         #334155;
+      --border-subtle:  #243042;
+      --border-focus:   rgba(91,141,239,0.30);
+      --text:           #E2E8F0;
+      --text-secondary: #94A3B8;
+      --muted:          #64748B;
+      --text-inverse:   #0F172A;
+      --success:        #34D399;
+      --success-bg:     #064E3B;
+      --warning:        #FBBF24;
+      --warning-bg:     #422006;
+      --danger:         #F87171;
+      --danger-bg:      #4C1414;
+      --info:           #60A5FA;
+      --info-bg:        #1E3A5F;
+      --shadow-sm:      0 1px 2px rgba(0,0,0,0.4);
+      --shadow-md:      0 4px 12px rgba(0,0,0,0.45);
+      --shadow-lg:      0 8px 30px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.4);
+    }
+    :root[data-theme="dark"] ::-webkit-scrollbar-thumb { background: #334155; }
+    :root[data-theme="dark"] ::-webkit-scrollbar-thumb:hover { background: #475569; }
+    /* sun/moon swap on the toggle button */
+    .theme-icon-sun { display: none; }
+    :root[data-theme="dark"] .theme-icon-moon { display: none; }
+    :root[data-theme="dark"] .theme-icon-sun { display: inline-flex; }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: var(--font-sans);
@@ -225,9 +280,16 @@
       display: inline-flex; align-items: center; gap: 4px;
     }
     .matter-back-bar a:hover { text-decoration: underline; }
+    /* Embed mode (?embed=1): chrome-less projection for the Deal Center workspace iframe */
+    html.embed-mode .icon-rail, html.embed-mode .global-header, html.embed-mode .matter-back-bar { display: none !important; }
+    html.embed-mode .app-shell { grid-template-columns: 1fr; grid-template-rows: 1fr; grid-template-areas: "canvas"; }
+    html.embed-mode .app-shell.panel-open { grid-template-columns: 1fr var(--panel-w); grid-template-areas: "canvas panel"; }
+    /* keep default 24px canvas padding — embedded pages use margin:-24px to cancel it */
   </style>
   {% block head_extra %}{% endblock %}
   <script>window.__NAV_ITEMS__ = {{ nav_items | tojson }};</script>
+  <script>window.__ACTIVE_MATTER__ = {{ active_matter | tojson if active_matter else 'null' }};</script>
+  <script>try{if(new URLSearchParams(location.search).get('embed')==='1')document.documentElement.classList.add('embed-mode');}catch(e){}</script>
 </head>
 <body class="h-full">
   <div class="app-shell" id="app-shell">
@@ -288,7 +350,12 @@
       </div>
       <div style="flex:1;"></div>
       <div class="header-right">
+        <div id="matter-picker-mount" style="margin-right:8px;"></div>
         {% block header_actions %}{% endblock %}
+        <button class="header-btn" title="Toggle dark mode" onclick="toggleTheme()">
+          <svg class="theme-icon-moon" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75"><path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
+          <svg class="theme-icon-sun" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+        </button>
         <button class="header-btn" title="Research" onclick="togglePanel('research')">
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="1.75"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
         </button>
@@ -330,9 +397,6 @@
       <div class="matter-back-bar" id="matter-back-bar">
         <a id="matter-back-link" href="/matters">← <span id="matter-back-name">Back to Matter</span></a>
       </div>
-      <div class="matter-back-bar" id="matter-back-bar">
-        <a id="matter-back-link" href="/matters">← <span id="matter-back-name">Back to Matter</span></a>
-      </div>
       {% block content %}{% endblock %}
     </main>
     <aside class="right-panel" id="right-panel">
@@ -350,6 +414,12 @@
   <script>
     htmx.config.indicatorClass = 'htmx-request';
     htmx.config.allowScriptTags = true;
+    function toggleTheme() {
+      var root = document.documentElement;
+      var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try { localStorage.setItem('praesidium-theme', next); } catch (e) {}
+    }
     function togglePanel(panelType) {
       const shell = document.getElementById('app-shell');
       const panelTitle = document.getElementById('panel-title');
@@ -400,25 +470,7 @@
       var params = new URLSearchParams(window.location.search);
       if (params.get('from') === 'matter') {
         var matterId = params.get('matter_id');
-        var matterName = params.get('matter_name') || 'Matter';
-        var bar = document.getElementById('matter-back-bar');
-        var link = document.getElementById('matter-back-link');
-        var nameEl = document.getElementById('matter-back-name');
-        if (bar && link && nameEl) {
-          bar.classList.add('visible');
-          link.href = '/matters/' + matterId;
-          nameEl.textContent = matterName;
-        }
-      }
-    })();
-  </script>
-
-  <script>
-    // Matter context back-bar
-    (function() {
-      var params = new URLSearchParams(window.location.search);
-      if (params.get('from') === 'matter') {
-        var matterId = params.get('matter_id');
+        if (!matterId) { var pm = window.location.pathname.match(/\/matters\/([^/]+)/) || window.location.pathname.match(/\/(?:dms|ediscovery)\/matter\/([^/]+)/); if (pm) matterId = pm[1]; }
         var matterName = params.get('matter_name') || 'Matter';
         var bar = document.getElementById('matter-back-bar');
         var link = document.getElementById('matter-back-link');
@@ -519,6 +571,10 @@
   })();
   </script>
   <!-- /praesidium-hotkeys -->
+
+  <script src="/static/js/onlyoffice-editor.js"></script>
+  <script src="/static/js/ai-context.js"></script>
+  <script src="/static/js/matter-picker.js?v=am1"></script>
 
 </body>
 </html>

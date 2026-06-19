@@ -75,7 +75,7 @@ MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-3-5-haiku-20241022":   (0.80,  4.00),
 }
 
-DEFAULT_PRIMARY_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_PRIMARY_MODEL = "claude-sonnet-4-6"
 DEFAULT_FALLBACK_MODEL = "claude-haiku-4-5-20251001"
 
 

@@ -85,6 +85,17 @@
       </a>
 
       <!-- Data & Billing -->
+      <div class="nav-section">Access</div>
+      <a href="/admin/mcp-credentials"
+         class="flex items-center gap-2.5 px-3 py-2 rounded text-gray-300 hover:bg-gray-800 hover:text-white transition-colors {% if page == 'mcp_credentials' %}nav-active text-white{% endif %}">
+        <span>🔑</span><span>MCP Credentials</span>
+      </a>
+
+      <a href="/admin/ip-whitelist"
+         class="flex items-center gap-2.5 px-3 py-2 rounded text-gray-300 hover:bg-gray-800 hover:text-white transition-colors {% if page == 'ip_whitelist' %}nav-active text-white{% endif %}">
+        <span>🛡</span><span>IP Whitelist</span>
+      </a>
+
       <div class="nav-section">Data & Billing</div>
       <a href="/admin/crawl"
          class="flex items-center gap-2.5 px-3 py-2 rounded text-gray-300 hover:bg-gray-800 hover:text-white transition-colors {% if page == 'crawl' %}nav-active text-white{% endif %}">

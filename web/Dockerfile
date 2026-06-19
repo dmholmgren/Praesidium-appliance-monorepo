@@ -15,10 +15,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi-dev libssl-dev \
     tesseract-ocr \
     poppler-utils \
+    ffmpeg \
     libreoffice \
     antiword \
     pandoc \
     pst-utils \
+    pff-tools \
     default-jre-headless \
     docker-cli \
     && rm -rf /var/lib/apt/lists/*

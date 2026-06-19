@@ -40,6 +40,16 @@
   }
 </style>
 
+{# Tabs are data-driven from ui_tabs (tab_service → module_tabs). The
+   hardcoded strip below is kept as a graceful fallback if the registry is
+   empty/unavailable, so the UI never breaks. #}
+{% if module_tabs %}
+<nav class="biltab-nav">
+  {% for _t in module_tabs %}
+  <a href="{{ _t.url_path }}" class="biltab-link {% if _t.tab_key == (active_tab or bill_tab) %}active{% endif %}">{{ _t.label }}</a>
+  {% endfor %}
+</nav>
+{% else %}
 <nav class="biltab-nav">
   <a href="/billing"            class="biltab-link {% if bill_tab == 'overview' %}active{% endif %}">Overview</a>
   <a href="/billing/clients"    class="biltab-link {% if bill_tab == 'clients' %}active{% endif %}">Clients</a>
@@ -50,6 +60,7 @@
   <a href="/billing/trust"      class="biltab-link {% if bill_tab == 'trust' %}active{% endif %}">Trust</a>
   <a href="/billing/reports"    class="biltab-link {% if bill_tab == 'reports' %}active{% endif %}">Reports</a>
 </nav>
+{% endif %}
 
 {% block billing_content %}{% endblock %}
 

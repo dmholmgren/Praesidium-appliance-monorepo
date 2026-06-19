@@ -190,6 +190,26 @@ async def list_collections(matter_id: str, request: Request):
     })
 
 
+@router.delete("/collections/{collection_id}")
+async def remove_collection(collection_id: str, request: Request):
+    """Remove a FAILED collection: tear down its documents + derived data and
+    drop the collection row. Guarded to status='failed' so the UI action can
+    never nuke a live collection. The heavy psycopg2 teardown runs off the
+    event loop."""
+    tenant_id = request.state.tenant_id.strip()
+    from starlette.concurrency import run_in_threadpool
+    from modules.ediscovery.jobs.teardown_collection import delete_ediscovery_collection
+    result = await run_in_threadpool(
+        delete_ediscovery_collection, tenant_id, collection_id,
+        drop_collection=True, require_failed=True)
+    if result.get("error"):
+        raise HTTPException(status_code=400, detail=result["error"])
+    log.info("removed failed collection %s: %s", collection_id, result)
+    return JSONResponse(
+        {"ok": True, "removed": result},
+        headers={"HX-Redirect": request.headers.get("referer") or "/ediscovery"})
+
+
 @router.post("/matters/{matter_id}/collections")
 async def create_collection(matter_id: str, request: Request, body: CreateCollectionRequest):
     """Create a new named collection for a matter."""

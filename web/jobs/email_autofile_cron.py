@@ -58,6 +58,7 @@ async def run_autofile(tenant_id: str):
               AND (filing_status IS NULL OR filing_status = 'pending')
               AND matched_matter_id IS NOT NULL
               AND is_read = true
+              AND match_confidence >= 0.85  -- gate: only auto-file high-confidence matches; subject-keyword/single-client matches await attorney confirmation
               AND received_at >= NOW() - INTERVAL '60 days'
             ORDER BY received_at
             LIMIT 500

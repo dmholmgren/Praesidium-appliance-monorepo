@@ -111,6 +111,12 @@
 
         <td>
           <a href="/ediscovery/collections/{{ c.id }}" style="font-size:12px; font-weight:500; color:var(--primary); text-decoration:none;">Open →</a>
+          {% set st = c.status.value if c.status and c.status is not string else (c.status or '') %}
+          {% if st == 'failed' %}
+          <button hx-delete="/ediscovery/collections/{{ c.id }}"
+                  hx-confirm="Remove failed collection &quot;{{ c.collection_name or c.name }}&quot;? This permanently deletes its documents and data."
+                  style="margin-left:12px; font-size:12px; font-weight:500; color:#B91C1C; background:none; border:none; padding:0; cursor:pointer;">Remove</button>
+          {% endif %}
         </td>
       </tr>
       {% endfor %}

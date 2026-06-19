@@ -99,7 +99,7 @@ async def _get_api_key(tenant_id: str) -> str | None:
 
 
 async def _call_claude(api_key: str, system: str, user_msg: str,
-                       model: str = "claude-sonnet-4-20250514") -> dict | None:
+                       model: str = "claude-sonnet-4-6") -> dict | None:
     """Call Claude API, return parsed JSON from response."""
     t0 = time.time()
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=15.0)) as client:

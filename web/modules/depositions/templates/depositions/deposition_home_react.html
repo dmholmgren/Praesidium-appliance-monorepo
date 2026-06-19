@@ -1,0 +1,6 @@
+{% extends "shell.html" %}
+{% block title %}Depositions — {{ matter_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block content %}
+<div id="deposition-home-root" data-matter-id="{{ matter_id }}" data-matter-name="{{ matter_name }}"></div>
+<script type="module" src="/static/js/deposition-home.js?v=1"></script>
+{% endblock %}

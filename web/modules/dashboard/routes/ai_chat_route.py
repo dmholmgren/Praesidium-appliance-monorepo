@@ -17,19 +17,72 @@ import logging
 import os
 import uuid as _uuid
 
-from fastapi import APIRouter, Request
+import pathlib
+import re
+
+from fastapi import APIRouter, Request, UploadFile, File
 from starlette.responses import StreamingResponse
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from core.db.base import AsyncSessionLocal
+from modules.dashboard.routes.drafting_api import promote_draft_core
 
 log = logging.getLogger("praesidium.ai_chat")
+
+# Generated chat documents are auto-saved here in the matter's DMS as drafts.
+GENERATED_DRAFT_SUBFOLDER = "Drafts"
+
+
+async def _record_generated_attachment(tid: str, session_id: str, matter_id: str,
+                                       gd: dict, saved: dict) -> None:
+    """Record an AI-generated document (already saved to DMS) as a chat
+    attachment so it is findable from chat history."""
+    rel = (saved.get("subfolder") or "") + "/" + (saved.get("filename") or gd.get("filename") or "")
+    async with AsyncSessionLocal() as db:
+        await db.execute(text("""
+            INSERT INTO chat_attachments
+                (tenant_id, session_id, matter_id, kind, source, filename,
+                 storage_path, relative_path, document_id, draft_id)
+            VALUES (:tid, CAST(:sid AS uuid),
+                CASE WHEN :mid = '' THEN NULL ELSE CAST(:mid AS uuid) END,
+                'generated', 'draft', :fn, :path, :rel,
+                CASE WHEN :did = '' THEN NULL ELSE CAST(:did AS uuid) END,
+                CASE WHEN :drid = '' THEN NULL ELSE CAST(:drid AS uuid) END)
+        """), {
+            "tid": tid, "sid": session_id, "mid": (matter_id or "").strip(),
+            "fn": saved.get("filename") or gd.get("filename"),
+            "path": saved.get("dms_path"), "rel": rel.lstrip("/"),
+            "did": str(saved.get("doc_id") or ""),
+            "drid": str(gd.get("draft_id") or ""),
+        })
+        await db.commit()
 
 router = APIRouter(tags=["ai-chat"])
 
 MCP_USER_URL = "https://mcp-user.praesidium-legal.com/mcp"
 MCP_ADMIN_URL = "https://mcp-admin.praesidium-legal.com/mcp"
+
+# Model tiers offered in the chat model picker.
+# frontier  = most capable (Opus); standard = fast/efficient (Sonnet).
+MODEL_TIERS = {
+    "frontier": "claude-opus-4-8",
+    "standard": "claude-sonnet-4-6",
+}
+ALLOWED_MODELS = set(MODEL_TIERS.values()) | {"claude-haiku-4-5-20251001"}
+DEFAULT_MODEL = "claude-sonnet-4-6"
+
+
+def _resolve_model(model: str, tier: str, request: Request) -> str:
+    """Resolve the requested model/tier to a valid model id, with fallbacks."""
+    tier = (tier or "").strip().lower()
+    if tier in MODEL_TIERS:
+        return MODEL_TIERS[tier]
+    model = (model or "").strip()
+    if model in ALLOWED_MODELS:
+        return model
+    # mobile sets its own override; otherwise the standard default
+    return getattr(request.state, "mobile_model_override", DEFAULT_MODEL)
 
 
 def _tid(request: Request) -> str:
@@ -65,6 +118,26 @@ async def _get_api_key(tenant_id: str) -> str | None:
     if not row:
         return None
     return f.decrypt(row[0].encode()).decode()
+
+
+async def _resolve_matter_name(tenant_id: str, matter_id: str) -> str:
+    """Look up a display name for a matter so the AI can be matter-aware even
+    when the page only knows the matter_id (e.g. the matter homepage sets
+    window.__MATTER_ID__ but not the name)."""
+    if not matter_id:
+        return ""
+    try:
+        async with AsyncSessionLocal() as db:
+            row = (await db.execute(text(
+                "SELECT matter_number, matter_name FROM matters "
+                "WHERE id = CAST(:mid AS uuid) AND TRIM(tenant_id) = :tid"
+            ), {"mid": matter_id, "tid": tenant_id.strip()})).fetchone()
+    except Exception:
+        return ""
+    if not row:
+        return ""
+    num, name = row[0], row[1]
+    return (f"{num} {name}".strip() if num else (name or "")).strip()
 
 
 async def _resolve_tenant_slug(tenant_id: str) -> str:
@@ -185,6 +258,51 @@ Available widget categories: matter, billing, calendar, dms, ediscovery, firm, i
             base += f"\n\nThe user is in Documents. Pass tenant=\"{t}\" to all tool calls."
         elif page == "ediscovery":
             base += f"\n\nThe user is in eDiscovery. Pass tenant=\"{t}\" to all tool calls."
+
+        # ── Open document context ────────────────────────────────
+        # The user has a document "pulled up" (in the OnlyOffice editor, a
+        # viewer, or the drafting pane). Tell the AI where it lives so it can
+        # READ it via its MCP file tools when the question is about it.
+        open_doc = context.get("open_document") or {}
+        doc_path = open_doc.get("path") or context.get("document_path", "")
+        doc_name = open_doc.get("filename") or context.get("document_filename", "")
+        doc_id = open_doc.get("document_id") or context.get("document_id", "")
+        doc_rel = open_doc.get("relative_path") or context.get("document_relpath", "")
+        doc_matter = open_doc.get("matter_id") or matter_id
+        if doc_path or doc_name or doc_id:
+            base += f"""
+
+OPEN DOCUMENT (the user currently has this document pulled up — assume questions
+without another subject are ABOUT this document):
+- Filename: {doc_name or '(unknown)'}"""
+            if doc_matter:
+                base += f"\n- Matter UUID: {doc_matter}"
+            if doc_rel:
+                base += f"\n- Matter-relative path: {doc_rel}"
+            if doc_path:
+                base += f"\n- Absolute path: {doc_path}"
+            if doc_id:
+                base += f"\n- Document UUID: {doc_id}"
+            base += f"""
+To inspect or quote this document, READ IT FIRST using your MCP tools (e.g.
+browse_matter_files / query_documents to locate it, then read its contents) with
+tenant=\"{t}\". Do not guess its contents — read it. When the user asks you to
+revise/redline it, base the edit on the actual current text."""
+
+        # ── Dropped / attached files ─────────────────────────────
+        attachments = context.get("attachments") or []
+        if isinstance(attachments, list) and attachments:
+            lines = []
+            for a in attachments[:25]:
+                if not isinstance(a, dict):
+                    continue
+                nm = a.get("filename") or a.get("name") or "(file)"
+                ref = a.get("relative_path") or a.get("path") or a.get("document_id") or ""
+                lines.append(f"- {nm}" + (f"  [{ref}]" if ref else ""))
+            if lines:
+                base += ("\n\nATTACHED FILES (the user dropped these onto the chat — "
+                         "read them with your MCP file tools before answering questions "
+                         f"that reference them; pass tenant=\"{t}\"):\n" + "\n".join(lines))
 
     return base
 
@@ -316,6 +434,170 @@ async def clear_session(request: Request, session_id: str):
 
 
 # ═══════════════════════════════════════════════════════════════
+# Attachments — files dropped onto / uploaded into / generated by chat
+# ═══════════════════════════════════════════════════════════════
+
+async def _verify_session_owner(session_id: str, tid: str, uid: int) -> bool:
+    async with AsyncSessionLocal() as db:
+        row = (await db.execute(text("""
+            SELECT user_id FROM chat_sessions
+            WHERE id = CAST(:sid AS uuid) AND TRIM(tenant_id) = :tid
+        """), {"sid": session_id, "tid": tid})).fetchone()
+    return bool(row) and row[0] == uid
+
+
+def _safe_name(name: str) -> str:
+    name = (name or "file").replace("\\", "/").split("/")[-1]
+    name = re.sub(r"[^A-Za-z0-9._ \-]", "_", name).strip() or "file"
+    return name[:200]
+
+
+@router.get("/api/ai-chat/sessions/{session_id}/attachments")
+async def list_attachments(request: Request, session_id: str):
+    """List files associated with a chat session (dropped, uploaded, generated)."""
+    user = _user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    tid = _tid(request)
+    if not await _verify_session_owner(session_id, tid, _user_id(request)):
+        return JSONResponse({"error": "Session not found"}, status_code=404)
+    async with AsyncSessionLocal() as db:
+        rows = await db.execute(text("""
+            SELECT id::text, kind, source, filename, storage_path, relative_path,
+                   document_id::text, draft_id::text, file_size, created_at
+            FROM chat_attachments
+            WHERE session_id = CAST(:sid AS uuid)
+            ORDER BY created_at
+        """), {"sid": session_id})
+        out = []
+        for r in rows.mappings().fetchall():
+            d = dict(r)
+            d["created_at"] = d["created_at"].isoformat() if d.get("created_at") else None
+            out.append(d)
+    return JSONResponse(out)
+
+
+@router.post("/api/ai-chat/sessions/{session_id}/attachments")
+async def register_attachment(request: Request, session_id: str):
+    """Register a file (a DMS file row, or the open document) as a chat attachment."""
+    user = _user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    tid = _tid(request)
+    uid = _user_id(request)
+    if not await _verify_session_owner(session_id, tid, uid):
+        return JSONResponse({"error": "Session not found"}, status_code=404)
+    body = await request.json()
+    filename = _safe_name(body.get("filename") or body.get("name") or "file")
+    async with AsyncSessionLocal() as db:
+        row = await db.execute(text("""
+            INSERT INTO chat_attachments
+                (tenant_id, session_id, matter_id, kind, source, filename,
+                 storage_path, relative_path, document_id)
+            SELECT :tid, CAST(:sid AS uuid),
+                CASE WHEN :mid = '' THEN NULL ELSE CAST(:mid AS uuid) END,
+                :kind, :source, :fn, :path, :rel,
+                CASE WHEN :did = '' THEN NULL ELSE CAST(:did AS uuid) END
+            WHERE NOT EXISTS (
+                SELECT 1 FROM chat_attachments
+                WHERE session_id = CAST(:sid AS uuid) AND filename = :fn
+                  AND COALESCE(relative_path,'') = COALESCE(:rel,'')
+                  AND COALESCE(storage_path,'') = COALESCE(:path,'')
+            )
+            RETURNING id::text
+        """), {
+            "tid": tid, "sid": session_id, "mid": (body.get("matter_id") or "").strip(),
+            "kind": body.get("kind") or "dropped", "source": body.get("source") or "dms",
+            "fn": filename, "path": body.get("path") or None,
+            "rel": body.get("relative_path") or None,
+            "did": str(body.get("document_id") or ""),
+        })
+        await db.commit()
+        new_id = row.scalar()
+    return JSONResponse({"status": "ok", "id": new_id, "filename": filename})
+
+
+@router.post("/api/ai-chat/sessions/{session_id}/upload")
+async def upload_attachment(request: Request, session_id: str, file: UploadFile = File(...)):
+    """Stage a locally-dropped file on the pool and register it as a chat attachment."""
+    user = _user(request)
+    if not user:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    tid = _tid(request)
+    uid = _user_id(request)
+    if not await _verify_session_owner(session_id, tid, uid):
+        return JSONResponse({"error": "Session not found"}, status_code=404)
+
+    fn = _safe_name(file.filename or "upload")
+    stage_dir = pathlib.Path("/mnt/praesidium") / tid.strip() / "chats" / "uploads" / session_id
+    try:
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        dest = stage_dir / fn
+        data = await file.read()
+        dest.write_bytes(data)
+        size = len(data)
+    except Exception as e:
+        log.warning("upload stage failed: %s", e)
+        return JSONResponse({"error": f"Could not stage file: {e}"}, status_code=500)
+
+    async with AsyncSessionLocal() as db:
+        row = await db.execute(text("""
+            INSERT INTO chat_attachments
+                (tenant_id, session_id, kind, source, filename, storage_path, file_size)
+            VALUES (:tid, CAST(:sid AS uuid), 'uploaded', 'local', :fn, :path, :sz)
+            RETURNING id::text
+        """), {"tid": tid, "sid": session_id, "fn": fn, "path": str(dest), "sz": size})
+        await db.commit()
+        new_id = row.scalar()
+    return JSONResponse({
+        "status": "ok", "id": new_id, "filename": fn,
+        "path": str(dest), "file_size": size,
+    })
+
+
+async def _persist_dropped_attachments(session_id: str, tid: str, context: dict):
+    """Persist context.attachments (DMS-file / open-doc drops) as rows so they
+    are findable from chat history. Idempotent via NOT EXISTS."""
+    atts = context.get("attachments") or []
+    if not isinstance(atts, list) or not atts:
+        return
+    mid = (context.get("matter_id") or "").strip()
+    try:
+        async with AsyncSessionLocal() as db:
+            for a in atts[:25]:
+                if not isinstance(a, dict):
+                    continue
+                # Uploaded files already have rows; skip those flagged uploaded.
+                if a.get("kind") == "uploaded":
+                    continue
+                fn = _safe_name(a.get("filename") or a.get("name") or "file")
+                await db.execute(text("""
+                    INSERT INTO chat_attachments
+                        (tenant_id, session_id, matter_id, kind, source, filename,
+                         storage_path, relative_path, document_id)
+                    SELECT :tid, CAST(:sid AS uuid),
+                        CASE WHEN :mid = '' THEN NULL ELSE CAST(:mid AS uuid) END,
+                        :kind, :source, :fn, :path, :rel,
+                        CASE WHEN :did = '' THEN NULL ELSE CAST(:did AS uuid) END
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM chat_attachments
+                        WHERE session_id = CAST(:sid AS uuid) AND filename = :fn
+                          AND COALESCE(relative_path,'') = COALESCE(:rel,'')
+                          AND COALESCE(storage_path,'') = COALESCE(:path,'')
+                    )
+                """), {
+                    "tid": tid, "sid": session_id, "mid": mid,
+                    "kind": a.get("kind") or "dropped",
+                    "source": a.get("source") or "dms", "fn": fn,
+                    "path": a.get("path") or None, "rel": a.get("relative_path") or None,
+                    "did": str(a.get("document_id") or ""),
+                })
+            await db.commit()
+    except Exception as e:
+        log.warning("Failed to persist dropped attachments: %s", e)
+
+
+# ═══════════════════════════════════════════════════════════════
 # Main Chat Endpoint
 # ═══════════════════════════════════════════════════════════════
 
@@ -340,6 +622,15 @@ async def user_ai_chat(request: Request):
     messages = body.get("messages", [])
     context = body.get("context", {})
     session_id = body.get("session_id", "")
+    model_id = _resolve_model(body.get("model", ""), body.get("tier", ""), request)
+
+    # Be matter-aware whenever a matter_id is present, even if the page didn't
+    # send a matter_name (matter homepage, viewers, etc.). Resolve it from DB so
+    # the ACTIVE MATTER CONTEXT block (with the draft_document workflow) fires.
+    if isinstance(context, dict) and context.get("matter_id") and not context.get("matter_name"):
+        _nm = await _resolve_matter_name(tid, context["matter_id"])
+        if _nm:
+            context["matter_name"] = _nm
 
     if not messages:
         async def err():
@@ -348,7 +639,11 @@ async def user_ai_chat(request: Request):
 
     # ── Persist session and user message ─────────────────────────
     uid = _user_id(request)
-    user_msg = messages[-1].get("content", "") if messages else ""
+    _raw0 = messages[-1].get("content", "") if messages else ""
+    if isinstance(_raw0, list):
+        user_msg = " ".join(b.get("text", "") for b in _raw0 if isinstance(b, dict) and b.get("type") == "text").strip() or "[attachment]"
+    else:
+        user_msg = _raw0
 
     async with AsyncSessionLocal() as db:
         if not session_id:
@@ -381,6 +676,9 @@ async def user_ai_chat(request: Request):
         """), {"sid": session_id})
         await db.commit()
 
+    # ── Persist any dropped/attached files so chat history can find them ──
+    await _persist_dropped_attachments(session_id, tid, context)
+
     # ── Resolve web search availability ──────────────────────────
     admin = _is_admin(user)
     web_search_enabled = await _is_web_search_enabled(tid, admin)
@@ -389,7 +687,14 @@ async def user_ai_chat(request: Request):
     mcp_servers = [{"type": "url", "url": MCP_USER_URL, "name": "praesidium-app"}]
     tools = [{"type": "mcp_toolset", "mcp_server_name": "praesidium-app"}]
 
-    if admin:
+    # SECURITY: the admin MCP server exposes HOST-level tools (exec_command,
+    # read_host_file, list_directory, deploy_tmp_script). It must NOT be attached
+    # to the conversational chat surface by role alone — a prompt-injection in any
+    # document the chat reads could reach host RCE / file disclosure. Opt-in only,
+    # via an explicit request.state.enable_admin_mcp flag set by a dedicated,
+    # separately-gated admin surface. Default OFF for desktop user chat AND mobile.
+    admin_mcp_opt_in = bool(getattr(request.state, "enable_admin_mcp", False))
+    if admin and admin_mcp_opt_in:
         mcp_servers.append({"type": "url", "url": MCP_ADMIN_URL, "name": "praesidium-admin"})
         tools.append({"type": "mcp_toolset", "mcp_server_name": "praesidium-admin"})
 
@@ -404,7 +709,7 @@ async def user_ai_chat(request: Request):
     )
 
     api_body = {
-        "model": getattr(request.state, "mobile_model_override", "claude-sonnet-4-20250514"),
+        "model": model_id,
         "max_tokens": 16384,
         "stream": True,
         "system": system_prompt,
@@ -416,9 +721,27 @@ async def user_ai_chat(request: Request):
     async def generate():
         full_text = ""
         tool_calls_log = []
+        generated_docs = []
         current_block_type = None
         current_tool_name = None
         tool_result_text = ""
+
+        def _parse_generated_doc(txt):
+            """If a tool result describes a drafted document, return a dict."""
+            try:
+                parsed = json.loads(txt)
+            except Exception:
+                return None
+            if not isinstance(parsed, dict):
+                return None
+            if parsed.get("status") == "ok" and parsed.get("path") and parsed.get("filename"):
+                return {
+                    "filename": parsed.get("filename"),
+                    "path": parsed.get("path"),
+                    "draft_id": parsed.get("draft_id"),
+                    "document_type": parsed.get("document_type") or "",
+                }
+            return None
 
         # Emit session_id so frontend can track it
         yield f"data: {json.dumps({'type': 'session', 'session_id': session_id})}\n\n"
@@ -511,6 +834,41 @@ async def user_ai_chat(request: Request):
                                         elif current_block_type in ("mcp_tool_result", "server_tool_result"):
                                             # Emit tool result so frontend can parse file paths
                                             yield f"data: {json.dumps({'type': 'tool_result', 'content': tool_result_text})}\n\n"
+                                            # If this result is a drafted document, emit a
+                                            # structured 'document' event so every chat surface
+                                            # can render a doc card without re-parsing text.
+                                            gd = _parse_generated_doc(tool_result_text)
+                                            if gd:
+                                                # Auto-save to the matter's DMS "Drafts" folder, as a
+                                                # draft, and attach to chat history. Skip the drafting
+                                                # module (page='drafting'), whose Output panel owns the
+                                                # explicit review → Save/Promote step on the staged file.
+                                                saved = None
+                                                if gd.get("draft_id") and context.get("page") != "drafting":
+                                                    try:
+                                                        saved = await promote_draft_core(
+                                                            tid, gd["draft_id"],
+                                                            subfolder=GENERATED_DRAFT_SUBFOLDER,
+                                                            status="draft",
+                                                        )
+                                                    except Exception as e:
+                                                        log.warning("auto-save draft to DMS failed: %s", e)
+                                                        saved = None
+                                                if saved:
+                                                    gd["saved_to_dms"] = True
+                                                    gd["document_id"] = saved.get("doc_id")
+                                                    gd["path"] = saved.get("dms_path")
+                                                    gd["subfolder"] = saved.get("subfolder")
+                                                    gd["_recorded"] = True
+                                                    try:
+                                                        await _record_generated_attachment(
+                                                            tid, session_id,
+                                                            saved.get("matter_id") or context.get("matter_id", ""),
+                                                            gd, saved)
+                                                    except Exception as e:
+                                                        log.warning("record generated attachment failed: %s", e)
+                                                generated_docs.append(gd)
+                                                yield f"data: {json.dumps({'type': 'document', 'document': gd})}\n\n"
                                         else:
                                             yield f"data: {json.dumps({'type': 'block_stop'})}\n\n"
                                         current_block_type = None
@@ -549,6 +907,33 @@ async def user_ai_chat(request: Request):
                     await db.commit()
             except Exception as e:
                 log.warning("Failed to persist assistant message: %s", e)
+
+        # ── Record generated documents as chat attachments ───────
+        # so they are findable later from chat history.
+        if generated_docs:
+            ctx_matter = (context.get("matter_id") or "").strip()
+            try:
+                async with AsyncSessionLocal() as db:
+                    for gd in generated_docs:
+                        # Already recorded inline when auto-saved to the DMS Drafts folder.
+                        if gd.get("_recorded"):
+                            continue
+                        await db.execute(text("""
+                            INSERT INTO chat_attachments
+                                (tenant_id, session_id, matter_id, kind, source,
+                                 filename, storage_path, draft_id)
+                            VALUES (:tid, CAST(:sid AS uuid),
+                                CASE WHEN :mid = '' THEN NULL ELSE CAST(:mid AS uuid) END,
+                                'generated', 'draft', :fn, :path,
+                                CASE WHEN :did = '' THEN NULL ELSE CAST(:did AS uuid) END)
+                        """), {
+                            "tid": tid, "sid": session_id, "mid": ctx_matter,
+                            "fn": gd.get("filename"), "path": gd.get("path"),
+                            "did": str(gd.get("draft_id") or ""),
+                        })
+                    await db.commit()
+            except Exception as e:
+                log.warning("Failed to record generated attachments: %s", e)
 
         yield f"data: {json.dumps({'type': 'done'})}\n\n"
 

@@ -334,25 +334,36 @@ async def disk_upload(
     except Exception as e:
         logger.error("dms_documents insert failed (non-fatal): %s", e)
 
-    # Enqueue background extraction if text wasn't already extracted
-    if not extracted_text:
-        try:
-            from redis import Redis
-            from rq import Queue
-            redis_url = os.environ.get("REDIS_URL", "redis://praesidium-redis:6379/0")
-            _rparts = redis_url.replace("redis://", "").split("/")
-            _rhp = _rparts[0].split(":")
-            _rconn = Redis(host=_rhp[0], port=int(_rhp[1]) if len(_rhp) > 1 else 6379,
-                           db=int(_rparts[1]) if len(_rparts) > 1 and _rparts[1] else 0)
-            _q = Queue("default", connection=_rconn)
-            _q.enqueue(
+    # ── Extraction (OCR for scans) + classification ("selector") ─────────────
+    # Split on OCR: printed / converted-Word PDFs (pleadings, exhibit lists,
+    # briefs) arrive with a text layer -> classify now, no OCR. Scanned docs
+    # (exhibits) have no text layer -> run the extract job (OCRs via tesseract),
+    # then classify once text exists. classify_and_route auto-ingests exhibit
+    # lists into the Trial Center.
+    try:
+        from redis import Redis
+        from rq import Queue
+        redis_url = os.environ.get("REDIS_URL", "redis://praesidium-redis:6379/0")
+        _rparts = redis_url.replace("redis://", "").split("/")
+        _rhp = _rparts[0].split(":")
+        _rconn = Redis(host=_rhp[0], port=int(_rhp[1]) if len(_rhp) > 1 else 6379,
+                       db=int(_rparts[1]) if len(_rparts) > 1 and _rparts[1] else 0)
+        _q = Queue("default", connection=_rconn)
+        _CLASSIFY = "modules.intelligence.document_legal_classifier.classify_and_route_one_sync"
+        if extracted_text:
+            # text-native -> classify immediately (no OCR needed)
+            _q.enqueue(_CLASSIFY, tid, doc_id, job_timeout=600)
+        else:
+            # scanned -> OCR via the extract job, then classify on completion
+            _job = _q.enqueue(
                 "jobs.dms_extract_job.run_extract_single",
                 tid, dest, dms_doc_id,
                 job_timeout=300, result_ttl=3600,
             )
-            logger.info("Enqueued single-file extraction for %s", dest)
-        except Exception as e:
-            logger.warning("Failed to enqueue extraction (non-fatal): %s", e)
+            logger.info("Enqueued single-file extraction (OCR) for %s", dest)
+            _q.enqueue(_CLASSIFY, tid, doc_id, depends_on=_job, job_timeout=600)
+    except Exception as e:
+        logger.warning("Failed to enqueue extraction/classify (non-fatal): %s", e)
 
     # ── Build response ───────────────────────────────────────────────
     # provenance + audit (non-fatal)

@@ -407,7 +407,7 @@ RULES:
 
     # ── Stream from Claude ───────────────────────────────────────
     api_body = {
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-4-6",
         "max_tokens": 512,
         "stream": True,
         "system": system_prompt,

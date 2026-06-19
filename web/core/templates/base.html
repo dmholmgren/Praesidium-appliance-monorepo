@@ -439,8 +439,11 @@
           <span class="spinner"></span>
         </span>
       </div>
-      <div style="font-size:11px; color:var(--muted);" id="last-updated">
-        {% block header_right %}{% endblock %}
+      <div style="display:flex; align-items:center; gap:16px; margin-left:auto;">
+        <div id="matter-picker-mount"></div>
+        <div style="font-size:11px; color:var(--muted);" id="last-updated">
+          {% block header_right %}{% endblock %}
+        </div>
       </div>
     </header>
 
@@ -458,6 +461,7 @@
       if (el) el.textContent = 'Updated ' + new Date().toLocaleTimeString();
     });
   </script>
+  <script src="/static/js/matter-picker.js"></script>
   {% block scripts_extra %}{% endblock %}
 </body>
 </html>

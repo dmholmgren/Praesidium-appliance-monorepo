@@ -33,3 +33,4 @@ google-auth>=2.27.0
 # Testing
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
+pywebpush>=1.14.0  # mobile web-push (Court Pocket v2)

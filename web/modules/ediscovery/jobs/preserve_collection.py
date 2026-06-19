@@ -598,6 +598,25 @@ def preserve_collection(tenant_id: str, collection_id: str,
         logger.info("preserve_collection: %s (%s) root=%s rebuild=%s force=%s dry=%s",
                     coll["collection_name"], collection_id, coll_root, rebuild, force, dry_run)
 
+        # ---- load-file production guard ----
+        # A Relativity/Concordance .DAT/.OPT means this is an imaged production
+        # whose page-images belong to Bates documents. Preserve's loose-file
+        # fan-out would register every page-image as its own document and
+        # clobber the structure, so such collections are ingested via the
+        # DAT-aware path (ingest_collection) and must never be preserved.
+        import glob as _glob
+        _lfbase = str(coll_root / "originals" / "unpacked")
+        if (_glob.glob(_lfbase + "/**/*.dat", recursive=True)
+                or _glob.glob(_lfbase + "/**/*.opt", recursive=True)):
+            logger.warning("preserve: load file (.dat/.opt) present for %s -- "
+                           "skipping preserve (DAT-aware ingest handles it)",
+                           collection_id)
+            _coarse_log(cur, tenant, collection_id,
+                        "stage preserve: load file present -- skipped "
+                        "(DAT-aware ingest handles it)")
+            conn.commit()
+            return summary
+
         # ---- work-product tripwire ----
         wp = work_product_refs(cur, tenant, collection_id)
         if (wp["privilege_entries"] or wp["produced_docs"]) and rebuild and not force:

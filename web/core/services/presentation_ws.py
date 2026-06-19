@@ -54,6 +54,9 @@ async def create_presentation_session(request: Request):
             "presenting": False,
         },
         "client_count": 0,
+        # (corpus, doc_id) pairs an attorney has authorized for token-scoped
+        # display fetch. The unauthenticated display can reach ONLY these (PR-3).
+        "staged": set(),
     }
     _ws_clients[token] = set()
     
@@ -328,3 +331,79 @@ async def display_page(token: str):
     
     html = DISPLAY_HTML.replace("SESSION_TOKEN", token).replace("SESSION_NAME", session.get("session_name", "Conference Space"))
     return HTMLResponse(html)
+
+
+# ─── Trial display: stage exhibits + token-scoped page raster (Page-Raster PR-3) ──
+
+@router.post("/api/v1/present/sessions/{token}/stage")
+async def stage_documents(token: str, request: Request):
+    """AUTHENTICATED. Authorize documents for token-scoped display fetch.
+    Body: {corpus: dms|ediscovery, doc_ids: [...]}. Only staged (corpus, doc_id)
+    pairs become reachable by the unauthenticated display via GET /present/page/.
+    Also warms the Page-Raster cache for page 1 so the first push is instant."""
+    # Staging authorizes documents for an unauthenticated display to render as the
+    # session tenant -- it MUST be an authenticated, same-tenant user (the auth
+    # middleware passes API requests through, so enforce here, not by route).
+    if not getattr(request.state, "current_user", None):
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    session = _sessions.get(token)
+    if not session:
+        return JSONResponse({"error": "Session not found"}, status_code=404)
+    user_tid = (getattr(request.state, "tenant_id", "") or "").strip()
+    sess_tid = (session.get("tenant_id") or "").strip()
+    if not user_tid or (sess_tid and user_tid != sess_tid):
+        return JSONResponse({"error": "Forbidden"}, status_code=403)
+    body = await request.json()
+    corpus = body.get("corpus")
+    if corpus not in ("dms", "ediscovery"):
+        return JSONResponse({"error": "Unsupported corpus"}, status_code=400)
+    staged = session.setdefault("staged", set())
+    doc_ids = [str(d) for d in (body.get("doc_ids") or []) if d]
+    for d in doc_ids:
+        staged.add((corpus, d))
+    # best-effort page-1 warm via the shared service (session tenant)
+    tid = (session.get("tenant_id") or "").strip()
+    if tid and doc_ids:
+        from starlette.concurrency import run_in_threadpool
+        from modules.render.page_raster import render_page
+        import asyncio
+        async def _warm():
+            for d in doc_ids[:40]:
+                try:
+                    await run_in_threadpool(render_page, tid, corpus, d, 1)
+                except Exception:
+                    pass
+        asyncio.create_task(_warm())
+    return JSONResponse({"ok": True, "staged_now": len(staged), "added": len(doc_ids)})
+
+
+@router.get("/present/page/{token}/{corpus}/{doc_id}/{page}")
+async def present_page(token: str, corpus: str, doc_id: str, page: int, w: int = 1600):
+    """UNAUTHENTICATED, token-scoped. The presentation session token is the
+    credential (from the QR); only documents staged into THIS session are
+    reachable. Renders through the shared Page-Raster cache as the session's
+    tenant -- an arbitrary doc_id that was never staged returns 404."""
+    session = _sessions.get(token)
+    if not session:
+        return JSONResponse({"error": "Session not found"}, status_code=404)
+    if (corpus, str(doc_id)) not in session.get("staged", set()):
+        return JSONResponse({"error": "Not authorized for this display"}, status_code=404)
+    tid = (session.get("tenant_id") or "").strip()
+    if not tid:
+        return JSONResponse({"error": "Session has no tenant"}, status_code=409)
+    from starlette.concurrency import run_in_threadpool
+    from modules.render.page_raster import render_page
+    try:
+        res = await run_in_threadpool(render_page, tid, corpus, str(doc_id), int(page), "native_pdf", int(w))
+    except ValueError:
+        return JSONResponse({"error": "Page out of range"}, status_code=404)
+    except Exception:
+        return JSONResponse({"error": "Render failed"}, status_code=500)
+    if res is None:
+        return JSONResponse({"error": "Document not found"}, status_code=404)
+    from fastapi.responses import Response
+    return Response(content=res.image_bytes, media_type="image/webp", headers={
+        "Cache-Control": "private, max-age=86400, immutable",
+        "X-Page-Dims": "%dx%d" % (res.width, res.height),
+        "X-Cache": "HIT" if res.cached else "MISS",
+    })

@@ -148,6 +148,7 @@ async def api_source_browse(request: Request, source_id: str = "", prefix: str =
             # "clients": "/mnt/clients",   # deprecated — all data under /mnt/legacy
             # "docsend": "/mnt/docsend",   # deprecated — all data under /mnt/legacy
             "legacy": "/mnt/legacy",
+            "legacy-local": "/mnt/legacy-local",
         }.get(share, "/mnt/legacy")
     target = os.path.join(base, prefix) if prefix else base
     target = os.path.realpath(target)

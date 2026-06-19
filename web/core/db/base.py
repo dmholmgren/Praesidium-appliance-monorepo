@@ -65,6 +65,35 @@ AsyncSessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
     autocommit=False,
 )
 
+# ── Co-counsel projection: per-transaction schema overlay ─────────────
+# A co-counsel request resolves to the firm's shared matter through the
+# `cocounsel` schema of re-stamping views. We flip the schema with
+# `SET LOCAL search_path` at transaction start — SET LOCAL is scoped to the
+# transaction, so it is SAFE under PgBouncer transaction pooling (resets at
+# COMMIT/ROLLBACK, never leaks to the next pooled client). The contextvar is set
+# per-request by AuthMiddleware for co_counsel users only; otherwise it is None
+# and this hook is a no-op (firm paths byte-identical).
+import contextvars
+from sqlalchemy import event as _sa_event
+
+_CC_SEARCH_PATHS = {"cocounsel, public", "client_portal, public"}
+cc_search_path = contextvars.ContextVar("cc_search_path", default=None)
+# The co-counsel user id — the cocounsel views project ONLY this user's
+# subscribed matters (external_user_scopes), so isolation is per-user and does
+# not depend on any query applying the Chinese wall.
+cc_user_id = contextvars.ContextVar("cc_user_id", default=None)
+
+
+@_sa_event.listens_for(engine.sync_engine, "begin")
+def _apply_cc_search_path(conn):
+    sp = cc_search_path.get()
+    if sp and sp in _CC_SEARCH_PATHS:
+        conn.exec_driver_sql(f"SET LOCAL search_path = {sp}")
+        u = cc_user_id.get()
+        if u is not None:
+            conn.exec_driver_sql(f"SET LOCAL app.cc_user = {int(u)}")
+
+
 # ── Base declarative class ───────────────────────────────────────────────────
 class Base(DeclarativeBase):
     """Base class for all ORM models."""

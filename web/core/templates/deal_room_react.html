@@ -1,0 +1,14 @@
+{% extends "shell.html" %}
+{% block title %}Deal Room — {{ matter_name }}{% endblock %}
+{% block breadcrumb %}
+<a href="/deals" style="color:var(--muted);text-decoration:none;">Deal Center</a>
+<span class="breadcrumb-sep">/</span>
+<a href="/matters/{{ matter_id }}" style="color:var(--muted);text-decoration:none;">{{ matter_name }}</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">Deal Room</span>
+{% endblock %}
+{% block content %}
+<div id="deal-room-root" data-matter-id="{{ matter_id }}" data-matter-name="{{ matter_name }}"
+     style="margin:-24px; height:calc(100vh - var(--header-h)); box-sizing:border-box; overflow:hidden;"></div>
+<script type="module" src="/static/js/deal-room.js?v=6"></script>
+{% endblock %}

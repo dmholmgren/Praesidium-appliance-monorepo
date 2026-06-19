@@ -1,0 +1,20 @@
+{% extends "shell.html" %}
+{% block title %}Deal Center — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}<span class="breadcrumb-current">Deal Center</span>{% endblock %}
+{% block head_extra %}
+<style>
+  /* Deal Center immersive projection — hide global chrome, full-bleed canvas.
+     Scoped to THIS page only (head_extra); zero effect on other pages. */
+  html, body, .app-shell { height: 100%; }
+  .app-shell { grid-template-columns: 1fr !important; grid-template-rows: 1fr !important; grid-template-areas: "canvas" !important; }
+  .app-shell.panel-open { grid-template-columns: 1fr var(--panel-w) !important; grid-template-areas: "canvas panel" !important; }
+  .icon-rail, .global-header { display: none !important; }
+  .contextual-canvas { height: 100%; padding: 0 !important; overflow: hidden; }
+  .matter-back-bar { display: none !important; }
+  #deal-center-root { height: 100%; }
+</style>
+{% endblock %}
+{% block content %}
+<div id="deal-center-root"></div>
+<script type="module" src="/static/js/deal-center.js?v=5"></script>
+{% endblock %}

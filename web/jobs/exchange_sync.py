@@ -133,7 +133,7 @@ def _update_connector_sync(conn, tenant_id: str, count: int, error: str = None):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _sync_mailbox_email(conn, tenant_id: str, account, entity: dict,
-                         since: datetime) -> int:
+                         since: datetime, max_messages: int = None) -> int:
     """
     Pull emails from one mailbox since `since`.
     Upserts into email_routing_queue.
@@ -151,9 +151,13 @@ def _sync_mailbox_email(conn, tenant_id: str, account, entity: dict,
         ).only(
             'message_id', 'subject',
             'sender', 'to_recipients', 'cc_recipients',
-            'datetime_received', 'text_body', 'has_attachments',
-            'attachments'
-        ).order_by('-datetime_received')[:200]
+            'datetime_received', 'datetime_sent', 'text_body',
+            'has_attachments', 'attachments',
+            'conversation_id', 'conversation_topic', 'in_reply_to',
+            'references', 'importance', 'sensitivity', 'categories', 'is_read',
+        ).order_by('-datetime_received')
+        if max_messages:
+            messages = messages[:max_messages]
 
         for msg in messages:
             try:
@@ -169,13 +173,23 @@ def _sync_mailbox_email(conn, tenant_id: str, account, entity: dict,
                 if msg.cc_recipients:
                     cc_emails = [r.email_address for r in msg.cc_recipients
                                   if r.email_address]
-                body_preview = (msg.text_body or '')[:500] if msg.text_body else ''
+                body_text = msg.text_body or ''
+                body_preview = body_text[:500]
                 attachment_names = []
                 if msg.has_attachments and msg.attachments:
                     attachment_names = [
                         a.name for a in msg.attachments
                         if hasattr(a, 'name') and a.name
                     ]
+                conv_id = None
+                if getattr(msg, 'conversation_id', None) is not None:
+                    conv_id = getattr(msg.conversation_id, 'id', None) or str(msg.conversation_id)
+                conv_topic = getattr(msg, 'conversation_topic', None)
+                in_reply_to = getattr(msg, 'in_reply_to', None)
+                importance = str(msg.importance) if getattr(msg, 'importance', None) else None
+                sensitivity = str(msg.sensitivity) if getattr(msg, 'sensitivity', None) else None
+                categories = list(msg.categories) if getattr(msg, 'categories', None) else []
+                is_read = bool(getattr(msg, 'is_read', False))
 
                 import json
                 cur.execute("""
@@ -183,17 +197,29 @@ def _sync_mailbox_email(conn, tenant_id: str, account, entity: dict,
                         tenant_id, connector_type, message_id,
                         internet_message_id, subject, from_email,
                         from_display, to_emails, cc_emails,
-                        received_at, body_preview, has_attachments,
-                        attachment_names, routing_status, attorney_user_id
+                        received_at, body_preview, body_text, has_attachments,
+                        attachment_names, conversation_id, conversation_topic,
+                        in_reply_to, importance, sensitivity, categories,
+                        is_read, routing_status, attorney_user_id
                     ) VALUES (
                         %s, 'exchange', %s, %s, %s, %s, %s,
-                        %s::jsonb, %s::jsonb, %s, %s, %s, %s::jsonb,
+                        %s::jsonb, %s::jsonb, %s, %s, %s, %s, %s::jsonb,
+                        %s, %s, %s, %s, %s, %s::jsonb, %s,
                         'pending', %s
                     )
                     ON CONFLICT (message_id) DO UPDATE SET
-                        body_preview   = EXCLUDED.body_preview,
-                        has_attachments = EXCLUDED.has_attachments,
-                        attorney_user_id = COALESCE(
+                        body_preview      = EXCLUDED.body_preview,
+                        body_text         = COALESCE(NULLIF(EXCLUDED.body_text, ''), email_routing_queue.body_text),
+                        has_attachments   = EXCLUDED.has_attachments,
+                        attachment_names  = EXCLUDED.attachment_names,
+                        conversation_id   = COALESCE(EXCLUDED.conversation_id, email_routing_queue.conversation_id),
+                        conversation_topic= COALESCE(EXCLUDED.conversation_topic, email_routing_queue.conversation_topic),
+                        in_reply_to       = COALESCE(EXCLUDED.in_reply_to, email_routing_queue.in_reply_to),
+                        importance        = COALESCE(EXCLUDED.importance, email_routing_queue.importance),
+                        sensitivity       = COALESCE(EXCLUDED.sensitivity, email_routing_queue.sensitivity),
+                        categories        = EXCLUDED.categories,
+                        is_read           = EXCLUDED.is_read,
+                        attorney_user_id  = COALESCE(
                             email_routing_queue.attorney_user_id,
                             EXCLUDED.attorney_user_id
                         )
@@ -208,8 +234,16 @@ def _sync_mailbox_email(conn, tenant_id: str, account, entity: dict,
                     json.dumps(cc_emails),
                     msg.datetime_received,
                     body_preview,
+                    body_text,
                     bool(msg.has_attachments),
                     json.dumps(attachment_names),
+                    conv_id,
+                    conv_topic,
+                    in_reply_to,
+                    importance,
+                    sensitivity,
+                    json.dumps(categories),
+                    is_read,
                     entity.get('mapped_user_id'),
                 ))
                 conn.commit()
@@ -324,7 +358,7 @@ def _sync_mailbox_calendar(conn, tenant_id: str, account, entity: dict,
 # Main sync entry point
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run(tenant_id: str, triggered_by: int = None):
+def run(tenant_id: str, triggered_by: int = None, only_email: str = None, lookback_days: int = None, max_messages: int = None):
     """
     Main Exchange sync job.
     Enqueued by manual trigger or scheduler.
@@ -349,7 +383,8 @@ def run(tenant_id: str, triggered_by: int = None):
 
         sync_email    = str(config.get('sync_email', 'true')).lower() == 'true'
         sync_calendar = str(config.get('sync_calendar', 'true')).lower() == 'true'
-        email_lookback    = int(config.get('email_lookback_days', 60))
+        email_lookback    = int(lookback_days if lookback_days is not None
+                                else config.get('email_lookback_days', 60))
         cal_lookback      = int(config.get('calendar_lookback_days', 90))
         cal_lookahead     = int(config.get('calendar_lookahead_days', 180))
 
@@ -382,6 +417,8 @@ def run(tenant_id: str, triggered_by: int = None):
 
             if not email:
                 continue
+            if only_email and email.lower() != only_email.lower():
+                continue
 
             logger.info("[exchange_sync] syncing %s (%s)", email, etype)
 
@@ -396,7 +433,7 @@ def run(tenant_id: str, triggered_by: int = None):
                 # Email sync — mailbox and shared_mailbox only
                 if sync_email and etype in ('mailbox', 'shared_mailbox'):
                     count = _sync_mailbox_email(
-                        conn, tenant_id, account, entity, email_since
+                        conn, tenant_id, account, entity, email_since, max_messages
                     )
                     total_synced += count
                     logger.info("[exchange_sync] %s email: %d messages", email, count)

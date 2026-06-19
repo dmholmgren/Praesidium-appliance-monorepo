@@ -1,0 +1,11 @@
+{% extends "shell.html" %}
+{% block title %}Trial Center — {{ matter_name }} — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/trial" style="color:var(--muted);text-decoration:none;">Trial Center</a>
+<span class="breadcrumb-sep">/</span>
+<span class="breadcrumb-current">{{ matter_name }}</span>
+{% endblock %}
+{% block content %}
+<div id="trial-center-root" data-matter-id="{{ matter_id }}" data-matter-name="{{ matter_name }}" style="margin:-24px;"></div>
+<script type="module" src="/static/js/trial-center.js?v=20"></script>
+{% endblock %}

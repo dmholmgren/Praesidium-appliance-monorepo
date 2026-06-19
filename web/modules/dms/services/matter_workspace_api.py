@@ -29,6 +29,40 @@ EMAIL_EXT = {"msg", "eml"}
 
 def _tid(r): return (getattr(r.state, "tenant_id", "") or "").strip()
 
+
+# ── Client-portal folder restrictions ─────────────────────────────────────
+# Hide firm work-product top-level folders from role=client. No-op for firm
+# and co_counsel (who get full visibility).
+_CLIENT_HIDDEN_KEYWORDS = ("working doc", "ediscovery", "e-discovery", "research",
+                           "work product", "privileged", "internal", "draft",
+                           "load_file", "load file", "attorney", "trial", "email")
+
+def _norm_folder(name):
+    s = (name or "").strip()
+    i = 0
+    while i < len(s) and s[i].isdigit():
+        i += 1
+    return s[i:].lstrip(" -_.").strip().lower()
+
+def _client_folder_hidden(name):
+    return any(k in _norm_folder(name) for k in _CLIENT_HIDDEN_KEYWORDS)
+
+def _is_client(request):
+    u = getattr(request.state, "current_user", None)
+    return (getattr(u, "role", "") or "").strip() == "client"
+
+def _client_top(path):
+    return (path or "").replace("\\", "/").lstrip("/").split("/")[0]
+
+def _client_filter_tree(request, tree):
+    if not _is_client(request):
+        return tree
+    return [n for n in (tree or []) if not _client_folder_hidden(n.get("name"))]
+
+def _client_guard(request, path):
+    if path and _is_client(request) and _client_folder_hidden(_client_top(path)):
+        raise HTTPException(status_code=403, detail="Folder not available")
+
 def _matter_disk_root(tid, client, matter):
     if not client or not matter: return None
     p = os.path.join(PRAESIDIUM_ROOT, tid, "matters", client, matter)
@@ -83,8 +117,15 @@ async def _resolve_root(tid, mid):
             WHERE m.id = CAST(:mid AS uuid) AND trim(m.tenant_id) = trim(:tid)
         """), {"mid": mid, "tid": tid})
         row = r.mappings().fetchone()
-    if not row: raise HTTPException(status_code=404, detail="Matter not found")
-    root = _matter_disk_root(tid, row["client_name"], row["matter_name"])
+        if not row: raise HTTPException(status_code=404, detail="Matter not found")
+        # Files live under the matter's REAL owning tenant. Co-counsel see the
+        # matter re-stamped under their tenant (cocounsel view), so resolve the
+        # disk root from public.matters — for firm users this is identical to tid.
+        dr = await session.execute(sa_text(
+            "SELECT trim(tenant_id) FROM public.matters WHERE id = CAST(:mid AS uuid)"),
+            {"mid": mid})
+        disk_tid = dr.scalar() or tid
+    root = _matter_disk_root(disk_tid, row["client_name"], row["matter_name"])
     return root, row
 
 def _convert_to_pdf(src_path):
@@ -291,7 +332,7 @@ async def matter_tree(request: Request, matter_id: str):
     tid = _tid(request)
     root, _ = await _resolve_root(tid, matter_id)
     if not root: return JSONResponse({"tree": [], "root": None, "root_file_count": 0})
-    tree = _walk_tree(root)
+    tree = _client_filter_tree(request, _walk_tree(root))
     try: rfc = sum(1 for f in os.scandir(root) if f.is_file() and not f.name.startswith('.'))
     except: rfc = 0
     return JSONResponse({"tree": tree, "root": root, "root_file_count": rfc})
@@ -303,6 +344,7 @@ async def matter_files(request: Request, matter_id: str, path: str = ""):
     tid = _tid(request)
     root, _ = await _resolve_root(tid, matter_id)
     if not root: return JSONResponse({"files": [], "folder_name": ""})
+    _client_guard(request, path)
     target = _safe_path(root, path) if path else root
     files = _list_files(target)
 
@@ -349,6 +391,39 @@ async def matter_files(request: Request, matter_id: str, path: str = ""):
     return JSONResponse({"files": files, "folder_name": os.path.basename(target) if path else "Matter Root", "path": path})
 
 
+@router.get("/{matter_id}/browse")
+async def matter_browse(request: Request, matter_id: str, prefix: str = ""):
+    """Folder-by-folder browse of a matter's DMS tree (same shape as the legacy
+    file-import browse), so the depo guided-ingest picker can navigate DMS."""
+    tid = _tid(request)
+    root, _ = await _resolve_root(tid, matter_id)
+    if not root:
+        return JSONResponse({"folders": [], "files": 0, "path": prefix, "root": None})
+    target = _safe_path(root, prefix) if prefix else root
+    if not os.path.isdir(target):
+        return JSONResponse({"folders": [], "files": 0, "path": prefix, "root": root})
+    folders = []
+    file_count = 0
+    try:
+        for entry in sorted(os.scandir(target), key=lambda e: e.name.lower()):
+            if entry.name.startswith('.') or entry.name.startswith('@'):
+                continue
+            if entry.is_dir(follow_symlinks=False):
+                try:
+                    fc = sum(1 for f in os.scandir(entry.path) if f.is_file() and not f.name.startswith('.'))
+                    sc = sum(1 for f in os.scandir(entry.path) if f.is_dir() and not f.name.startswith('.'))
+                except (PermissionError, OSError):
+                    fc = sc = 0
+                folders.append({"name": entry.name,
+                                "path": os.path.join(prefix, entry.name) if prefix else entry.name,
+                                "file_count": fc, "subfolder_count": sc})
+            elif entry.is_file():
+                file_count += 1
+    except (PermissionError, OSError):
+        pass
+    return JSONResponse({"folders": folders, "files": file_count, "path": prefix, "root": root})
+
+
 # ── Stream file (native: PDF, images) ───────────────────────────────────
 @router.get("/{matter_id}/stream")
 async def matter_stream(request: Request, matter_id: str, path: str = ""):
@@ -356,6 +431,7 @@ async def matter_stream(request: Request, matter_id: str, path: str = ""):
     if not path: raise HTTPException(status_code=400, detail="path required")
     root, _ = await _resolve_root(tid, matter_id)
     if not root: raise HTTPException(status_code=404, detail="No disk root")
+    _client_guard(request, path)
     fp = _safe_path(root, path)
     if not os.path.isfile(fp): raise HTTPException(status_code=404, detail="File not found")
     mime = mimetypes.guess_type(fp)[0] or "application/octet-stream"
@@ -369,6 +445,7 @@ async def matter_preview(request: Request, matter_id: str, path: str = ""):
     if not path: raise HTTPException(status_code=400, detail="path required")
     root, _ = await _resolve_root(tid, matter_id)
     if not root: raise HTTPException(status_code=404, detail="No disk root")
+    _client_guard(request, path)
     fp = _safe_path(root, path)
     if not os.path.isfile(fp): raise HTTPException(status_code=404, detail="File not found")
     ext = fp.rsplit('.', 1)[-1].lower() if '.' in fp else ''
@@ -434,6 +511,7 @@ async def matter_download(request: Request, matter_id: str, path: str = ""):
     if not path: raise HTTPException(status_code=400, detail="path required")
     root, _ = await _resolve_root(tid, matter_id)
     if not root: raise HTTPException(status_code=404, detail="No disk root")
+    _client_guard(request, path)
     fp = _safe_path(root, path)
     if not os.path.isfile(fp): raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(fp, filename=os.path.basename(fp), media_type="application/octet-stream")
@@ -447,6 +525,7 @@ async def email_attachment(request: Request, matter_id: str, path: str = "", ind
     if not path: raise HTTPException(status_code=400, detail="path required")
     root, _ = await _resolve_root(tid, matter_id)
     if not root: raise HTTPException(status_code=404, detail="No disk root")
+    _client_guard(request, path)
     fp = _safe_path(root, path)
     if not os.path.isfile(fp): raise HTTPException(status_code=404, detail="File not found")
     ext = fp.rsplit('.', 1)[-1].lower() if '.' in fp else ''
@@ -615,6 +694,7 @@ async def email_meta(request: Request, matter_id: str, path: str = ""):
     if not path: raise HTTPException(status_code=400, detail="path required")
     root, _ = await _resolve_root(tid, matter_id)
     if not root: raise HTTPException(status_code=404, detail="No disk root")
+    _client_guard(request, path)
     fp = _safe_path(root, path)
     if not os.path.isfile(fp): raise HTTPException(status_code=404, detail="File not found")
     ext = fp.rsplit('.', 1)[-1].lower() if '.' in fp else ''
@@ -1110,6 +1190,7 @@ async def oo_config(request: Request, matter_id: str, path: str = ""):
     # Resolve the absolute file path
     root, _ = await _resolve_root(tid, matter_id)
     if root:
+        _client_guard(request, path)
         fp = _safe_path(root, path)
     else:
         # Path might be absolute (e.g. from chats/ staging area)

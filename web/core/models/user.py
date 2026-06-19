@@ -30,7 +30,7 @@ class User(Base):
     password_hash = Column(String(255))
     role = Column(
         Enum("super_admin", "admin", "attorney", "paralegal", "staff", "read_only",
-             "partner", "client", "deal_room_guest",
+             "partner", "client", "deal_room_guest", "co_counsel",
              name="user_role_enum"),
         nullable=False,
         default="staff",

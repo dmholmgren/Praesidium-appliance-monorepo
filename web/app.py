@@ -176,6 +176,8 @@ app.include_router(review_api_router)
 app.include_router(search_api_router)
 from modules.ediscovery.routes.annotation_api import router as annotation_api_router
 app.include_router(annotation_api_router)
+from modules.annotations.annotation_objects_api import router as annotation_objects_router
+app.include_router(annotation_objects_router)
 from modules.ediscovery.routes.production_api import router as production_api_router
 app.include_router(production_api_router)
 from modules.ediscovery.routes.share_public import router as share_public_router
@@ -205,6 +207,10 @@ app.include_router(witness_workspace_api_router)
 # === end Witness Workspace API ===
 from modules.dashboard.routes.matter_dashboard_api import router as matter_dash_api_router
 app.include_router(matter_dash_api_router)
+# === Depositions (transcript viewer + Q&A search API) ===
+from modules.depositions.routes import router as depositions_router
+app.include_router(depositions_router)
+# === end Depositions ===
 
 # Matter People API — people, witnesses, contact seeding
 from modules.dashboard.routes.matter_people_api import router as matter_people_api_router
@@ -276,6 +282,12 @@ app.include_router(jobs_api_router)
 
 from modules.admin.admin_panel import router as admin_panel_router
 app.include_router(admin_panel_router)
+from modules.admin.mcp_credentials_admin import router as mcp_credentials_admin_router
+app.include_router(mcp_credentials_admin_router)
+from modules.admin.ip_whitelist_admin import router as ip_whitelist_admin_router
+app.include_router(ip_whitelist_admin_router)
+
+
 
 from modules.admin.licensing_api import router as licensing_api_router
 app.include_router(licensing_api_router)
@@ -323,7 +335,9 @@ app.include_router(permissions_api_router)
 app.include_router(metadata_recon_router)
 
 from modules.tenant_admin.email_sync_api import router as email_sync_api_router
+from modules.tenant_admin.pst_import_api import router as pst_import_api_router
 app.include_router(email_sync_api_router)
+app.include_router(pst_import_api_router)
 
 from modules.connectors.router import router as connector_router
 app.include_router(connector_router)
@@ -350,6 +364,27 @@ from modules.intelligence.primitives_api import router as primitives_router
 app.include_router(matter_extract_router)
 app.include_router(primitives_router)
 # === end Matter Intelligence ===
+
+# === Persisted Document Classifier (Court/Hearing Step 2, Gap #1) ===
+from modules.intelligence.classification_routes import router as classification_router
+app.include_router(classification_router)
+from modules.intelligence.calendar_classification_routes import router as calendar_classification_router
+app.include_router(calendar_classification_router)
+from modules.intelligence.notice_extractor_routes import router as notice_extractor_router
+app.include_router(notice_extractor_router)
+from modules.intelligence.reconciliation_routes import router as reconciliation_router
+app.include_router(reconciliation_router)
+from modules.intelligence.calendar_lifecycle_routes import router as calendar_lifecycle_router
+app.include_router(calendar_lifecycle_router)
+from modules.intelligence.routing_routes import router as routing_router
+app.include_router(routing_router)
+from modules.intelligence.court_routes import router as court_api_router
+app.include_router(court_api_router)
+from modules.intelligence.seeding_routes import router as seeding_router
+app.include_router(seeding_router)
+from modules.intelligence.for_against_routes import router as for_against_router
+app.include_router(for_against_router)
+# === end Document Classifier ===
 
 app.include_router(ai_usage_router)
 
@@ -420,6 +455,7 @@ app.include_router(comms_router)
 
 # === Presentation WebSocket Relay (Conference Space) ===
 from core.services.presentation_ws import router as presentation_ws_router
+from core.services.trial_presentation_ws import router as trial_presentation_ws_router
 
 # === Zoom Meeting SDK API (Conference Space) ===
 from core.services.zoom_sdk_api import router as zoom_sdk_router
@@ -431,7 +467,13 @@ from core.services.zoom_oauth_service import router as zoom_oauth_router
 app.include_router(zoom_oauth_router)
 # === end Zoom OAuth ===
 app.include_router(presentation_ws_router)
+app.include_router(trial_presentation_ws_router)
 # === end Presentation WebSocket ===
+
+# === Page-Raster Service (Spec v1.0) — shared page render cache ===
+from modules.render.routes import router as page_raster_router
+app.include_router(page_raster_router)
+# === end Page-Raster Service ===
 
 # === end Communications Center ===
 
@@ -495,6 +537,24 @@ async def calendar_page(request: Request):
         "page": "calendar", **nav_ctx,
     })
 # === end Calendar page ===
+
+# === Court homepage (the "information in one place" surface) ===
+@app.get("/court")
+@app.get("/court/")
+async def court_home_page(request: Request):
+    """Court — hearings, reschedule history, routing inbox, motion workspaces."""
+    from core.services.nav_context import get_nav_context
+    brand = getattr(request.state, "branding", None)
+    if not brand:
+        brand = BrandingConfig(tenant_id=getattr(request.state, "tenant_id", None) or "unknown")
+    user = getattr(request.state, "current_user", None)
+    nav_ctx = await get_nav_context(request)
+    tmpl = Jinja2Templates(directory=["core/templates"])
+    return tmpl.TemplateResponse("court_home.html", {
+        "request": request, "brand": brand, "current_user": user,
+        "page": "court", **nav_ctx,
+    })
+# === end Court homepage ===
 
 # === Contacts Search ===
 from modules.dashboard.routes.contacts_search_api import router as contacts_search_router
@@ -690,6 +750,8 @@ app.include_router(portal_auth_router)
 # === Portal DMS Browse (document-browsing portal for client + co-counsel) ===
 from modules.dms.services.portal_dms_api import router as portal_dms_router
 app.include_router(portal_dms_router)
+from modules.dms.services.portal_tools_api import router as portal_tools_router
+app.include_router(portal_tools_router)
 # === end Portal DMS Browse ===
 
 # === Context Menu Registry ===
@@ -709,3 +771,7 @@ app.include_router(property_extract_router)
 from modules.dashboard.routes.nav_tabs_api import router as nav_tabs_api_router
 app.include_router(nav_tabs_api_router)
 # === end Nav Section Tabs Registry ===
+# === Entry Type Registry ===
+from modules.dashboard.routes.entry_types_api import router as entry_types_api_router
+app.include_router(entry_types_api_router)
+# === end Entry Type Registry ===

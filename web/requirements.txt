@@ -88,3 +88,4 @@ langdetect>=1.0
 
 # ─── eDiscovery PST ingestion (pypff primary; readpst fallback) ───
 libpff-python==20231205
+qrcode>=7.4

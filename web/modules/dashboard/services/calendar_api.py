@@ -69,7 +69,10 @@ async def calendar_events(request: Request, start: str = None, end: str = None,
             SELECT e.id, e.subject, e.start_at, e.end_at, e.is_all_day,
                    e.location, e.mailbox, e.organizer_email, e.organizer_name,
                    e.attendees, e.body_preview, e.is_recurring, e.source_calendar,
-                   e.matter_id, e.source, e.source_id,
+                   e.matter_id, e.source, e.source_id, e.event_type,
+                   e.lifecycle_state, e.lifecycle_reason_code,
+                   e.lifecycle_reason_note, e.superseded_by_event_id,
+                   e.task_id, e.docs_status,
                    m.matter_name, c.client_name
             FROM calendar_events e
             LEFT JOIN matters m ON m.id = e.matter_id AND TRIM(m.tenant_id) = :tid
@@ -105,10 +108,35 @@ async def calendar_events(request: Request, start: str = None, end: str = None,
             "source": row["source"],
             "source_calendar": row["source_calendar"],
             "matter_id": str(row["matter_id"]) if row["matter_id"] else None,
+            "event_type": row["event_type"],
             "matter_name": row["matter_name"],
             "client_name": row["client_name"],
             "calendar_type": "manual",
+            # lifecycle: non-active states render crossed-out ("what was
+            # supposed to happen but didn't"); deleted rows are gone entirely.
+            "lifecycle_state": row.get("lifecycle_state") or "active",
+            "lifecycle_reason_code": row.get("lifecycle_reason_code"),
+            "lifecycle_reason_note": row.get("lifecycle_reason_note"),
+            "superseded_by_event_id": str(row["superseded_by_event_id"])
+                if row.get("superseded_by_event_id") else None,
+            "task_id": row.get("task_id"),
+            "docs_status": row.get("docs_status") or "pending",
         })
+    # Live JMAP events (additive source of truth; never blanks the table view)
+    if view != "personal":
+        try:
+            from core.services import calendar_jmap as _caljmap
+            seen = {((e.get("title") or "").strip().lower(), (e.get("start") or "")[:16]) for e in events}
+            jm = await _caljmap.events_for(uemail, start_dt.isoformat(), end_dt.isoformat())
+            if view in ("combined", None, ""):
+                jm += await _caljmap.events_for("calendar@hjmmlegal.com", start_dt.isoformat(), end_dt.isoformat())
+            for _ev in jm:
+                _k = ((_ev.get("title") or "").strip().lower(), (_ev.get("start") or "")[:16])
+                if _k not in seen:
+                    seen.add(_k); events.append(_ev)
+        except Exception:
+            pass
+
     return {"events": events, "mailboxes": mailboxes, "start": start, "end": end,
             "view": view, "total": len(events), "calendar_type": "manual"}
 
@@ -122,6 +150,7 @@ class EventCreate(BaseModel):
     body: Optional[str] = None
     mailbox: Optional[str] = None
     matter_id: Optional[str] = None
+    event_type: Optional[str] = None
     attendees: Optional[list] = []
 
 class EventUpdate(BaseModel):
@@ -132,6 +161,7 @@ class EventUpdate(BaseModel):
     location: Optional[str] = None
     body: Optional[str] = None
     matter_id: Optional[str] = None
+    event_type: Optional[str] = None
 
 
 @router.post("/calendar/events")
@@ -149,16 +179,16 @@ async def create_event(request: Request, body: EventCreate):
             INSERT INTO calendar_events
                 (tenant_id, user_id, mailbox, subject, start_at, end_at, is_all_day,
                  location, organizer_email, organizer_name, attendees, body_preview,
-                 source_calendar, matter_id, source, created_by)
+                 source_calendar, matter_id, source, created_by, event_type)
             VALUES (:tid, :uid, :mb, :subj, :start, :end, :allday,
                     :loc, :org, '', CAST(:att AS jsonb), :body,
-                    'manual', CAST(:mid AS uuid), 'manual', :uid)
+                    'manual', CAST(:mid AS uuid), 'manual', :uid, :etype)
             RETURNING id
         """), {
             "tid": tid, "uid": uid, "mb": mailbox,
             "subj": body.subject, "start": start_dt, "end": end_dt, "allday": body.is_all_day,
             "loc": body.location, "org": uemail, "att": json.dumps(body.attendees or []),
-            "body": body.body or "", "mid": matter_uuid,
+            "body": body.body or "", "mid": matter_uuid, "etype": body.event_type or None,
         })
         row = r.fetchone()
         await session.commit()
@@ -185,6 +215,8 @@ async def update_event(request: Request, event_id: str, body: EventUpdate):
         sets.append("body_preview = :body"); params["body"] = body.body
     if body.matter_id is not None:
         sets.append("matter_id = CAST(:mid AS uuid)"); params["mid"] = body.matter_id or None
+    if body.event_type is not None:
+        sets.append("event_type = :etype"); params["etype"] = body.event_type or None
     if not sets:
         return {"status": "no_changes"}
     sets.append("updated_at = NOW()")
@@ -201,15 +233,18 @@ async def update_event(request: Request, event_id: str, body: EventUpdate):
 
 
 @router.delete("/calendar/events/{event_id}")
-async def delete_event(request: Request, event_id: str):
+async def delete_event(request: Request, event_id: str, hard: bool = False,
+                       reason_code: str = "removed"):
+    """Provenance-true delete. Default is SOFT: the event is crossed out and
+    logged (so "what was supposed to happen but didn't" stays visible). Pass
+    ?hard=true to truly delete the row (a snapshot is still logged). The richer
+    guided-reason flow lives at /api/v1/calendar-lifecycle/event/{id}/remove."""
     tid = _tid(request)
-    async with AsyncSessionLocal() as session:
-        await session.execute(sa_text("""
-            DELETE FROM calendar_events
-            WHERE id = CAST(:eid AS uuid) AND TRIM(tenant_id) = :tid
-        """), {"tid": tid, "eid": event_id})
-        await session.commit()
-    return {"id": event_id, "status": "deleted"}
+    from modules.intelligence import calendar_lifecycle as _cl
+    out = await _cl.remove_event(tid, event_id, reason_code, hard=hard,
+                                 actor=_uid(request), source="ui")
+    return {"id": event_id, "status": out.get("lifecycle_state", "removed"),
+            "hard": out.get("hard", hard)}
 
 
 @router.get("/calendar/event/{event_id}")
@@ -853,6 +888,9 @@ async def calendar_tasks(request: Request, view: str = "combined"):
 
 @router.get("/calendar/deadlines")
 async def calendar_deadlines(request: Request, view: str = "combined", days: int = 90):
+    # Deadlines-as-tasks: a deadline is a task with a deadline-flavored task_type
+    # (deadline/sol) or one carried over by the deadline backfill. Reads `tasks`,
+    # not the legacy `deadlines` table. Response shape unchanged for DeadlinesPanel.
     tid = _tid(request)
     uid = _uid(request)
     extra_where = ""
@@ -863,29 +901,35 @@ async def calendar_deadlines(request: Request, view: str = "combined", days: int
 
     async with AsyncSessionLocal() as session:
         r = await session.execute(sa_text(f"""
-            SELECT d.id, d.title, d.deadline_date, d.deadline_type, d.notes,
-                   d.is_sol, d.matter_id, m.matter_name, c.client_name
-            FROM deadlines d
-            LEFT JOIN matters m ON m.id = d.matter_id AND TRIM(m.tenant_id) = :tid
+            SELECT t.id, t.title, t.due_date,
+                   COALESCE(t.tags->>'orig_deadline_type', t.task_type) AS dtype,
+                   t.notes,
+                   (t.task_type = 'sol'
+                    OR COALESCE((t.tags->>'is_sol')::boolean, false)) AS is_sol,
+                   t.matter_id, m.matter_name, c.client_name
+            FROM tasks t
+            LEFT JOIN matters m ON m.id = t.matter_id AND TRIM(m.tenant_id) = :tid
             LEFT JOIN clients c ON c.id = m.client_id AND TRIM(c.tenant_id) = :tid
-            WHERE TRIM(d.tenant_id) = :tid
-              AND d.deadline_date >= CURRENT_DATE
-              AND d.deadline_date <= CURRENT_DATE + CAST(:days AS integer)
-              AND d.completed_at IS NULL
+            WHERE TRIM(t.tenant_id) = :tid
+              AND t.due_date IS NOT NULL
+              AND t.due_date >= CURRENT_DATE
+              AND t.due_date <= CURRENT_DATE + CAST(:days AS integer)
+              AND COALESCE(t.status, 'open') NOT IN ('completed', 'cancelled', 'snoozed')
+              AND (t.task_type IN ('deadline', 'sol') OR t.source = 'deadline_backfill')
               {extra_where}
-            ORDER BY d.deadline_date
+            ORDER BY t.due_date
             LIMIT 100
         """), params)
         rows = [dict(row) for row in r.mappings()]
 
     deadlines = []
     for row in rows:
-        dd = row["deadline_date"].date() if hasattr(row["deadline_date"], 'date') else row["deadline_date"]
+        dd = row["due_date"].date() if hasattr(row["due_date"], 'date') else row["due_date"]
         days_out = (dd - date.today()).days if dd else None
         deadlines.append({
             "id": str(row["id"]), "title": row["title"],
             "due_date": dd.isoformat() if dd else None, "days_out": days_out,
-            "type": row["deadline_type"], "notes": row["notes"], "is_sol": row["is_sol"],
+            "type": row["dtype"], "notes": row["notes"], "is_sol": row["is_sol"],
             "matter_id": str(row["matter_id"]) if row["matter_id"] else None,
             "matter_name": row["matter_name"], "client_name": row["client_name"],
         })

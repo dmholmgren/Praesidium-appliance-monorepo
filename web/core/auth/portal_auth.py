@@ -26,7 +26,7 @@ router = APIRouter(tags=["portal-auth"])
 
 import os
 SESSION_COOKIE_NAME = os.environ.get("SESSION_COOKIE_NAME", "praesidium_session")
-PORTAL_SESSION_DAYS = 7
+PORTAL_SESSION_DAYS = 30
 
 
 def _ip(request: Request) -> str:
@@ -90,8 +90,9 @@ async def redeem_magic_link(request: Request):
 
         if not ml:
             return _expired_page()
-        if ml["used_at"] is not None:
-            return _expired_page("This link has already been used.")
+        # Portal magic links are PERSISTENT (reusable): co_counsel / client come
+        # back via the same emailed link if their session lapses. used_at is
+        # still stamped below as a "last used" audit timestamp (not a one-shot gate).
         exp = ml["expires_at"]
         if exp.tzinfo is None:
             exp = exp.replace(tzinfo=timezone.utc)
@@ -110,10 +111,15 @@ async def redeem_magic_link(request: Request):
 
         sess_token = await _create_session(db, ml["tenant_id"], ml["user_id"])
         await _log_activity(db, ml["tenant_id"], ml["user_id"], "portal_login_magic", request)
+        rr = await db.execute(sa_text("SELECT role FROM users WHERE id = :uid"), {"uid": ml["user_id"]})
+        _role = (rr.scalar() or "").strip()
         await db.commit()
 
-    logger.info(f"[portal] magic link redeemed: user={ml['user_id']} tenant={ml['tenant_id']}")
-    resp = RedirectResponse(url="/portal/", status_code=302)
+    # co_counsel / client use the REAL projected app; only legacy portal roles
+    # (e.g. deal_room_guest) land on the bespoke /portal page.
+    landing = "/matters" if _role in ("co_counsel", "client") else "/portal/"
+    logger.info(f"[portal] magic link redeemed: user={ml['user_id']} tenant={ml['tenant_id']} -> {landing}")
+    resp = RedirectResponse(url=landing, status_code=302)
     resp.set_cookie(key=SESSION_COOKIE_NAME, value=sess_token, httponly=True,
                     secure=request.url.scheme == "https", samesite="lax",
                     max_age=PORTAL_SESSION_DAYS * 86400)
@@ -143,7 +149,8 @@ async def _portal_context(request: Request) -> dict | None:
         #   * client portal: sub-tenant-level grants (sub_tenant_matter_scope)
         #   * co-counsel:     per-user matter grants (external_user_scopes)
         mr = await db.execute(sa_text("""
-            SELECT DISTINCT m.id, m.matter_name, m.matter_number
+            SELECT DISTINCT m.id, m.matter_name, m.matter_number, m.matter_type,
+                   TRIM(m.tenant_id) AS mtid
             FROM matters m
             WHERE m.id IN (
                 SELECT s.matter_id FROM sub_tenant_matter_scope s
@@ -156,10 +163,21 @@ async def _portal_context(request: Request) -> dict | None:
             )
             ORDER BY m.matter_name
         """), {"tid": tid, "uid": user.id})
+        mrows = list(mr.mappings())
         matters = [{"id": str(row["id"]), "name": row["matter_name"],
-                    "number": row["matter_number"]} for row in mr.mappings()]
+                    "number": row["matter_number"],
+                    "matter_type": row["matter_type"] or "litigation"} for row in mrows]
+        # Firm name = the (parent) firm tenant that owns the granted matters.
+        firm_name = ""
+        firm_tid = next((row["mtid"] for row in mrows if row["mtid"]), None)
+        if firm_tid:
+            tn = await db.execute(sa_text("SELECT name FROM tenants WHERE TRIM(id) = :t"),
+                                  {"t": firm_tid})
+            tnr = tn.fetchone()
+            firm_name = tnr.name if tnr else ""
     return {"user_id": user.id, "name": u["full_name"] if u else "",
             "email": u["email"] if u else "", "client_name": client_name,
+            "firm_name": firm_name,
             "password_set": password_set, "matters": matters, "tenant_id": tid}
 
 
@@ -201,14 +219,19 @@ async def portal_home(request: Request):
     ctx = await _portal_context(request)
     if not ctx:
         return RedirectResponse(url="/login", status_code=302)
+    # co_counsel / client use the REAL projected app — bounce them off the
+    # bespoke portal (covers bookmarks / direct hits to /portal/).
+    user = getattr(request.state, "current_user", None)
+    if (getattr(user, "role", "") or "").strip() in ("co_counsel", "client"):
+        return RedirectResponse(url="/matters", status_code=302)
     return HTMLResponse("""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Secure Document Portal</title>
-<style>html,body{margin:0;height:100%;background:#0e1726}
+<style>html,body{margin:0;height:100%;background:#f4f6fb}
 #portal-root{height:100%}
 .boot{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;
-color:#c9a55c;font-family:Georgia,serif;font-size:18px}</style></head>
+color:#0d1f3c;font-family:Georgia,serif;font-size:18px}</style></head>
 <body><div id="portal-root"><div class="boot">Praesidium \u2014 loading your portal\u2026</div></div>
 <script type="module" src="/static/js/portal-app.js"></script>
 </body></html>""")

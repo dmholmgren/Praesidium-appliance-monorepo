@@ -108,6 +108,21 @@ def _extract_archives(storage_path):
     return n
 
 
+def _has_load_file(storage_path):
+    """True if a Relativity/Concordance .DAT/.OPT load file exists under the
+    collection's originals/unpacked tree -- i.e. an imaged production whose
+    page-images are grouped into Bates documents. Such collections MUST take
+    the load-file ingest path, never the geometry spine (whose preserve stage
+    fan-outs every page-image into its own document and clobbers the Bates
+    structure)."""
+    import glob
+    base = os.path.join(storage_path, "originals", "unpacked")
+    for pat in ("**/*.dat", "**/*.DAT", "**/*.opt", "**/*.OPT"):
+        if glob.glob(os.path.join(base, pat), recursive=True):
+            return True
+    return False
+
+
 def run_ediscovery_pipeline(tenant_id, collection_id, user_id=None):
     tenant = (tenant_id or TENANT_DEFAULT).strip()
     cid = str(collection_id)
@@ -130,6 +145,19 @@ def run_ediscovery_pipeline(tenant_id, collection_id, user_id=None):
         nz = _extract_archives(storage)
         if nz:
             prog("Extracted %d archive(s) from as_received -> unpacked" % nz)
+
+        if _has_load_file(storage):
+            prog("Load file (.dat/.opt) detected -> load-file ingest path "
+                 "(skipping geometry spine)")
+            from modules.ediscovery.jobs.ingest_collection import ingest_ediscovery_collection
+            from modules.ediscovery.jobs.embed_text_collection import embed_text_collection
+            ing = ingest_ediscovery_collection(tenant, cid, user_id or 1)
+            prog("load-file ingest: %s" % (ing,))
+            emb = embed_text_collection(tenant, cid, canonical=False, enqueue=False)
+            prog("text-first embed: %s" % (emb,))
+            _status(cur, tenant, cid, "review_ready")
+            prog("Pipeline complete (load-file path) -- ready for review", "success")
+            return {"status": "review_ready", "collection_id": cid, "path": "load_file"}
 
         C = ["--collection", cid]
         T = ["--tenant", tenant]

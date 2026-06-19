@@ -29,6 +29,7 @@ _ROLE_RANK = {
     "admin": 90,
     "partner": 80,
     "attorney": 70,
+    "co_counsel": 70,
     "associate": 60,
     "paralegal": 50,
     "staff": 40,
@@ -45,6 +46,39 @@ def _role_satisfies(user_role: Optional[str], required_role: Optional[str]) -> b
     if not user_role:
         return False
     return _ROLE_RANK.get(user_role, 0) >= _ROLE_RANK.get(required_role, 0)
+
+
+# External roles are permission-gated: a nav item shows only when its module is
+# granted in permission_matrix (default-deny). Internal roles are NEVER filtered
+# here. This drives nav off the permission grant — no per-tenant nav rows.
+_EXTERNAL_ROLES = frozenset({"client", "deal_room_guest", "co_counsel"})
+# FIXME (fix-later flag, see chatprompts v19.0): this page_key->module map is the
+# only non-DB part of external-role nav gating. It must be hand-edited (+ restart)
+# every time a module is added, in lockstep with nav_tabs_api's map AND
+# middleware._MODULE_PATH_PREFIXES. Move these mappings into a DB registry (a
+# `module` column on ui_nav_items, or a nav_module_map table) so nav + API guard
+# are 100% data-driven and a new module needs only DB rows, no code edit.
+_NAV_MODULE = {
+    "matters": "matters", "dms": "dms", "ediscovery": "ediscovery",
+    "drafting": "drafting", "projects": "projects", "billing": "billing",
+    "calendar": "calendar", "depositions": "depositions", "trial": "trial",
+    "court": "court",
+}
+
+
+def _nav_module(item):
+    return (_NAV_MODULE.get(item.get("page_key") or "")
+            or _NAV_MODULE.get(item.get("nav_key") or ""))
+
+
+async def _granted_modules(tenant_id, role):
+    from core.db.base import AsyncSessionLocal
+    async with AsyncSessionLocal() as s:
+        r = await s.execute(sa_text(
+            "SELECT DISTINCT module FROM permission_matrix "
+            "WHERE TRIM(tenant_id) = trim(:t) AND role = :r "
+            "AND action = 'view' AND allowed = TRUE"), {"t": tenant_id, "r": role})
+        return {row[0] for row in r.fetchall()}
 
 
 async def get_nav_items(tenant_id: str, user_role: Optional[str] = None, context: Optional[dict] = None) -> dict:
@@ -77,21 +111,28 @@ async def get_nav_items(tenant_id: str, user_role: Optional[str] = None, context
                 is_active, tenant_id, section, badge_source,
                 context_scope, page_key, icon_emoji
             FROM ui_nav_items
-            WHERE is_active = TRUE
-              AND (
+            WHERE (
                     (tenant_id IS NOT NULL AND trim(tenant_id) = trim(:tid))
-                    OR tenant_id IS NULL
+                    OR (tenant_id IS NULL AND is_active = TRUE)
                   )
             ORDER BY display_order ASC
         """), {"tid": tenant_id})
         rows = [dict(row) for row in r.mappings().fetchall()]
 
     # ── Resolve tenant overrides ──
+    # Tenant rows override platform defaults; an INACTIVE tenant row SUPPRESSES
+    # the platform default (registry-driven hide).
+    _tenant_rows = {r["nav_key"]: r for r in rows if r["tenant_id"] is not None}
+    _suppressed = {k for k, r in _tenant_rows.items() if not r["is_active"]}
     by_key = {}
     for row in rows:
         key = row["nav_key"]
+        if key in _suppressed:
+            by_key.pop(key, None)
+            continue
         if row["tenant_id"] is not None:
-            by_key[key] = row
+            if row["is_active"]:
+                by_key[key] = row
         elif key not in by_key:
             by_key[key] = row
 
@@ -99,6 +140,11 @@ async def get_nav_items(tenant_id: str, user_role: Optional[str] = None, context
 
     # ── Filter by role ──
     items = [i for i in items if _role_satisfies(user_role, i.get("required_role"))]
+
+    # ── External roles: permission-gated nav (default-deny) ──
+    if user_role in _EXTERNAL_ROLES:
+        _granted = await _granted_modules(tenant_id, user_role)
+        items = [i for i in items if _nav_module(i) in _granted]
 
     # ── Filter by context scope ──
     if context:

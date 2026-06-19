@@ -134,6 +134,21 @@ async def ediscovery_overview(request: Request):
 async def ediscovery_search_react(request: Request):
     from fastapi.templating import Jinja2Templates
     from core.services.nav_context import get_nav_context
+    # Sticky default: a fresh navigation with no matter_id key in the URL is
+    # redirected to the user's active matter (topbar pick) so search loads
+    # scoped. The React bundle reads matter_id from the URL; an explicit
+    # ?matter_id= (even empty) is left untouched — URL stays source of truth.
+    if "matter_id" not in request.query_params:
+        from core.services.active_matter import read_active_matter
+        _uid = getattr(getattr(request.state, "current_user", None), "id", None)
+        _tid = (getattr(request.state, "tenant_id", "") or "").strip()
+        _am = await read_active_matter(_uid, _tid)
+        if _am:
+            from fastapi.responses import RedirectResponse
+            from urllib.parse import urlencode
+            _qs = dict(request.query_params)
+            _qs["matter_id"] = _am["matter_id"]
+            return RedirectResponse(url="/ediscovery/search?" + urlencode(_qs), status_code=303)
     templates = Jinja2Templates(directory=["core/templates", "modules/ediscovery/templates"])
     brand = getattr(request.state, "branding", None)
     nav_ctx = await get_nav_context(request)

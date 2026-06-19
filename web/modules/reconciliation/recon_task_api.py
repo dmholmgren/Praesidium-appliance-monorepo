@@ -198,7 +198,7 @@ Respond ONLY with valid JSON, no markdown fences:
                     "anthropic-version": "2023-06-01",
                 },
                 json={
-                    "model": "claude-sonnet-4-20250514",
+                    "model": "claude-sonnet-4-6",
                     "max_tokens": 1000,
                     "messages": [{"role": "user", "content": prompt}],
                 },
@@ -224,7 +224,7 @@ Respond ONLY with valid JSON, no markdown fences:
 
     tasks = extracted.get("tasks", [])
     result_obj = {**existing_result, "tier2_extraction": {
-        "tasks": tasks, "model": "claude-sonnet-4-20250514",
+        "tasks": tasks, "model": "claude-sonnet-4-6",
         "extracted_at": datetime.utcnow().isoformat() + "Z",
     }}
     new_status = "extracted" if tasks else "scanned"

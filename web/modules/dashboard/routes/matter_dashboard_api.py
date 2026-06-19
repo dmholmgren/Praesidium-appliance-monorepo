@@ -655,6 +655,114 @@ async def matters_home(request: Request):
 
 # ─── MATTER SEARCH ─────────────────────────────────────────────────
 
+@router.get("/deals")
+async def deals_list(request: Request):
+    """Deal Center landing data — transactional matters with deal metadata.
+
+    Read-only twin of the matters list, scoped to matter_type='transactional'.
+    Surfaces extracted deal value / closing date / party + key-doc counts where
+    present (mostly dormant per matter; populated on the seeded demo deals)."""
+    tid = _tid(request)
+    uid = int(_user_id(request) or 0)
+    if not tid:
+        return JSONResponse({"error": "No tenant"}, status_code=400)
+    try:
+        async with AsyncSessionLocal() as session:
+            r = await session.execute(sa_text("""
+                SELECT m.id::text AS id, m.matter_name, m.matter_number,
+                       m.status, m.open_date, m.practice_area,
+                       c.client_name,
+                       fin.label AS value_label, fin.raw AS deal_value,
+                       cd.label AS closing_label, cd.date_value AS closing_date,
+                       COALESCE(dpc.n, 0) AS deal_points_count,
+                       COALESCE(ct.n, 0)  AS contacts_count,
+                       COALESCE(kd.n, 0)  AS key_docs_count,
+                       subj.display_name  AS subject_name
+                FROM matters m
+                LEFT JOIN clients c
+                       ON c.id = m.client_id AND c.tenant_id = m.tenant_id
+                LEFT JOIN LATERAL (
+                    SELECT point_label AS label, point_value AS raw
+                    FROM matter_deal_points dp
+                    WHERE dp.matter_id = m.id AND dp.tenant_id = m.tenant_id
+                      AND dp.point_type = 'currency'
+                    ORDER BY (point_label ILIKE '%purchase%'
+                              OR point_label ILIKE '%sale%'
+                              OR point_label ILIKE '%price%'
+                              OR point_label ILIKE '%loan%') DESC,
+                             point_label
+                    LIMIT 1
+                ) fin ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT point_label AS label, point_value AS date_value
+                    FROM matter_deal_points dp
+                    WHERE dp.matter_id = m.id AND dp.tenant_id = m.tenant_id
+                      AND dp.point_type = 'date'
+                    ORDER BY (point_label ILIKE '%clos%') DESC, point_value
+                    LIMIT 1
+                ) cd ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT COUNT(*) AS n FROM matter_deal_points dp
+                    WHERE dp.matter_id = m.id AND dp.tenant_id = m.tenant_id
+                ) dpc ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT COUNT(*) AS n FROM matter_contacts mc
+                    WHERE mc.matter_id = m.id AND mc.tenant_id = m.tenant_id
+                ) ct ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT COUNT(*) AS n FROM matter_key_documents k
+                    WHERE k.matter_id = m.id AND k.tenant_id = m.tenant_id
+                ) kd ON TRUE
+                LEFT JOIN LATERAL (
+                    SELECT display_name FROM matter_subjects s
+                    WHERE s.matter_id = m.id AND s.tenant_id = m.tenant_id
+                    ORDER BY id LIMIT 1
+                ) subj ON TRUE
+                WHERE TRIM(m.tenant_id) = :tid
+                  AND m.matter_type = 'transactional'
+                  AND (m.is_personal = false OR m.owner_user_id = :uid)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM chinese_wall_exclusions cw
+                      WHERE cw.matter_id = m.id AND cw.user_id = :uid
+                        AND cw.is_active = true
+                  )
+                ORDER BY CASE WHEN m.status = 'active' THEN 0 ELSE 1 END,
+                         (COALESCE(dpc.n, 0) > 0) DESC,
+                         m.matter_name
+            """), {"tid": tid, "uid": uid})
+            deals, active, enriched = [], 0, 0
+            for row in r.mappings():
+                od, cl = row["open_date"], row["closing_date"]
+                if row["status"] == "active":
+                    active += 1
+                if (row["deal_points_count"] or 0) > 0:
+                    enriched += 1
+                deals.append({
+                    "id": row["id"],
+                    "matter_name": row["matter_name"] or "Untitled deal",
+                    "matter_number": row["matter_number"] or "",
+                    "status": row["status"] or "",
+                    "open_date": od.isoformat() if hasattr(od, "isoformat") else (od or None),
+                    "practice_area": row["practice_area"] or "",
+                    "client_name": row["client_name"] or "",
+                    "subject_name": row["subject_name"] or "",
+                    "deal_value": row["deal_value"] or "",
+                    "value_label": row["value_label"] or "",
+                    "closing_date": cl.isoformat() if hasattr(cl, "isoformat") else (cl or ""),
+                    "closing_label": row["closing_label"] or "",
+                    "deal_points_count": int(row["deal_points_count"] or 0),
+                    "contacts_count": int(row["contacts_count"] or 0),
+                    "key_docs_count": int(row["key_docs_count"] or 0),
+                })
+        return JSONResponse({
+            "deals": deals,
+            "summary": {"total": len(deals), "active": active, "enriched": enriched},
+        })
+    except Exception as exc:
+        logger.error("deals_list error: %s", exc)
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
 @router.get("/matters/search")
 async def matters_search(request: Request, q: str = Query("", min_length=0)):
     """Search matters by name, number, client name, or cause number."""
@@ -1145,3 +1253,80 @@ async def matters_client_tree(request: Request, status: str = Query("active")):
         logger.error("matters_client_tree error: %s", exc)
         return JSONResponse({"error": str(exc)}, status_code=500)
 
+
+
+# === ACTIVE MATTER PICKER (web session) ===========================
+# Sticky "active matter" persisted in users.user_preferences JSONB.
+# Single source of truth shared with the desktop/VSTO client
+# (modules/desktop/desktop_c3_router.py writes the same two keys).
+_ACTIVE_MATTER_STALE_HOURS = 12
+
+@router.get("/active-matter")
+async def web_get_active_matter(request: Request):
+    # Delegate to the shared reader (core.services.active_matter) so this
+    # endpoint and the nav_context sync seed can never drift.
+    from core.services.active_matter import read_active_matter
+    am = await read_active_matter(_user_id(request), _tid(request))
+    return JSONResponse({"active_matter": am})
+
+
+@router.put("/active-matter")
+async def web_set_active_matter(request: Request):
+    tid = _tid(request)
+    uid = _user_id(request)
+    if not tid or not uid:
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    matter_id = (body or {}).get("matter_id")
+
+    if not matter_id:
+        async with AsyncSessionLocal() as db:
+            await db.execute(sa_text("""
+                UPDATE users
+                   SET user_preferences = COALESCE(user_preferences, '{}'::jsonb)
+                       - 'active_matter_id' - 'active_matter_set_at'
+                 WHERE id = :uid AND TRIM(tenant_id) = :tid
+            """), {"uid": int(uid), "tid": tid})
+            await db.commit()
+        return JSONResponse({"active_matter": None})
+
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(sa_text("""
+            SELECT m.matter_name, m.matter_number, c.client_name
+            FROM matters m
+            LEFT JOIN clients c ON c.id = m.client_id
+            WHERE m.id = CAST(:mid AS uuid) AND TRIM(m.tenant_id) = :tid
+              AND (m.is_personal = false OR m.owner_user_id = :uid)
+              AND NOT EXISTS (
+                  SELECT 1 FROM chinese_wall_exclusions cw
+                  WHERE cw.matter_id = m.id AND cw.user_id = :uid AND cw.is_active = true
+              )
+        """), {"mid": matter_id, "tid": tid, "uid": int(uid)})
+        matter = r.mappings().first()
+        if not matter:
+            return JSONResponse({"error": "Matter not found"}, status_code=404)
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    async with AsyncSessionLocal() as db:
+        await db.execute(sa_text("""
+            UPDATE users
+               SET user_preferences = COALESCE(user_preferences, '{}'::jsonb)
+                   || jsonb_build_object(
+                        'active_matter_id', CAST(:mid AS text),
+                        'active_matter_set_at', CAST(:now AS text))
+             WHERE id = :uid AND TRIM(tenant_id) = :tid
+        """), {"mid": matter_id, "now": now, "uid": int(uid), "tid": tid})
+        await db.commit()
+    return JSONResponse({"active_matter": {
+        "matter_id": matter_id,
+        "matter_name": matter["matter_name"],
+        "matter_number": matter["matter_number"] or "",
+        "client_name": matter["client_name"] or "",
+        "set_at": now,
+        "is_stale": False,
+    }})
+# === END ACTIVE MATTER PICKER =====================================

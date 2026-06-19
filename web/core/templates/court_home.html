@@ -1,0 +1,11 @@
+{% extends "shell.html" %}
+{% block title %}Court — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block breadcrumb %}
+<a href="/dashboard">Home</a>
+<span class="breadcrumb-sep">&#8250;</span>
+<span class="breadcrumb-current">Court</span>
+{% endblock %}
+{% block content %}
+<div id="court-home-root"></div>
+<script type="module" src="/static/js/court-home.js?v=1"></script>
+{% endblock %}

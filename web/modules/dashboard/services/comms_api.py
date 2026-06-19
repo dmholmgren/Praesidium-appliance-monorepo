@@ -14,6 +14,8 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text as sa_text
 
 from core.db.base import AsyncSessionLocal
+from core.services import comms_jmap as _cj
+from core.services import stalwart_mailbox as sm
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/comms", tags=["communications"])
@@ -26,6 +28,11 @@ def _tid(r):
 def _uid(r):
     user = getattr(r.state, "current_user", None)
     return getattr(user, "id", None) if user else None
+
+
+def _email(r):
+    user = getattr(r.state, "current_user", None)
+    return getattr(user, "email", None) if user else None
 
 
 def _fix_row(d):
@@ -140,175 +147,51 @@ async def list_channels(request: Request):
 @router.get("/email/messages")
 async def email_messages(
     request: Request,
-    folder: str = Query("inbox", description="inbox|sent|filed|pending|matched|all"),
-    mailbox: Optional[str] = Query(None, description="Filter by mailbox email"),
+    folder: str = Query("inbox"),
+    mailbox: Optional[str] = Query(None),
     matter_id: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=10, le=200),
-    sort: str = Query("newest", description="newest|oldest"),
+    sort: str = Query("newest"),
+    source: str = Query("firm"),
+    time: str = Query("current"),
 ):
-    """Paginated email message list with folder/mailbox/matter filters."""
-    tid = _tid(request)
-    offset = (page - 1) * page_size
-    order = "DESC" if sort == "newest" else "ASC"
-
-    wheres = ["TRIM(e.tenant_id) = :tid"]
-    params = {"tid": tid, "lim": page_size, "off": offset}
-
-    # Folder filters
-    if folder == "inbox":
-        # Operational inbox: last 60 days + ALL unread regardless of age. Don't touch unread.
-        wheres.append("""(
-            e.received_at >= NOW() - INTERVAL '60 days'
-            OR e.is_read = false
-            OR e.is_read IS NULL
-        )""")
-    elif folder == "historic":
-        # Archival view: everything older than 60 days (immutable stream, nothing ever leaves)
-        wheres.append("e.received_at < NOW() - INTERVAL '60 days'")
-    elif folder == "sent":
-        # sent emails have the user's mailbox in from_email
-        uid = _uid(request)
-        if uid:
-            wheres.append("""e.from_email IN (
-                SELECT entity_email FROM connector_entity_map
-                WHERE TRIM(tenant_id) = :tid AND mapped_user_id = :uid AND entity_type = 'mailbox'
-            )""")
-            params["uid"] = uid
-    elif folder == "filed":
-        wheres.append("(e.filed_to_dms = true OR e.filing_status = 'filed')")
-    elif folder == "pending":
-        wheres.append("e.routing_status = 'pending'")
-    elif folder == "matched":
-        wheres.append("e.routing_status = 'matched'")
-    elif folder == "drafts":
-        wheres.append("1=0")  # placeholder
-
-    if mailbox:
-        # Show emails where mailbox is in from_email, to_emails, or cc_emails
-        wheres.append("""(
-            e.from_email = :mbx
-            OR e.to_emails::text ILIKE '%%' || :mbx || '%%'
-            OR e.cc_emails::text ILIKE '%%' || :mbx || '%%'
-        )""")
-        params["mbx"] = mailbox
-
-    if matter_id:
-        wheres.append("(e.matched_matter_id = CAST(:mid AS uuid) OR e.filed_matter_id = CAST(:mid AS uuid))")
-        params["mid"] = matter_id
-
-    if search:
-        wheres.append("""(
-            e.subject ILIKE '%%' || :q || '%%'
-            OR e.from_display ILIKE '%%' || :q || '%%'
-            OR e.from_email ILIKE '%%' || :q || '%%'
-            OR e.body_preview ILIKE '%%' || :q || '%%'
-        )""")
-        params["q"] = search
-
-    where_clause = " AND ".join(wheres)
-
-    async with AsyncSessionLocal() as session:
-        # Count
-        rc = await session.execute(sa_text(f"SELECT COUNT(*) FROM email_routing_queue e WHERE {where_clause}"), params)
-        total = rc.scalar() or 0
-
-        # Messages
-        r = await session.execute(sa_text(f"""
-            SELECT
-                e.id::text,
-                e.subject,
-                e.from_email,
-                e.from_display,
-                e.to_emails,
-                e.cc_emails,
-                e.received_at::text,
-                e.body_preview,
-                e.has_attachments,
-                e.attachment_names,
-                e.attachment_count,
-                e.routing_status,
-                e.matched_matter_id::text,
-                e.match_confidence,
-                e.match_signals,
-                e.is_read,
-                e.filed_to_dms,
-                e.filing_status,
-                e.filed_matter_id::text,
-                e.importance,
-                e.conversation_id,
-                e.conversation_topic,
-                m.matter_name,
-                c.client_name
-            FROM email_routing_queue e
-            LEFT JOIN matters m ON (e.matched_matter_id = m.id OR e.filed_matter_id = m.id) AND TRIM(m.tenant_id) = :tid
-            LEFT JOIN clients c ON m.client_id = c.id AND TRIM(c.tenant_id) = :tid
-            WHERE {where_clause}
-            ORDER BY e.received_at {order}
-            LIMIT :lim OFFSET :off
-        """), params)
-        messages = [_fix_row(dict(row)) for row in r.mappings().fetchall()]
-
-    return JSONResponse({
-        "messages": messages,
-        "total": total,
-        "page": page,
-        "page_size": page_size,
-        "pages": (total + page_size - 1) // page_size,
-    })
+    # Live JMAP-backed list. source=firm|personal|combined, time=current|historic.
+    email = _email(request)
+    if not email:
+        return JSONResponse({"messages": [], "total": 0, "page": page,
+                             "page_size": page_size, "pages": 0})
+    return JSONResponse(await _cj.view_messages(
+        email, folder=folder, time=time, search=search, page=page,
+        page_size=page_size, sort=sort, source=source))
 
 
 # ── Single message detail (full body) ─────────────────────────────
 
 @router.get("/email/messages/{message_id}")
-async def email_message_detail(request: Request, message_id: str):
-    """Full email detail with body_text."""
-    tid = _tid(request)
-    async with AsyncSessionLocal() as session:
-        r = await session.execute(sa_text("""
-            SELECT
-                e.*,
-                e.id::text as id_str,
-                e.matched_matter_id::text as matched_matter_id_str,
-                e.filed_matter_id::text as filed_matter_id_str,
-                m.matter_name,
-                c.client_name,
-                e.received_at::text as received_at_str
-            FROM email_routing_queue e
-            LEFT JOIN matters m ON (e.matched_matter_id = m.id OR e.filed_matter_id = m.id) AND TRIM(m.tenant_id) = :tid
-            LEFT JOIN clients c ON m.client_id = c.id AND TRIM(c.tenant_id) = :tid
-            WHERE e.id = CAST(:eid AS uuid) AND TRIM(e.tenant_id) = :tid
-        """), {"eid": message_id, "tid": tid})
-        row = r.mappings().fetchone()
-    if not row:
+async def email_message_detail(request: Request, message_id: str,
+                               source: str = Query("firm")):
+    # Full message body via live JMAP.
+    email = _email(request)
+    if not email:
+        raise HTTPException(401, "No authenticated user")
+    d = await _cj.view_message_detail(email, message_id, source=source)
+    if not d:
         raise HTTPException(404, "Message not found")
-    d = _fix_row(dict(row))
     return JSONResponse(d)
 
 
 # ── Conversation thread ───────────────────────────────────────────
 
 @router.get("/email/thread/{conversation_id}")
-async def email_thread(request: Request, conversation_id: str):
-    """Get all messages in a conversation thread."""
-    tid = _tid(request)
-    async with AsyncSessionLocal() as session:
-        r = await session.execute(sa_text("""
-            SELECT
-                e.id::text, e.subject, e.from_email, e.from_display,
-                e.to_emails, e.cc_emails, e.received_at::text,
-                e.body_preview, e.body_text, e.has_attachments,
-                e.attachment_names, e.routing_status,
-                e.matched_matter_id::text, e.is_read, e.importance,
-                m.matter_name
-            FROM email_routing_queue e
-            LEFT JOIN matters m ON e.matched_matter_id = m.id AND TRIM(m.tenant_id) = :tid
-            WHERE TRIM(e.tenant_id) = :tid AND e.conversation_id = :cid
-            ORDER BY e.received_at ASC
-        """), {"tid": tid, "cid": conversation_id})
-        msgs = [_fix_row(dict(row)) for row in r.mappings().fetchall()]
-    return JSONResponse({"conversation_id": conversation_id, "messages": msgs, "count": len(msgs)})
+async def email_thread(request: Request, conversation_id: str,
+                       source: str = Query("firm")):
+    # Conversation thread grouped by JMAP threadId.
+    email = _email(request)
+    if not email:
+        return JSONResponse({"conversation_id": conversation_id, "messages": [], "count": 0})
+    return JSONResponse(await _cj.view_thread(email, conversation_id, source=source))
 
 
 # ── Search matters (for filing) ───────────────────────────────────
@@ -334,39 +217,108 @@ async def search_matters_for_filing(request: Request, q: str = Query(..., min_le
 
 @router.post("/email/file")
 async def file_email_to_matter(request: Request):
-    """File an email to a matter's DMS Email folder."""
+    """File an email to a matter (the 'letter in the file'):
+      1. JMAP projection -> message also appears in Matters/<matter> over IMAP.
+      2. Durable copy -> the .eml lands in the matter's DMS 09-Email/ folder with
+         a dms_documents row (source='email_file').
+    Operates on a live JMAP message id; source selects the firm/personal box.
+    """
+    import os as _os, hashlib as _hashlib, re as _re
     body = await request.json()
     email_id = body.get("email_id")
     matter_id = body.get("matter_id")
+    source = (body.get("source") or "firm").lower()
     if not email_id or not matter_id:
         raise HTTPException(400, "email_id and matter_id required")
     tid = _tid(request)
-    uid = _uid(request)
+    user_email = _email(request)
+    if not user_email:
+        raise HTTPException(401, "No authenticated user")
 
+    # Resolve matter -> client/matter names (DMS path + folder label).
     async with AsyncSessionLocal() as session:
-        # Get email
         r = await session.execute(sa_text("""
-            SELECT staging_path, subject, from_email, received_at
-            FROM email_routing_queue
-            WHERE id = CAST(:eid AS uuid) AND TRIM(tenant_id) = :tid
-        """), {"eid": email_id, "tid": tid})
-        email_row = r.mappings().fetchone()
-        if not email_row:
-            raise HTTPException(404, "Email not found")
+            SELECT m.matter_name, m.matter_number, c.client_name
+            FROM matters m
+            LEFT JOIN clients c ON m.client_id = c.id AND TRIM(c.tenant_id) = :tid
+            WHERE m.id = CAST(:mid AS uuid) AND TRIM(m.tenant_id) = :tid
+        """), {"mid": matter_id, "tid": tid})
+        mrow = r.mappings().fetchone()
+    if not mrow:
+        raise HTTPException(404, "Matter not found")
 
-        # Update routing
-        await session.execute(sa_text("""
-            UPDATE email_routing_queue
-            SET filed_to_dms = true, filing_status = 'filed',
-                filed_matter_id = CAST(:mid AS uuid),
-                filed_at = NOW(), filed_by = :uid,
-                matched_matter_id = COALESCE(matched_matter_id, CAST(:mid AS uuid)),
-                routing_status = 'matched'
-            WHERE id = CAST(:eid AS uuid) AND TRIM(tenant_id) = :tid
-        """), {"eid": email_id, "mid": matter_id, "uid": uid, "tid": tid})
-        await session.commit()
+    # Resolve the mailbox connector backing this message's source.
+    conn = await _cj._connector_for(user_email, source)
+    if not conn or not conn.ok:
+        raise HTTPException(400, f"No mailbox connector for source={source}")
 
-    return JSONResponse({"ok": True, "message": "Filed to matter"})
+    out = {"ok": True, "projected": False, "dms": False, "source": source}
+
+    # (1) JMAP projection into Matters/<matter>.
+    try:
+        from core.services import matter_mail_folders as mmf
+        folder = mmf.folder_name(mrow["matter_number"] or "",
+                                 mrow["matter_name"] or "")
+        parent_id = await sm.find_or_create_mailbox(
+            conn.account_id, "Matters", auth=conn.auth, url=conn.jmap_url)
+        child_id = await sm.find_or_create_mailbox(
+            conn.account_id, folder, parent_id=parent_id,
+            auth=conn.auth, url=conn.jmap_url)
+        proj = await sm.add_message_to_mailbox(
+            conn.account_id, email_id, child_id,
+            auth=conn.auth, url=conn.jmap_url)
+        out["projected"] = bool(proj.get("success"))
+        if not proj.get("success"):
+            out["projection_error"] = str(proj.get("error"))
+    except Exception as e:
+        logger.warning("[email/file] projection failed: %s", e)
+        out["projection_error"] = str(e)
+
+    # (2) Durable .eml copy into DMS 09-Email/ + dms_documents row.
+    try:
+        eml = await sm.download_eml(conn.account_id, email_id,
+                                    auth=conn.auth, url=conn.jmap_url)
+        if not eml:
+            raise RuntimeError("empty .eml download")
+        detail = await sm.get_message(conn.account_id, email_id,
+                                      auth=conn.auth, url=conn.jmap_url)
+        subj = (detail or {}).get("subject") or "message"
+        recv = (detail or {}).get("receivedAt") or ""
+        ts = _re.sub(r"[^0-9]", "", recv)[:14] or "00000000"
+        safe = (_re.sub(r"[^\w\-. ]", "_", subj).strip()[:80]) or "message"
+
+        root = _os.path.join("/mnt/praesidium", tid, "matters",
+                             mrow["client_name"] or "_", mrow["matter_name"])
+        email_dir = _os.path.join(root, "09-Email")
+        _os.makedirs(email_dir, exist_ok=True)
+        fpath = _os.path.join(email_dir, f"{ts}_{safe}.eml")
+        n = 1
+        while _os.path.exists(fpath):
+            fpath = _os.path.join(email_dir, f"{ts}_{safe}-{n}.eml"); n += 1
+        with open(fpath, "wb") as fh:
+            fh.write(eml)
+        fhash = _hashlib.sha256(eml).hexdigest()
+        async with AsyncSessionLocal() as session:
+            await session.execute(sa_text("""
+                INSERT INTO dms_documents
+                    (tenant_id, file_path, folder_root, file_hash,
+                     file_size_bytes, modified_at, ocr_status,
+                     extraction_status, source)
+                VALUES (:tid, :fp, :root, :hash, :sz, NOW(),
+                        'not_applicable', 'pending', 'email_file')
+                ON CONFLICT DO NOTHING
+            """), {"tid": tid, "fp": fpath, "root": root,
+                   "hash": fhash, "sz": len(eml)})
+            await session.commit()
+        out["dms"] = True
+        out["dms_path"] = fpath
+    except Exception as e:
+        logger.warning("[email/file] dms copy failed: %s", e)
+        out["dms_error"] = str(e)
+
+    out["message"] = "Filed to matter" if (out["projected"] or out["dms"]) \
+        else "Filing failed"
+    return JSONResponse(out)
 
 
 # ── Skip / reject email ──────────────────────────────────────────
@@ -392,26 +344,35 @@ async def skip_email(request: Request):
 
 # ── Email stats summary ──────────────────────────────────────────
 
+@router.get("/email/sources")
+async def email_sources(request: Request):
+    """Which mailbox sources the logged-in user can view (firm always;
+    personal/combined only if they have a personal connector configured)."""
+    email = _email(request)
+    if not email:
+        return JSONResponse({"sources": ["firm"], "has_personal": False})
+    from core.services import mail_connectors as _mc
+    has_personal = False
+    personal_color = _mc.DEFAULT_PERSONAL_COLOR
+    try:
+        data = await _mc._load_personal_row(email)
+        has_personal = bool(data)
+        if data:
+            personal_color = (data.get("config") or {}).get("color") or personal_color
+    except Exception as exc:
+        logger.warning("[email/sources] %s", exc)
+    sources = ["firm"] + (["personal", "combined"] if has_personal else [])
+    return JSONResponse({"sources": sources, "has_personal": has_personal,
+                         "personal_color": personal_color})
+
+
 @router.get("/email/stats")
-async def email_stats(request: Request):
-    tid = _tid(request)
-    async with AsyncSessionLocal() as session:
-        r = await session.execute(sa_text("""
-            SELECT
-              COUNT(*) as total,
-              COUNT(*) FILTER (WHERE routing_status = 'pending') as pending,
-              COUNT(*) FILTER (WHERE routing_status = 'matched') as matched,
-              COUNT(*) FILTER (WHERE routing_status = 'skipped') as skipped,
-              COUNT(*) FILTER (WHERE filed_to_dms = true OR filing_status = 'filed') as filed,
-              COUNT(*) FILTER (WHERE is_read = false OR is_read IS NULL) as unread,
-              COUNT(DISTINCT conversation_id) FILTER (WHERE conversation_id IS NOT NULL) as threads,
-              COUNT(DISTINCT from_email) as unique_senders,
-              MIN(received_at)::text as earliest,
-              MAX(received_at)::text as latest
-            FROM email_routing_queue
-            WHERE TRIM(tenant_id) = :tid
-        """), {"tid": tid})
-        return JSONResponse(_fix_row(dict(r.mappings().fetchone())))
+async def email_stats(request: Request, source: str = Query("firm")):
+    # Counts derived from live JMAP mailbox totals (summed across sources).
+    email = _email(request)
+    if not email:
+        return JSONResponse({"inbox_total": 0, "inbox_unread": 0, "sent_total": 0})
+    return JSONResponse(await _cj.view_stats(email, source=source))
 
 
 # ── DMS folder tree (for drag-drop filing) ────────────────────────

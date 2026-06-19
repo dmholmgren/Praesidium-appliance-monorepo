@@ -1458,7 +1458,7 @@ async def folder_recon_ai_match_stream(request: Request, user=Depends(get_curren
                 ctx.append("Candidate clients: " + ", ".join(f'{c["client_name"]} ({c["matter_count"]}m)' for c in candidate_clients))
 
             context = "\n".join(ctx)
-            model = "claude-haiku-4-5-20251001" if (match["score"] or 0) >= 0.7 else "claude-sonnet-4-20250514"
+            model = "claude-haiku-4-5-20251001" if (match["score"] or 0) >= 0.7 else "claude-sonnet-4-6"
 
             prompt = f"""You are matching legacy file folders to client matters in a law firm.
 
@@ -1830,7 +1830,7 @@ async def ai_chat_stream(request: Request, user=Depends(get_current_user)):
     mcp_user = os.environ.get("MCP_USER_URL", "https://mcp-user.praesidium-legal.com/mcp")
 
     api_body = {
-        "model": body.get("model", "claude-sonnet-4-20250514"),
+        "model": body.get("model", "claude-sonnet-4-6"),
         "max_tokens": 16384, "stream": True,
         "system": sys_prompt, "messages": msgs,
         "mcp_servers": [
@@ -2772,6 +2772,23 @@ register_integrity_routes(router, _int_ASL)
 
 # ── File Import (React) ──────────────────────────────────────────────────────
 
+@router.get("/email-archive", response_class=HTMLResponse)
+async def tenant_email_archive(request: Request, user=Depends(get_current_user)):
+    if not _require_admin(user, request):
+        return RedirectResponse("/dashboard", status_code=303)
+    from core.services.nav_context import get_nav_context
+    nav_ctx = await get_nav_context(request)
+    brand = getattr(request.state, 'branding', None)
+    t = _templates(request)
+    return t.TemplateResponse(
+        request,
+        "email_archive_react.html",
+        {"user": user, "brand": brand, "page": "email-archive",
+         "current_user": getattr(request.state, 'current_user', None),
+         **nav_ctx},
+    )
+
+
 @router.get("/file-import", response_class=HTMLResponse)
 async def tenant_file_import(request: Request, user=Depends(get_current_user)):
     if not _require_admin(user, request):
@@ -2845,10 +2862,20 @@ async def redirect_folder_migration(request: Request):
 
 @router.get("/ai-chat-partial", response_class=HTMLResponse)
 async def ai_chat_partial(request: Request, user=Depends(get_current_user)):
-    """HTML fragment for the shell right-panel AI chat widget."""
+    """HTML fragment for the shell right-panel AI chat widget.
+
+    Capabilities: drag-drop of DMS files & local files (attached to the chat
+    session and findable in history), context-awareness of the open document,
+    inline cards for AI-generated documents with promote-to-DMS / promote-to-
+    project, and a model picker (frontier vs. standard).
+    """
     return HTMLResponse("""
 <style>
-  #ai-p-chat{display:flex;flex-direction:column;height:calc(100vh - 140px);font-size:13px}
+  #ai-p-chat{position:relative;display:flex;flex-direction:column;height:calc(100vh - 140px);font-size:13px}
+  #ai-p-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 0 8px;border-bottom:1px solid var(--border);margin-bottom:8px;flex-shrink:0}
+  #ai-p-head .ttl{font-size:12px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px}
+  #ai-p-model{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:500;color:var(--text);background:var(--bg);border:1px solid var(--border);border-radius:14px;padding:3px 9px;cursor:pointer}
+  #ai-p-model .dot{width:7px;height:7px;border-radius:50%;background:var(--accent)}
   #ai-p-msgs{flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:4px 0}
   .apm{display:flex;gap:6px}
   .apav{width:22px;height:22px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:8px;font-weight:600;color:#fff;margin-top:2px}
@@ -2861,49 +2888,156 @@ async def ai_chat_partial(request: Request, user=Depends(get_current_user)):
   .aptdot{width:7px;height:7px;border-radius:50%;background:var(--accent);display:inline-block}
   .aptspin{width:9px;height:9px;border:1.5px solid var(--border);border-top-color:var(--accent);border-radius:50%;display:inline-block;animation:apsp .7s linear infinite}
   @keyframes apsp{to{transform:rotate(360deg)}}
-  #ai-p-irow{display:flex;gap:6px;padding:10px 0 0;border-top:1px solid var(--border);flex-shrink:0}
+  .apdoc{margin:6px 0;border:1px solid var(--border);border-radius:7px;padding:8px 10px;background:var(--surface);display:flex;flex-direction:column;gap:6px}
+  .apdoc .nm{font-size:12px;font-weight:600;display:flex;align-items:center;gap:6px;color:var(--text)}
+  .apdoc .acts{display:flex;gap:6px;flex-wrap:wrap}
+  .apdoc .acts button{font-size:10px;font-weight:600;padding:3px 8px;border-radius:5px;border:1px solid var(--border);background:var(--bg);color:var(--text);cursor:pointer}
+  .apdoc .acts button.gold{background:var(--primary);color:#fff;border-color:var(--primary)}
+  .apdoc .acts button.proj{background:#7c3aed;color:#fff;border-color:#7c3aed}
+  .apdoc .acts button:disabled{opacity:.45;cursor:default}
+  #ai-p-chips{display:flex;flex-wrap:wrap;gap:5px;padding:6px 0 0;flex-shrink:0}
+  .apchip{display:inline-flex;align-items:center;gap:5px;font-size:10px;background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:3px 8px;max-width:200px}
+  .apchip .cn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .apchip .cx{cursor:pointer;color:var(--muted);font-weight:700}
+  .apchip.up{opacity:.6}
+  #ai-p-irow{display:flex;gap:6px;padding:8px 0 0;border-top:1px solid var(--border);flex-shrink:0}
   #ai-p-in{flex:1;padding:7px 10px;font-size:12px;border:1px solid var(--border);border-radius:6px;font-family:inherit;color:var(--text);background:var(--bg);outline:none;box-sizing:border-box}
   #ai-p-btn{padding:7px 14px;background:var(--primary);color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;font-family:inherit}
   #ai-p-btn:disabled{opacity:.4}
   .apempty{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--muted);padding:20px}
+  #ai-p-drop{position:absolute;inset:0;z-index:30;display:none;align-items:center;justify-content:center;border:2px dashed var(--accent);border-radius:8px;background:rgba(200,146,58,.08);color:var(--accent);font-size:13px;font-weight:600;pointer-events:none}
+  #ai-p-chat.drag #ai-p-drop{display:flex}
+  #ai-p-mm{position:absolute;inset:0;z-index:40;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.28)}
+  #ai-p-mm.on{display:flex}
+  #ai-p-mm .box{background:var(--surface);border:1px solid var(--border);border-radius:10px;width:240px;padding:14px;box-shadow:0 10px 30px rgba(0,0,0,.18)}
+  #ai-p-mm .box h4{margin:0 0 10px;font-size:12px;font-weight:700;color:var(--text)}
+  .apopt{display:flex;flex-direction:column;gap:1px;border:1px solid var(--border);border-radius:7px;padding:8px 10px;margin-bottom:7px;cursor:pointer}
+  .apopt.sel{border-color:var(--accent);background:rgba(200,146,58,.06)}
+  .apopt .l{font-size:12px;font-weight:600;color:var(--text)}
+  .apopt .s{font-size:10px;color:var(--muted)}
 </style>
 <div id="ai-p-chat">
+  <div id="ai-p-head">
+    <div class="ttl">&#x1F4AC; AI Assistant</div>
+    <div id="ai-p-model" title="Choose model"><span class="dot"></span><span id="ai-p-model-l">Standard</span> &#x25BE;</div>
+  </div>
   <div id="ai-p-msgs">
     <div class="apempty"><div>
       <div style="font-size:22px;margin-bottom:6px;opacity:.3">&#x1F4AC;</div>
       <div style="font-size:12px;font-weight:500;margin-bottom:3px">AI Assistant</div>
-      <div style="font-size:11px">Ask about matters, documents, billing, or anything in the platform. Uses MCP tools for live data.</div>
+      <div style="font-size:11px">Ask about matters, documents, billing, or anything in the platform. Drag a file or document here to attach it.</div>
     </div></div>
   </div>
+  <div id="ai-p-chips"></div>
   <div id="ai-p-irow">
-    <input id="ai-p-in" type="text" placeholder="Ask anything..." autocomplete="off"/>
+    <input id="ai-p-in" type="text" placeholder="Ask anything, or drop a file..." autocomplete="off"/>
     <button id="ai-p-btn">Send</button>
   </div>
+  <div id="ai-p-drop">Drop to attach to this chat</div>
+  <div id="ai-p-mm"><div class="box">
+    <h4>Model</h4>
+    <div id="ai-p-mm-opts"></div>
+  </div></div>
 </div>
 <script>
 (function(){
+  var PC=window.PraesidiumChat||{};
+  var root=document.getElementById('ai-p-chat');
   var msgs=document.getElementById('ai-p-msgs');
   var inp=document.getElementById('ai-p-in');
   var btn=document.getElementById('ai-p-btn');
+  var chipsEl=document.getElementById('ai-p-chips');
+  var modelBtn=document.getElementById('ai-p-model');
+  var modelLbl=document.getElementById('ai-p-model-l');
+  var mm=document.getElementById('ai-p-mm');
+  var mmOpts=document.getElementById('ai-p-mm-opts');
   var history=[];
   var streaming=false;
   var sessionId='';
+  var attachments=[]; // {filename,relative_path,document_id,path,source,kind,file,uploaded,pendingLocal}
+  var curBot=null;
 
+  function matterId(){
+    var od=PC.getOpenDoc?PC.getOpenDoc():null;
+    return (window.__MATTER_ID__||'')|| (od&&od.matter_id)||'';
+  }
   function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
   function md(t){
     var h=esc(t);
-    h=h.replace(/```(\w*)\n([\s\S]*?)```/g,function(_,l,c){return '<pre>'+c.trim()+'</pre>';});
+    h=h.replace(/```(\\w*)\\n([\\s\\S]*?)```/g,function(_,l,c){return '<pre>'+c.trim()+'</pre>';});
     h=h.replace(/`([^`]+)`/g,'<code>$1</code>');
-    h=h.replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>');
-    h=h.replace(/\*(.+?)\*/g,'<em>$1</em>');
+    h=h.replace(/\\*\\*(.+?)\\*\\*/g,'<strong>$1</strong>');
+    h=h.replace(/\\*(.+?)\\*/g,'<em>$1</em>');
     h=h.replace(/^### (.+)$/gm,'<div style="font-weight:600;font-size:12px;margin:8px 0 3px">$1</div>');
     h=h.replace(/^## (.+)$/gm,'<div style="font-weight:600;font-size:13px;margin:10px 0 4px">$1</div>');
     h=h.replace(/^- (.+)$/gm,'<div style="padding-left:14px;margin:1px 0">&bull; $1</div>');
-    h=h.replace(/\n\n/g,'<div style="margin-top:6px"></div>');
-    h=h.replace(/\n/g,'<br>');
+    h=h.replace(/\\n\\n/g,'<div style="margin-top:6px"></div>');
+    h=h.replace(/\\n/g,'<br>');
     return h;
   }
   function scroll(){msgs.scrollTop=msgs.scrollHeight;}
+
+  // ── Model picker modal ──
+  var TIERS=PC.MODEL_TIERS||[{id:'standard',label:'Standard',sub:'Fast'},{id:'frontier',label:'Frontier',sub:'Deepest'}];
+  function curTier(){return PC.getTier?PC.getTier():'standard';}
+  function renderModel(){modelLbl.textContent=PC.tierLabel?PC.tierLabel(curTier()):'Standard';}
+  function renderMm(){
+    mmOpts.innerHTML='';
+    TIERS.forEach(function(t){
+      var d=document.createElement('div');d.className='apopt'+(t.id===curTier()?' sel':'');
+      d.innerHTML='<div class="l">'+esc(t.label)+'</div><div class="s">'+esc(t.sub||'')+'</div>';
+      d.onclick=function(){if(PC.setTier)PC.setTier(t.id);renderModel();mm.classList.remove('on');};
+      mmOpts.appendChild(d);
+    });
+  }
+  modelBtn.onclick=function(){renderMm();mm.classList.add('on');};
+  mm.onclick=function(e){if(e.target===mm)mm.classList.remove('on');};
+  renderModel();
+
+  // ── Attachment chips ──
+  function renderChips(){
+    chipsEl.innerHTML='';
+    attachments.forEach(function(a,i){
+      var c=document.createElement('div');c.className='apchip'+(a.pendingLocal&&!a.uploaded?' up':'');
+      c.innerHTML='<span>&#x1F4CE;</span><span class="cn">'+esc(a.filename)+'</span><span class="cx" data-i="'+i+'">&times;</span>';
+      c.querySelector('.cx').onclick=function(){attachments.splice(i,1);renderChips();};
+      chipsEl.appendChild(c);
+    });
+  }
+  function addAttachment(a){
+    for(var i=0;i<attachments.length;i++){
+      if(attachments[i].filename===a.filename&&(attachments[i].relative_path||'')===(a.relative_path||''))return;
+    }
+    attachments.push(a);renderChips();
+    if(sessionId)flushAttachments();
+  }
+  function ctxAttachments(){
+    return attachments.filter(function(a){return !(a.pendingLocal&&!a.uploaded);}).map(function(a){
+      return {filename:a.filename,relative_path:a.relative_path||'',document_id:a.document_id||'',path:a.path||'',source:a.source||'dms',kind:a.kind||'dropped'};
+    });
+  }
+  function flushAttachments(){
+    if(!sessionId)return;
+    attachments.forEach(function(a){
+      if(a.pendingLocal&&!a.uploaded&&a.file&&PC.uploadFile){
+        PC.uploadFile(sessionId,a.file).then(function(r){if(r&&r.path){a.path=r.path;a.uploaded=true;a.source='local';a.kind='uploaded';renderChips();}});
+      } else if(!a.pendingLocal&&!a._reg&&PC.registerAttachment){
+        a._reg=true;PC.registerAttachment(sessionId,{filename:a.filename,relative_path:a.relative_path||'',document_id:a.document_id||'',path:a.path||'',source:a.source||'dms',kind:a.kind||'dropped',matter_id:matterId()});
+      }
+    });
+  }
+
+  // ── Drag & drop ──
+  function hasPayload(dt){return PC.dropHasPayload?PC.dropHasPayload(dt):(dt&&((dt.files&&dt.files.length)||true));}
+  root.addEventListener('dragenter',function(e){if(hasPayload(e.dataTransfer)){e.preventDefault();root.classList.add('drag');}});
+  root.addEventListener('dragover',function(e){if(hasPayload(e.dataTransfer)){e.preventDefault();root.classList.add('drag');}});
+  root.addEventListener('dragleave',function(e){if(e.target===root||!root.contains(e.relatedTarget))root.classList.remove('drag');});
+  root.addEventListener('drop',function(e){
+    e.preventDefault();root.classList.remove('drag');
+    var p=PC.parseDrop?PC.parseDrop(e.dataTransfer):{dmsFiles:[],localFiles:[]};
+    (p.dmsFiles||[]).forEach(function(f){addAttachment({filename:f.filename,relative_path:f.relative_path,document_id:f.document_id,source:'dms',kind:'dropped'});});
+    (p.localFiles||[]).forEach(function(f){addAttachment({filename:f.name,file:f,pendingLocal:true,uploaded:false,source:'local',kind:'uploaded'});});
+  });
 
   function addUser(text){
     var em=msgs.querySelector('.apempty');if(em)em.remove();
@@ -2911,23 +3045,44 @@ async def ai_chat_partial(request: Request, user=Depends(get_current_user)):
     d.innerHTML='<div class="apav apav-u">You</div><div style="flex:1;min-width:0"><div class="apub">'+esc(text)+'</div></div>';
     msgs.appendChild(d);scroll();
   }
-
   function mkBot(){
     var d=document.createElement('div');d.className='apm';
     d.innerHTML='<div class="apav apav-b">AI</div><div class="apbt" style="flex:1;min-width:0"></div>';
     msgs.appendChild(d);
     return d.querySelector('.apbt');
   }
-
   function addTool(el,name,done){
     var pill=document.createElement('div');pill.className='aptool';
     pill.innerHTML=(done?'<span class="aptdot"></span>':'<span class="aptspin"></span>')+' '+esc(name);
-    pill.dataset.tool=name;
     el.appendChild(pill);scroll();
   }
+  function finishTools(el){el.querySelectorAll('.aptspin').forEach(function(s){s.className='aptdot';});}
 
-  function finishTools(el){
-    el.querySelectorAll('.aptspin').forEach(function(s){s.className='aptdot';});
+  // ── Generated document card ──
+  function addDocCard(el,doc){
+    var mid=matterId();
+    var card=document.createElement('div');card.className='apdoc';
+    card.innerHTML='<div class="nm">&#x1F4C4; '+esc(doc.filename||'Document')+'</div><div class="acts"></div>';
+    var acts=card.querySelector('.acts');
+    var openB=document.createElement('button');openB.textContent='Open';
+    openB.onclick=function(){if(PC.openDocFile)PC.openDocFile({filename:doc.filename,path:doc.path},mid);};
+    acts.appendChild(openB);
+    if(doc.saved_to_dms){
+      var badge=document.createElement('span');badge.textContent='\u2713 Saved to DMS \u00B7 Draft';badge.style.cssText='font-size:10px;font-weight:600;color:#059669;align-self:center;';
+      acts.appendChild(badge);
+    } else if(doc.draft_id){
+      var saveB=document.createElement('button');saveB.className='gold';saveB.textContent='Save to DMS';
+      saveB.onclick=function(){saveB.disabled=true;saveB.textContent='Saving...';PC.saveDraftToDms(doc.draft_id).then(function(){saveB.textContent='Saved \\u2713';}).catch(function(){saveB.disabled=false;saveB.textContent='Retry save';});};
+      acts.appendChild(saveB);
+    }
+    var projB=document.createElement('button');projB.className='proj';projB.textContent='Promote to Project';projB.disabled=!mid;
+    projB.onclick=function(){
+      var nm=prompt('Project name:');if(!nm)return;
+      projB.disabled=true;projB.textContent='Creating...';
+      PC.promoteToProject(mid,[{filename:doc.filename,path:doc.path}],nm).then(function(d){if(d&&d.id)window.location.href='/projects/'+d.id;}).catch(function(){projB.disabled=false;projB.textContent='Retry';});
+    };
+    acts.appendChild(projB);
+    (el||msgs).appendChild(card);scroll();
   }
 
   async function send(){
@@ -2937,12 +3092,17 @@ async def ai_chat_partial(request: Request, user=Depends(get_current_user)):
     addUser(text);
     history.push({role:'user',content:text});
     streaming=true;btn.disabled=true;
-
-    var botEl=mkBot();
+    var botEl=mkBot();curBot=botEl;
     var fullText='';
 
     try{
-      var body={messages:history,context:{page:window._praesidiumPage||''}};
+      var od=PC.getOpenDoc?PC.getOpenDoc():null;
+      var ctx={page:window._praesidiumPage||''};
+      if(matterId())ctx.matter_id=matterId();
+      if(window.__MATTER_NAME__)ctx.matter_name=window.__MATTER_NAME__;
+      if(od)ctx.open_document=od;
+      var atts=ctxAttachments();if(atts.length)ctx.attachments=atts;
+      var body={messages:history,context:ctx,tier:curTier()};
       if(sessionId)body.session_id=sessionId;
       var resp=await fetch('/api/ai-chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
       var reader=resp.body.getReader();
@@ -2952,23 +3112,24 @@ async def ai_chat_partial(request: Request, user=Depends(get_current_user)):
         var chunk=await reader.read();
         if(chunk.done)break;
         buffer+=decoder.decode(chunk.value,{stream:true});
-        var lines=buffer.split('\n');buffer=lines.pop();
+        var lines=buffer.split('\\n');buffer=lines.pop();
         for(var i=0;i<lines.length;i++){
           var line=lines[i];if(!line.startsWith('data: '))continue;
           try{
             var evt=JSON.parse(line.slice(6));
-            if(evt.type==='session'){sessionId=evt.session_id||sessionId;}
+            if(evt.type==='session'){if(evt.session_id&&evt.session_id!==sessionId){sessionId=evt.session_id;flushAttachments();}}
             else if(evt.type==='text'){fullText+=evt.text;botEl.innerHTML=md(fullText);scroll();}
             else if(evt.type==='tool_start'){addTool(botEl,evt.tool,false);}
             else if(evt.type==='block_stop'){finishTools(botEl);}
-            else if(evt.type==='tool_result'){/* tool results handled by text output */}
-            else if(evt.type==='error'){fullText+='\n\n**Error:** '+evt.text;botEl.innerHTML=md(fullText);scroll();}
+            else if(evt.type==='document'){if(evt.document)addDocCard(null,evt.document);}
+            else if(evt.type==='tool_result'){/* handled */}
+            else if(evt.type==='error'){fullText+='\\n\\n**Error:** '+evt.text;botEl.innerHTML=md(fullText);scroll();}
             else if(evt.type==='done'){break;}
           }catch(e){}
         }
       }
     }catch(err){
-      fullText+='\n\n**Connection error:** '+err.message;
+      fullText+='\\n\\n**Connection error:** '+err.message;
       botEl.innerHTML=md(fullText);
     }
 

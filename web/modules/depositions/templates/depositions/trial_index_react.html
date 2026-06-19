@@ -1,0 +1,6 @@
+{% extends "shell.html" %}
+{% block title %}Trial Center — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block content %}
+<div id="trial-index-root"></div>
+<script type="module" src="/static/js/trial-index.js?v=4"></script>
+{% endblock %}

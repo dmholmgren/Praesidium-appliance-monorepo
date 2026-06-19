@@ -1,0 +1,6 @@
+{% extends "shell.html" %}
+{% block title %}{{ style }} — Appellate Brief — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block content %}
+<div id="brief-workspace-root" data-appellate-case-id="{{ appellate_case_id }}"></div>
+<script type="module" src="/static/js/brief-workspace.js?v=6"></script>
+{% endblock %}

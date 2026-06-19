@@ -38,6 +38,7 @@ router = APIRouter(prefix="/api/v1/nav-tabs", tags=["navigation"])
 
 _ROLE_RANK = {
     "superadmin": 100, "admin": 90, "partner": 80, "attorney": 70,
+    "co_counsel": 70,
     "associate": 60, "paralegal": 50, "staff": 40, "read_only": 20,
     "client": 10, "deal_room_guest": 5,
 }
@@ -46,6 +47,22 @@ def _role_satisfies(user_role, required_role):
     if not required_role: return True
     if not user_role: return False
     return _ROLE_RANK.get(user_role, 0) >= _ROLE_RANK.get(required_role, 0)
+
+_EXTERNAL_ROLES = frozenset({"client", "deal_room_guest", "co_counsel"})
+# Billing sub-tabs: which permission action each needs. Defaults to 'manage'
+# (firm-internal) for anything not listed, so external roles without the grant
+# only see the read tabs.
+_BILLING_TAB_ACTION = {"overview": "view", "clients": "view", "timekeepers": "view"}
+
+
+async def _granted_actions(tenant_id, role, module):
+    async with AsyncSessionLocal() as s:
+        r = await s.execute(sa_text(
+            "SELECT DISTINCT action FROM permission_matrix "
+            "WHERE TRIM(tenant_id) = trim(:t) AND role = :r AND module = :m "
+            "AND allowed = TRUE"), {"t": tenant_id, "r": role, "m": module})
+        return {row[0] for row in r.fetchall()}
+
 
 def _resolve_template(template, context):
     if not template: return None
@@ -76,21 +93,33 @@ async def get_section_tabs(layout_slug: str, request: Request,
                 required_role, feature_flag, is_platform_standard,
                 is_active, separator_before, badge_source, tenant_id
             FROM layout_tabs
-            WHERE layout_slug = :layout_slug AND is_active = TRUE AND is_visible = TRUE
-              AND ((tenant_id IS NOT NULL AND trim(tenant_id) = :tid) OR tenant_id IS NULL)
+            WHERE layout_slug = :layout_slug
+              AND ((tenant_id IS NOT NULL AND trim(tenant_id) = :tid)
+                   OR (tenant_id IS NULL AND is_active = TRUE AND is_visible = TRUE))
               AND (matter_types IS NULL OR :matter_type = ANY(matter_types))
             ORDER BY display_order ASC
         """), {"layout_slug": layout_slug, "tid": tenant_id, "matter_type": matter_type or ""})
         rows = [dict(r) for r in result.mappings().fetchall()]
 
+    # INACTIVE/invisible tenant override suppresses the platform default tab.
+    _tenant_rows = {r["tab_slug"]: r for r in rows if r["tenant_id"] is not None}
+    _suppressed = {k for k, r in _tenant_rows.items() if not (r["is_active"] and r["is_visible"])}
     by_slug = {}
     for row in rows:
         slug = row["tab_slug"]
-        if row["tenant_id"] is not None: by_slug[slug] = row
+        if slug in _suppressed:
+            by_slug.pop(slug, None); continue
+        if row["tenant_id"] is not None:
+            if row["is_active"] and row["is_visible"]: by_slug[slug] = row
         elif slug not in by_slug: by_slug[slug] = row
     tabs = sorted(by_slug.values(), key=lambda x: x["display_order"])
     tabs = [t for t in tabs if _role_satisfies(user_role, t.get("required_role"))]
     tabs = [t for t in tabs if _role_satisfies(user_role, t.get("permission_level"))]
+
+    # External roles: permission-gate billing sub-tabs by action grant.
+    if user_role in _EXTERNAL_ROLES and layout_slug == "billing":
+        _ga = await _granted_actions(tenant_id, user_role, "billing")
+        tabs = [t for t in tabs if _BILLING_TAB_ACTION.get(t["tab_slug"], "manage") in _ga]
 
     feature_flags = await _get_feature_flags(tenant_id)
     tabs = [t for t in tabs if not t.get("feature_flag") or feature_flags.get(t["feature_flag"], False)]

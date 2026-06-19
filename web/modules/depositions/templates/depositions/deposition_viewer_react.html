@@ -1,0 +1,6 @@
+{% extends "shell.html" %}
+{% block title %}{{ deponent }} — Deposition — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block content %}
+<div id="deposition-viewer-root" data-transcript-id="{{ transcript_id }}"></div>
+<script type="module" src="/static/js/deposition-viewer.js?v=13"></script>
+{% endblock %}

@@ -1,0 +1,36 @@
+{% extends "shell.html" %}
+{% block title %}Trial Center — {{ brand.platform_name if brand else 'Praesidium' }}{% endblock %}
+{% block content %}
+<div style="max-width:900px;margin:0 auto;padding:28px 24px;font-family:system-ui,-apple-system,sans-serif;">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+    <span style="font-size:22px;">⚖️</span>
+    <h1 style="font-size:20px;font-weight:700;color:var(--text);margin:0;">Trial Center</h1>
+  </div>
+  <p style="font-size:13px;color:var(--muted);margin:0 0 20px;">
+    Trial preparation over a fully-indexed record — pleadings, motions, transcripts, and the exhibit register.
+    Select a matter with trial activity.
+  </p>
+  {% if matters %}
+  <div style="display:flex;flex-direction:column;gap:8px;">
+    {% for m in matters %}
+    <a href="/trial/home/{{ m.id }}"
+       style="display:flex;align-items:center;justify-content:space-between;gap:12px;
+              padding:14px 16px;border:1px solid var(--border);border-radius:10px;
+              background:var(--surface);text-decoration:none;">
+      <span style="font-size:14px;font-weight:600;color:var(--text);">{{ m.matter_name }}</span>
+      <span style="font-size:11px;color:var(--muted);">
+        {{ m.exhibits }} exhibit{{ '' if m.exhibits == 1 else 's' }}
+        · {{ m.transcripts }} trial/hearing transcript{{ '' if m.transcripts == 1 else 's' }}
+        <span style="color:var(--primary);margin-left:8px;">Open ▸</span>
+      </span>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div style="padding:40px;text-align:center;color:var(--muted);font-size:13px;
+              border:1px dashed var(--border);border-radius:10px;">
+    No matters with trial activity yet. Trial exhibits and trial/hearing transcripts surface here as they're added.
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -11,14 +11,17 @@
 part = "stand";            // "stand" | "fit_test"
 
 /* [Tabs -- from caliper measurements of the OEM stand] */
-tab_w        = 19.0;   // tab width along the stand edge (measured 18.94; 25.67 - 5.81 = 19.86)
-tab_t        = 6.3;    // tab thickness (measured 6.32)
-tab_len      = 8.0;    // how far the tab sticks out past the stand edge  (ESTIMATE - measure)
+// Each tab is a pair of parallel rails standing out from the stand's edge
+// face, running along the edge, flush with one face of the stand.
+tab_w        = 19.0;   // rail length along the stand edge (measured 18.94)
+rail_span    = 10.11;  // across both rails, outside to outside (measured)
+rail_gap     = 4.24;   // gap between the rails (measured)
+rail_h       = 3.90;   // how far the rails stand out from the edge face (measured -- CONFIRM)
+edge_h       = 20.50;  // stand thickness at the tab, rail face to far face (measured)
 tab_pitch    = 120.0;  // tab centre-to-centre distance                   (ESTIMATE - measure)
 tab_offset   = 0.0;    // shift both tabs left(-)/right(+) if the slots are off-centre
 tab_clear    = 0.15;   // removed from each tab face so printed tabs slide in
-tab_chamfer  = 1.0;    // lead-in chamfer on the tab tip
-snap_bump    = 0.0;    // height of a retention ridge on the tab top face (0 = none, try 0.4)
+tab_chamfer  = 0.6;    // lead-in chamfer on the rail tips
 
 /* [Stand body] */
 stand_w      = 180.0;  // overall width, foot to foot
@@ -27,7 +30,7 @@ band_d       = 32.0;   // depth of the solid band along the tab edge
 leg_w        = 28.0;   // width of each leg
 corner_r     = 6.0;    // outline corner radius
 skin         = 2.4;    // flat plate thickness
-rib_h        = tab_t;  // total height incl. stiffening ribs
+rib_h        = 10.0;   // total height incl. stiffening ribs (bosses at the tabs go to edge_h)
 rib_t        = 2.0;    // rib / perimeter wall thickness
 rib_pitch    = 20.0;   // grid rib spacing
 
@@ -55,19 +58,24 @@ module outline() {
     }
 }
 
-module tab_trimmed() {
-    w = tab_w - 2*tab_clear;
-    t = tab_t - 2*tab_clear;
-    c = tab_chamfer;
+module rail() {
+    // One rail: length tab_w along X, width rw in Z, standing rail_h out in -Y.
+    rw = (rail_span - rail_gap)/2 - 2*tab_clear;
+    h  = rail_h - tab_clear;
+    c  = tab_chamfer;
     hull() {
-        // root (inside the body)
-        translate([-w/2, -tab_len + c, tab_clear]) cube([w, tab_len - c + 1, t]);
-        // tip, shrunk by the chamfer
-        translate([-w/2 + c, -tab_len, tab_clear + c]) cube([w - 2*c, 0.01, t - 2*c]);
+        translate([-tab_w/2 + c, -h, 0]) cube([tab_w - 2*c, h + 1, rw]);
+        translate([-tab_w/2, -h + c, 0]) cube([tab_w, h - c + 1, rw]);
     }
-    if (snap_bump > 0)
-        translate([-w/2 + c, -tab_len + c + 1.5, tab_clear + t - 0.01])
-            rotate([0, 90, 0]) cylinder(r = snap_bump, h = w - 2*c, $fn = 16);
+}
+
+module tab_trimmed() {
+    // Rails flush with the bed face (z = 0) so the lower rail prints on the bed.
+    pitch = (rail_span + rail_gap)/2;
+    for (z = [tab_clear, tab_clear + pitch])
+        translate([0, 0, z]) rail();
+    // Boss behind the rails, full stand thickness at the tab.
+    translate([-tab_w/2 - 3, 0, 0]) cube([tab_w + 6, 12, edge_h]);
 }
 
 module tabs() {
@@ -89,10 +97,6 @@ module ribs() {
                 translate([-stand_w/2, y - rib_t/2, 0]) cube([stand_w, rib_t, rib_h]);
         }
     }
-    // Solid bosses behind each tab so the tab load goes into the plate
-    for (s = [-1, 1])
-        translate([tab_offset + s*tab_pitch/2 - tab_w/2 - rib_t, 0, 0])
-            cube([tab_w + 2*rib_t, 10, rib_h]);
 }
 
 module stand() {
@@ -104,9 +108,6 @@ module stand() {
 module fit_test() {
     span = tab_pitch + tab_w + 12;
     translate([tab_offset - span/2, 0, 0]) cube([span, fit_strip_d, fit_strip_t]);
-    for (s = [-1, 1])
-        translate([tab_offset + s*tab_pitch/2 - tab_w/2 - 3, 0, 0])
-            cube([tab_w + 6, fit_strip_d, tab_t]);
     tabs();
 }
 

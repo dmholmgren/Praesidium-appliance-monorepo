@@ -12,13 +12,17 @@ part = "stand";            // "stand" | "fit_test"
 
 /* [Tabs -- from caliper measurements of the OEM stand] */
 // Each tab is a pair of parallel rails standing out from the stand's edge
-// face, running along the edge, flush with one face of the stand.
-tab_w        = 19.0;   // rail length along the stand edge (measured 18.94)
+// face, running along the edge. Across the edge face (bed face upward):
+//   3.43 face->rail1 | 2.89 rail1 | 4.24 gap | 2.89 rail2 | 10.39 -> far face
+// Checks: 6.32 = face->rail1 inner, 10.11 = rail span, 20.50 = rail1 outer->far face,
+//         23.93 = full edge thickness.
+tab_w        = 18.0;   // rail length along the stand edge (measured 18.00)
+rail_z0      = 3.43;   // bed face to the outer side of the first rail (23.93 - 20.50)
 rail_span    = 10.11;  // across both rails, outside to outside (measured)
 rail_gap     = 4.24;   // gap between the rails (measured)
 rail_h       = 3.90;   // how far the rails stand out from the edge face (measured -- CONFIRM)
-edge_h       = 20.50;  // stand thickness at the tab, rail face to far face (measured)
-tab_pitch    = 120.0;  // tab centre-to-centre distance                   (ESTIMATE - measure)
+edge_h       = 23.93;  // stand thickness at the tab (measured)
+tab_pitch    = 110.0;  // tab centre-to-centre distance (DERIVED from 149 / 5.81 / 25.67 / 32.93 - verify)
 tab_offset   = 0.0;    // shift both tabs left(-)/right(+) if the slots are off-centre
 tab_clear    = 0.15;   // removed from each tab face so printed tabs slide in
 tab_chamfer  = 0.6;    // lead-in chamfer on the rail tips
@@ -70,9 +74,8 @@ module rail() {
 }
 
 module tab_trimmed() {
-    // Rails flush with the bed face (z = 0) so the lower rail prints on the bed.
     pitch = (rail_span + rail_gap)/2;
-    for (z = [tab_clear, tab_clear + pitch])
+    for (z = [rail_z0 + tab_clear, rail_z0 + tab_clear + pitch])
         translate([0, 0, z]) rail();
     // Boss behind the rails, full stand thickness at the tab.
     translate([-tab_w/2 - 3, 0, 0]) cube([tab_w + 6, 12, edge_h]);

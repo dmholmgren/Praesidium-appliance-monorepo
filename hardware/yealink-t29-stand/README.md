@@ -18,16 +18,19 @@ Each tab is two parallel rails standing out from the stand's edge face. The rail
 
 | Parameter | Value | Source |
 |---|---|---|
-| `tab_w` | 19.0 mm | caliper, 18.94 mm (rail length along the edge) |
+| `tab_w` | 18.0 mm | caliper, 18.00 mm (rail length along the edge) |
+| `rail_z0` | 3.43 mm | 23.93 − 20.50, face of the stand to the first rail |
 | `rail_span` | 10.11 mm | caliper, outside of one rail to outside of the other |
 | `rail_gap` | 4.24 mm | caliper, gap between the rails |
 | `rail_h` | 3.90 mm | caliper; my reading is that this is how far the rails stand out |
-| `edge_h` | 20.50 mm | caliper, stand thickness at the tab |
-| `tab_pitch` | 120 mm | **estimate from photo**, tab centre to centre |
+| `edge_h` | 23.93 mm | caliper, stand thickness at the tab |
+| `tab_pitch` | 110 mm | **derived** from 149 − (5.81…25.67) − (32.93 − 18); verify |
 | `stand_len` | 75 mm | **design choice**, sets the viewing angle |
 | `stand_w` | 180 mm | design choice, foot to foot |
 
-Also measured: 32.93 mm from the tab to the step in the outline, and 5.81 / 25.67 mm from the other step to each end of the other tab. These describe the OEM outline and aren't needed for the fit.
+Cross-check across the edge face: 3.43 + 2.89 = 6.32 (measured 6.32); 2.89 + 4.24 + 2.89 = 10.11 (measured 10.11).
+
+Also measured: 149 mm along the tab edge between the outline steps, 49.49 mm (probably a leg width) and 32.93 / 5.81 / 25.67 mm from each step to the tabs. These are only used to derive `tab_pitch`.
 
 ## Workflow
 

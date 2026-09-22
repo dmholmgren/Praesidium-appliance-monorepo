@@ -22,21 +22,42 @@ rail_span    = 10.11;  // across both rails, outside to outside (measured)
 rail_gap     = 4.24;   // gap between the rails (measured)
 rail_h       = 3.90;   // how far the rails stand out from the edge face (measured -- CONFIRM)
 edge_h       = 23.93;  // stand thickness at the tab (measured)
-tab_pitch    = 110.0;  // tab centre-to-centre distance (DERIVED from 149 / 5.81 / 25.67 / 32.93 - verify)
-tab_offset   = 0.0;    // shift both tabs left(-)/right(+) if the slots are off-centre
+// Tab positions along the edge come from the OEM outline (see "Stand body"):
+//   tab A: 32.93 from the square step to its far end   -> centre 23.93 in from the step
+//   tab B: 5.81 .. 25.67 from the curved step           -> centre 15.74 in from the step
+// giving ~109 mm centre to centre (tape measure agrees at ~110).
+tabA_from_step = 32.93 - 18.0/2;
+tabB_from_step = (5.81 + 25.67)/2;
 tab_clear    = 0.15;   // removed from each tab face so printed tabs slide in
 tab_chamfer  = 0.6;    // lead-in chamfer on the rail tips
 
-/* [Stand body] */
-stand_w      = 180.0;  // overall width, foot to foot
-stand_len    = 75.0;   // tab edge to foot edge -- sets the viewing angle (longer = more upright)
-band_d       = 32.0;   // depth of the solid band along the tab edge
-leg_w        = 28.0;   // width of each leg
-corner_r     = 6.0;    // outline corner radius
+/* [Stand body -- OEM outline] */
+// Plan view, smooth face down, tabs pointing -Y. Square-step end at -X,
+// curved-step end at +X. Measured values unless noted.
+foot_a_len   = 38.44;  // foot at the square-step end, along the edge
+foot_b_len   = 45.00;  // foot at the curved-step end (44.99)
+notch_len    = 149.0;  // gap between the feet along the edge
+bar_d        = 45.0;   // tab edge to the notch between the feet (44.99)
+notch_d      = 15.63;  // how far the feet reach past the bar
+end_recess   = 8.0;    // how far the ends sit back from the tab edge   (ESTIMATE from photo)
+edge_shift   = 16.0;   // tab edge starts this far in from the foot-A end...(ESTIMATE; see below)
+corner_r     = 3.0;    // outline corner radius
 skin         = 2.4;    // flat plate thickness
-rib_h        = 10.0;   // total height incl. stiffening ribs (bosses at the tabs go to edge_h)
+rib_h        = 10.0;   // total height incl. stiffening ribs
+lip_t        = 3.0;    // full-height lip along the tab edge (edge_h tall)
 rib_t        = 2.0;    // rib / perimeter wall thickness
 rib_pitch    = 20.0;   // grid rib spacing
+
+stand_w      = foot_a_len + notch_len + foot_b_len;   // 232.4 overall
+stand_len    = bar_d + notch_d;                        // 60.6 tab edge to feet
+// The straight tab edge is the same length as the notch but shifted toward
+// foot A: it runs from (foot_a_len - edge_shift) to (foot_a_len - edge_shift + notch_len).
+edge_u0      = foot_a_len - edge_shift;
+edge_u1      = edge_u0 + notch_len;
+tabA_x       = -stand_w/2 + edge_u0 + tabA_from_step;
+tabB_x       = -stand_w/2 + edge_u1 - tabB_from_step;
+tab_pitch    = tabB_x - tabA_x;
+echo(stand_w = stand_w, stand_len = stand_len, tab_pitch = tab_pitch);
 
 /* [Fit test] */
 fit_strip_d  = 14.0;   // depth of the test strip
@@ -48,18 +69,18 @@ $fn = 48;
 // Geometry: X = along the tab edge, Y = away from the tabs (towards the feet),
 // Z = up off the print bed. Tabs protrude in -Y from the edge at y = 0.
 
-module rounded_square(size, r) {
-    offset(r) offset(-r) square(size);
+module raw_outline() {
+    L = stand_w; D = stand_len;
+    translate([-L/2, 0]) polygon([
+        [0, end_recess], [edge_u0, end_recess], [edge_u0, 0], [edge_u1, 0],
+        [edge_u1, end_recess], [L, end_recess], [L, D],
+        [L - foot_b_len, D], [L - foot_b_len, bar_d],
+        [foot_a_len, bar_d], [foot_a_len, D], [0, D]]);
 }
 
 module outline() {
-    // Rectangle with the centre cut away below the band, leaving two legs.
-    difference() {
-        translate([-stand_w/2, 0]) rounded_square([stand_w, stand_len], corner_r);
-        translate([-stand_w/2 + leg_w, band_d])
-            offset(corner_r) offset(-corner_r)
-                square([stand_w - 2*leg_w, stand_len]);
-    }
+    // Round both convex and concave corners.
+    offset(corner_r) offset(-2*corner_r) offset(corner_r) raw_outline();
 }
 
 module rail() {
@@ -83,13 +104,16 @@ module tab_trimmed() {
 
 module tabs() {
     for (s = [-1, 1])
-        translate([tab_offset + s*tab_pitch/2, 0, 0]) tab_trimmed();
+        translate([s < 0 ? tabA_x : tabB_x, 0, 0]) tab_trimmed();
 }
 
 module ribs() {
     // Perimeter wall
     linear_extrude(rib_h)
         difference() { outline(); offset(-rib_t) outline(); }
+    // Full-height lip along the tab edge, as on the OEM part
+    translate([-stand_w/2 + edge_u0 + corner_r, 0, 0])
+        cube([notch_len - 2*corner_r, lip_t, edge_h]);
     // Grid, clipped to the outline
     intersection() {
         linear_extrude(rib_h) outline();
@@ -109,8 +133,8 @@ module stand() {
 }
 
 module fit_test() {
-    span = tab_pitch + tab_w + 12;
-    translate([tab_offset - span/2, 0, 0]) cube([span, fit_strip_d, fit_strip_t]);
+    x0 = tabA_x - tab_w/2 - 6;
+    translate([x0, 0, 0]) cube([tab_pitch + tab_w + 12, fit_strip_d, fit_strip_t]);
     tabs();
 }
 
